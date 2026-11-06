@@ -1,0 +1,16 @@
+f24.enabled,Choose where appraisal slips are delivered
+f24.tip,New appraisal slips can go to the front counter, a selected container or the trash. Right-click a container or use the picker to select it. If the destination is unavailable, the game's normal delivery is used.
+f24.destination,Appraisal slip destination
+f24.destination.tip,Send new appraisal slips to the front counter, a selected container or the trash. Selecting the container option also requires choosing a container.
+f24.front,Front counter
+f24.box,Selected container
+f24.trash,Trash
+f24.choose,Choose appraisal slip container
+f24.no_targets,No accessible containers.
+f24.bind,Select
+f24.bound,Receipt container selected.
+f24.bind_failed,Could not save the receipt container.
+f24.bad_data,Receipt destination data could not be read.
+f24.fallback,Receipt sent to the front counter.
+f24.front_full,The front counter could not hold the receipt.
+f24.inspect,Check the receipt's destination.

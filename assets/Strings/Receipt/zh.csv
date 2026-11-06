@@ -1,0 +1,16 @@
+f24.enabled,选择鉴定回单投递去向
+f24.tip,新生成的鉴定回单可送到前台、指定容器或垃圾桶。可右键容器或使用选择器指定容器；目标不可用时按原版投递。
+f24.destination,鉴定回单投递位置
+f24.destination.tip,选择新鉴定回单送往前台、指定容器或垃圾桶。选择指定容器后还需选定容器。
+f24.front,前台
+f24.box,指定的容器
+f24.trash,垃圾桶
+f24.choose,选择鉴定回单容器
+f24.no_targets,没有可访问的容器。
+f24.bind,选择
+f24.bound,已选择回单容器。
+f24.bind_failed,无法保存回单容器。
+f24.bad_data,无法读取回单去向数据。
+f24.fallback,回单已送到前台。
+f24.front_full,前台无法容纳回单。
+f24.inspect,请检查回单的位置。

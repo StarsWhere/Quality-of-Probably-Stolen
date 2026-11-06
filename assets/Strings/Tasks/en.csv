@@ -1,0 +1,26 @@
+f17.enabled,Show a checklist on the shutter
+f17.tip,Tick tasks on the closed shutter. While trading, click the housing above the customer counter to open the note. Use the + on the note or shutter to add and edit tasks; tasks are saved with the current game.
+f17.open,Tasks
+f17.key,Open or close checklist
+f17.key.tip,Press the shortcut in the store while not typing to open or close the checklist.
+f17.once,One-off
+f17.daily,Daily
+f17.day,Daytime
+f17.night,Night
+f17.when,Day {0} · {1}
+f17.placeholder,Task name
+f17.add,Add
+f17.save,Save
+f17.cancel,Cancel
+f17.delete,Delete
+f17.confirmDelete,Confirm deletion
+f17.all,Show both shifts
+f17.edit,Edit
+f17.empty,No tasks for this shift yet.
+f17.enter,Enter a name of 1–96 characters.
+f17.limit,This run has 64 tasks. Remove an old task first.
+f17.invalid,The saved checklist could not be read. Its data has been kept.
+f17.save_failed,Could not save the checklist. Your input has been kept. Please retry.
+f17.reminders,Remind about tasks at day and night changes
+f17.reminders.tip,When the day or night phase changes, show tasks for the new phase that are still unchecked.
+f17.reminder,{0} unfinished · {1}

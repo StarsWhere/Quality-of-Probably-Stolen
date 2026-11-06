@@ -1,0 +1,20 @@
+door.calendar,Calendar
+door.tasks,Tasks
+door.badge,Todo
+door.mon,Mo
+door.tue,Tu
+door.wed,We
+door.thu,Th
+door.fri,Fr
+door.sat,Sa
+door.sun,Su
+door.day,Day {0}
+door.no_events,No events
+door.no_tasks,No tasks
+door.rent,Rent
+door.mortgage,Mortgage
+door.deadline,{0} · {1} days left
+door.event_summary,Day {0} · {1}
+door.no_deadlines,No upcoming deadlines
+door.orders_error,Tracked requests could not be read
+door.task_error,Could not update the task. Try again.

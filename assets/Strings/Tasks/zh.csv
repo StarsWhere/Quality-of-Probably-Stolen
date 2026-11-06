@@ -1,0 +1,26 @@
+f17.enabled,在卷帘门显示可勾选待办
+f17.tip,关门时可在门上勾选待办；营业时点击顾客计数屏上方的机壳打开便签。用便签或门上的“+”添加和编辑事项，事项随当前存档保存。
+f17.open,待办
+f17.key,打开或关闭待办
+f17.key.tip,在店内未输入文字时，按下快捷键打开或关闭待办本。
+f17.once,一次性
+f17.daily,每日
+f17.day,白天
+f17.night,夜间
+f17.when,第 {0} 天 · {1}
+f17.placeholder,输入待办事项
+f17.add,添加
+f17.save,保存
+f17.cancel,取消
+f17.delete,删除
+f17.confirmDelete,确认删除
+f17.all,显示日夜全部事项
+f17.edit,编辑
+f17.empty,本时段还没有待办。
+f17.enter,请输入 1–96 个字符。
+f17.limit,本档已保存 64 项，请先删除已结束的事项。
+f17.invalid,本档的待办数据无法读取，原数据已保留。
+f17.save_failed,待办未能保存，输入已保留，请重试。
+f17.reminders,昼夜切换时提示未完成待办
+f17.reminders.tip,切换到新的白天或夜间时，提示该时段尚未勾选的待办。
+f17.reminder,待办 {0} 项 · {1}

@@ -1,0 +1,41 @@
+f01.enabled,Keep normal purchases on the back counter
+f01.tip,After a normal purchase in the shop, paid goods already on the back counter stay there. Scratch cards and lottery tickets follow the original behavior. Wholesale has a separate switch.
+f21.enabled,Show deadlines on the shutter
+f21.tip,Show days remaining for rent or mortgage and tracked requests at the bottom of the shutter. Set how soon approaching deadlines are highlighted.
+f21.days,Days before deadlines are highlighted
+f21.days.tip,Highlight an item when its remaining days are at or below this value. Other deadlines still appear; 0 highlights only deadlines due today.
+f21.snooze,Mute reminders for today
+f21.snoozed,Closing reminders muted for this day.
+f21.rent,Rent is due in {0} days.
+f21.order,Request “{0}”: {1} days remain after today.
+f21.close,Close the shop
+f21.back,Go back
+f27.enabled,Track requests and reserve delivery goods
+f27.tip,Use Prepare beside a market request to track its deadline and place selected goods in a preparation container. Submit the delivery yourself.
+f27.open,Requests and delivery preparation
+f27.trackButton,Prepare
+f27.market,Open the market requests page and select a posted request.
+f27.expired,This request expired or cannot be identified uniquely.
+f27.unreadable,Could not read this save's request reservations. Check the save.
+f27.recovered,Request reservations loaded again.
+f27.save_failed,Could not save request reservations. Try again.
+f27.limit,The request or reservation limit has been reached.
+f27.track,Track request
+f27.choose,Choose an open storage container
+f27.count,Reserved {0} of {1} items
+f27.count_location,Reserved {0} of {1} items · {2} in destination
+f27.old_area,Original preparation area unavailable
+f27.verify_needed,Open the original preparation area to check this reservation.
+f27.verify_short,Check
+f27.verify,Check original area
+f27.missing_item,Reserved item #{0} is not currently visible
+f27.missing_legacy,Reserved item #{0} · {1}
+f27.release_item,Release reservation
+f27.select,Select goods to prepare first.
+f27.enough,Enough items are already reserved
+f27.migrate,Move reserved goods
+f27.migrate_none,No visible reserved goods need moving.
+f27.migrate_apply,Move goods
+f27.back,Back to request
+f27.prepare,Pack selected items
+f27.release,Stop tracking and release reservations

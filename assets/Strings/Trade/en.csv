@@ -1,0 +1,42 @@
+f16.enabled,Show a trade receipt after a transaction
+f16.tip,Briefly show the cash or reputation change after a transaction. Choose what appears, how long it stays and whether it makes a sound. No receipt appears when there is no selected change to show.
+f16.money,Show cash changes on trade receipts
+f16.money.tip,Show the actual cash received or spent on the trade receipt. No amount appears when cash does not change.
+f16.rep,Show reputation changes on trade receipts
+f16.rep.tip,Show changes to the customer's faction reputation on the trade receipt. No value appears when reputation does not change.
+f16.sound,Play a trade receipt sound
+f16.sound.tip,Play the game's register sound when a trade receipt appears.
+f16.seconds,Trade receipt duration (seconds)
+f16.seconds.tip,Set how long the trade receipt stays on screen; higher values keep it visible longer.
+f16.in,Received {0}
+f16.out,Spent {0}
+f28.enabled,Record and review daily cash flow
+f28.tip,Record daily cash changes after enabling this feature. Open the ledger beside the computer to review transaction types and current cash. Sales with known purchase costs show gross profit; unknown costs are counted separately.
+f28.open,Cash flow ledger
+f28.invalid,Could not read the ledger. Its existing records have been kept.
+f28.day,Day {0}
+f28.row,{0}   received {1}   spent {2}
+f28.total,Net cash flow: {0}
+f28.margin,Gross margin on known costs: {0}. Sales without a known cost: {1}.
+f28.other,Other
+f28.all,All types
+f28.purchase,Purchases
+f28.sale,Sales
+f28.wholesale,Wholesale
+f28.appraisal,Appraisal fees
+f28.rent,Rent
+f28.service,Services
+f28.barter,Barter
+f37.enabled,Return live yeast when brewing
+f37.tip,Remember the source when live yeast is moved from an ordinary shop grid into a bottle. When brewing starts, return it to its original cell if possible, otherwise find space in main stock, a counter or the display case. If none is available, make room or continue under the game's normal rules.
+f37.full,Make room for the reusable yeast before brewing. The original game may discard it when the shop is full.
+f37.free,Make space
+f37.original,Brew using original rules
+f37.retry,The destination changed. Check the ingredients and try again.
+f16.volume,Trade receipt sound volume (%)
+f16.volume.tip,Adjust the trade receipt sound relative to game volume. Zero mutes it; higher values make it louder.
+f01.wholesale,Keep wholesale purchases on the back counter
+f01.wholesale.tip,Check back-counter space before wholesale checkout, then move paid items still on the front counter to the back. If space is short, make room or use normal checkout. Batches containing scratch cards or lottery tickets follow the game's normal rules.
+f01.wholesaleFull,The back counter cannot hold the front row. Make room or use native checkout and move remaining goods yourself.
+f01.originalWholesale,Continue with native wholesale
+f01.wholesaleLeft,Check the front counter. {0} purchased items could not reach the back counter.
