@@ -1,18 +1,19 @@
 param(
     [Parameter(Mandatory)][string]$Root,
     [Parameter(Mandatory)][string]$GameDir,
-    [Parameter(Mandatory)][string]$BootstrapDll
+    [Parameter(Mandatory)][string]$BootstrapDll,
+    [ValidatePattern('^[A-Za-z][A-Za-z0-9_-]{0,63}$')][string]$Profile = 'player-test'
 )
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path -LiteralPath $Root).Path
 $workspace = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-$expectedRoot = [IO.Path]::GetFullPath((Join-Path $workspace '.tmp/player-test/player'))
+$expectedRoot = [IO.Path]::GetFullPath((Join-Path $workspace ('.tmp/' + $Profile + '/player')))
 if (-not [string]::Equals($root, $expectedRoot, [StringComparison]::OrdinalIgnoreCase) -or
     -not (Test-Path -LiteralPath (Join-Path $root 'qa-owned.txt') -PathType Leaf) -or
     ((Get-Item -LiteralPath $root).Attributes -band [IO.FileAttributes]::ReparsePoint)) {
     throw 'Bootstrap installer may only modify the owned player-test copy.'
 }
-foreach ($path in @((Join-Path $workspace '.tmp'), (Join-Path $workspace '.tmp/player-test'), $root,
+foreach ($path in @((Join-Path $workspace '.tmp'), (Join-Path $workspace ('.tmp/' + $Profile)), $root,
     (Join-Path $root 'Probably Stolen_Data'), (Join-Path $root 'Probably Stolen_Data/Managed'))) {
     if ((Get-Item -LiteralPath $path).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Unexpected link in QA path: $path" }
 }

@@ -6,6 +6,9 @@ param(
     [string]$GameDir = $env:PROBABLY_STOLEN_GAME_DIR,
     [string]$ModDirectory,
     [string]$ProbeAssembly,
+    [ValidatePattern('^[A-Za-z][A-Za-z0-9_-]{0,63}$')][string]$Profile = 'player-test',
+    [ValidateRange(640, 7680)][int]$ScreenWidth = 1024,
+    [ValidateRange(480, 4320)][int]$ScreenHeight = 768,
     [string[]]$WorkshopIds = @(),
     [string]$WorkshopRoot = 'D:\SteamLibrary\steamapps\workshop\content\4348910',
     [ValidateSet('First', 'Last')][string]$ShopAssistOrder = 'First',
@@ -15,7 +18,7 @@ param(
 $ErrorActionPreference = 'Stop'
 if (!$GameDir) { $GameDir = 'D:\SteamLibrary\steamapps\common\Probably Stolen' }
 $workspace = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-$qa = Join-Path $workspace '.tmp/player-test'
+$qa = Join-Path $workspace ('.tmp/' + $Profile)
 $player = Join-Path $qa 'player'
 $data = Join-Path $qa 'data'
 $logs = Join-Path $qa 'log'
@@ -177,7 +180,7 @@ function Prepare-Player {
     [IO.File]::WriteAllText($profileFile, ([pscustomobject]@{ mode = $(if ($WorkshopIds.Count) { 'coexist' } else { 'single' }); order = $ShopAssistOrder; packages = $packages } | ConvertTo-Json -Depth 5))
     Assert-PackageMirrors
     [IO.File]::WriteAllText((Join-Path $player 'steam_appid.txt'), '4348910')
-    & (Join-Path $PSScriptRoot 'InstallBootstrap.ps1') -Root $player -GameDir $GameDir -BootstrapDll $probeDll
+    & (Join-Path $PSScriptRoot 'InstallBootstrap.ps1') -Root $player -GameDir $GameDir -BootstrapDll $probeDll -Profile $Profile
     [IO.File]::WriteAllLines($integrity, [string[]](Get-PreparedInventory))
     Write-Output "Prepared isolated Player under $player; retained data under $data"
 }
@@ -200,23 +203,35 @@ function Invoke-Next {
     $runId = [Guid]::NewGuid().ToString('N')
     [IO.File]::WriteAllText((Join-Path $player 'qa-run-id.txt'), $runId)
     $log = Join-Path $logs ("Player-$phaseName-$runId.log")
-    $arguments = if ($Render) { '-screen-width 1024 -screen-height 768 -screen-fullscreen 0' } else { '-batchmode -nographics' }
+    $arguments = if ($Render) { "-screen-width $ScreenWidth -screen-height $ScreenHeight -screen-fullscreen 0" } else { '-batchmode -nographics' }
     $arguments += ' -logFile "' + $log + '"'
-    $process = Start-Process -FilePath (Join-Path $player 'Probably Stolen.exe') -WorkingDirectory $player -ArgumentList $arguments -PassThru -WindowStyle Hidden
-    Write-Output "QA phase=$phaseName PID=$($process.Id) log=$log"
-    $expires = [DateTime]::UtcNow.AddSeconds(200)
-    while (-not $process.WaitForExit(5000)) {
-        if ([DateTime]::UtcNow -ge $expires) { $process.Kill(); $process.WaitForExit(); throw "QA phase $phaseName timed out." }
+    $background = $null
+    if ($Render) {
+        if (-not ('BackgroundPlayer' -as [type])) { Add-Type -Path (Join-Path $PSScriptRoot 'BackgroundPlayer.cs') }
+        $background = [BackgroundPlayer]::Start((Join-Path $player 'Probably Stolen.exe'), $player, $arguments)
+        $process = $background.Process
+    } else {
+        $process = Start-Process -FilePath (Join-Path $player 'Probably Stolen.exe') -WorkingDirectory $player -ArgumentList $arguments -PassThru -WindowStyle Hidden
     }
+    try {
+        Write-Output "QA phase=$phaseName PID=$($process.Id) privateDesktop=$([bool]$background) log=$log"
+        $expires = [DateTime]::UtcNow.AddSeconds(200)
+        while (-not $process.WaitForExit(5000)) {
+            if ([DateTime]::UtcNow -ge $expires) { $process.Kill(); $process.WaitForExit(); throw "QA phase $phaseName timed out." }
+        }
+    } finally {
+        if ($null -ne $background) { $background.Dispose() }
+    }
+    $exitCode = if ($null -ne $background) { $background.ExitCode } else { $process.ExitCode }
     $status = Join-Path $data ("qa-status-$runId.txt")
     $proof = Join-Path $data 'guard-proof.txt'
-    if (-not (Test-Path -LiteralPath $proof) -or (Get-Content -LiteralPath $proof -Tail 1).Trim() -ne $runId) { throw "QA identity guard did not complete; exit=$($process.ExitCode), log=$log" }
+    if (-not (Test-Path -LiteralPath $proof) -or (Get-Content -LiteralPath $proof -Tail 1).Trim() -ne $runId) { throw "QA identity guard did not complete; exit=$exitCode, log=$log" }
     $errors = Join-Path $data ("qa-unity-errors-$runId.txt")
     if (-not (Test-Path -LiteralPath $errors -PathType Leaf)) { throw "QA Unity error capture was not installed; log=$log" }
     $afterInventory = @(Get-PreparedInventory)
     if ($expectedInventory.Count -ne $afterInventory.Count -or (Compare-Object $expectedInventory $afterInventory)) { throw "QA Player changed during launch; log=$log" }
     Assert-PackageMirrors
-    if ($process.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $status) -or (Get-Content -LiteralPath $status -Raw).Trim() -ne 'PASS') { throw "QA phase $phaseName failed; exit=$($process.ExitCode), log=$log" }
+    if ($exitCode -ne 0 -or -not (Test-Path -LiteralPath $status) -or (Get-Content -LiteralPath $status -Raw).Trim() -ne 'PASS') { throw "QA phase $phaseName failed; exit=$exitCode, log=$log" }
     if ((Get-Item -LiteralPath $errors).Length -ne 0) { throw "QA phase $phaseName emitted Unity errors; errors=$errors, log=$log" }
     if ($phaseName -eq 'coexist-verify') {
         $profile = Get-Content -LiteralPath $profileFile -Raw | ConvertFrom-Json
@@ -242,7 +257,7 @@ function Invoke-Next {
 function Remove-QaFiles {
     if (-not (Test-Path -LiteralPath $qa)) { Write-Output 'QA files are already absent.'; return }
     if (-not (Test-Path -LiteralPath $marker -PathType Leaf) -or (Get-Content -LiteralPath $marker -Raw).Trim() -ne 'player-test-v1') { throw 'QA ownership marker missing.' }
-    $expectedQa = [IO.Path]::GetFullPath((Join-Path $workspace '.tmp/player-test'))
+    $expectedQa = [IO.Path]::GetFullPath((Join-Path $workspace ('.tmp/' + $Profile)))
     if (-not [string]::Equals((Resolve-Path -LiteralPath $qa).Path, $expectedQa, [StringComparison]::OrdinalIgnoreCase)) { throw 'Unexpected QA cleanup path.' }
     foreach ($path in @((Join-Path $workspace '.tmp'), $qa, $player, $data)) {
         if ((Get-Item -LiteralPath $path).Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Unexpected workspace link: $path" }
@@ -302,22 +317,23 @@ if ($Action -ne 'Release') { return }
 foreach ($next in 'batch-a','batch-a-reload') { [IO.File]::WriteAllText($phaseFile,$next); Invoke-Next }
 # Keep each write/read pair adjacent. A failed producer must never be followed by a stale reload check.
 $scenarios = @(
+    'FastPlaybackInputScenario','FastPlaybackDialogueScenario','FastPlaybackMotionScenario','FastPlaybackTransitionsScenario','FastPlaybackTransitionsStoryScenario','FastPlaybackTransitionsFlowScenario','FastPlaybackTransitionsReloadScenario',
     'DoorScenario','DoorLayerScenario','DoorScaleScenario','DoorDeadlineScenario','DailyDeadlineScenario',
-    'ContextToolsScenario','PanelToolsScenario','ScannerPresentationScenario','ItemLabelsScenario',
+    'ContextToolsScenario','PanelToolsScenario','ScannerPresentationScenario','ScannerScaleScenario','ScannerLayoutScenario','ScannerUxScenario','ScannerPointerScenario','ItemLabelsScenario',
     'DailyMarkerSwitchScenario','StorageAnchorScenario','ModuleGridScenario','ModuleScaleScenario','ModuleSearchScenario',
     'GroupGridScenario','DailyGroupInputScenario','DailyGroupSwitchScenario','MachineOverviewScenario','MachineAttentionScenario',
-    'SettingsPresentationScenario','SettingsFinderScenario','SettingsToolsScenario','FeedbackScenario','FeedbackReloadScenario','AttentionLocationScenario','TodoRefreshScenario',
+    'SettingsPresentationScenario','SettingsFinderScenario','SettingsToolsScenario','ShopToolsVisualScenario','EnglishToolsVisualScenario','SharedUxScenario','PinSettingsScenario','ContextWindowStabilityScenario','PickerLifecycleScenario','FeedbackScenario','FeedbackReloadScenario','AttentionLocationScenario','TodoRefreshScenario',
     'CustomerScenario','CustomerCounterDropScenario','ContextShortcutScenario','MachinesScenario','MachineLifecycleScenario',
     'ScannerTreatmentScenario','ScannerFilterMatrixScenario','ScannerMachineTreatmentScenario',
     'OrderScenario','RequestColdScenario','RequestColdReloadScenario','ReservationMigrationScenario','ReservationCorruptScenario','ReservationSaveFailureScenario','RequestSafetyScenario',
     'DesktopScenario','DailyDesktopSaveScenario','DailyDesktopReloadScenario',
-    'TradeScenario','DailyReceiptScenario','ReceiptSoundScenario','LedgerMarginScenario','LedgerDaysScenario','LedgerDaysReloadScenario',
+    'TradeScenario','DailyReceiptScenario','ReceiptSoundScenario','ReceiptBurstScenario','LedgerMarginScenario','LedgerDaysScenario','LedgerDaysReloadScenario',
     'WholesaleScenario','WholesaleReloadScenario','YeastOriginScenario','YeastColdBrewScenario','PeekScenario','DailyPeekInputScenario',
     'AppraisalWorksheetScenario','ReceiptScenario','FieldScenario','CargoDestinationScenario','PlainLabelScenario','LabelOverwriteScenario',
     'DisplaySourceScenario','DisplayCapacityScenario','DisplaySplitScenario','DisplaySplitRecoveryScenario','PackingPriorityScenario',
     'PackingRecoveryScenario','PackingPocketRecoveryScenario','PackingThirdPartyRecoveryScenario','WaterBasketScenario','WaterFilterPauseScenario','WaterSafetyScenario',
     'BasketBudgetScenario','BasketDifferentQuotesScenario',
-    'OrganizerScenario','RoutingScenario','RoutingVetoScenario','RoutingBoundaryScenario','CounterRoutingScenario',
+    'OrganizerScenario','ArrangeInputScenario','AutoArrangeInputScenario','RoutingScenario','RoutingVetoScenario','RoutingBoundaryScenario','CounterRoutingScenario',
     'LayoutScenario','LayoutReloadScenario','LayoutReflowScenario','MoistureLayoutScenario',
     'ReplantScenario','ReplantReloadScenario','ReplantRecoveryScenario','ReplantRecoveryReloadScenario','FeedScenario','FeedReloadScenario','FeedCapacityScenario','FeedFullRecoveryScenario',
     'MaintenanceScenario','MaintenanceReloadScenario','MaintenanceReservationScenario',

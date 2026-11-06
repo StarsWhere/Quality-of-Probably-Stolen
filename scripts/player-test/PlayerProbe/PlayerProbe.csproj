@@ -14,6 +14,10 @@
       <HintPath>$(GameDir)/Probably Stolen_Data/Managed/0Harmony.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="DOTween;DOTweenPro;UnityEngine;Unity.Localization;Unity.ResourceManager">
+      <HintPath>$(GameDir)/Probably Stolen_Data/Managed/%(Identity).dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="UnityEngine.CoreModule">
       <HintPath>$(GameDir)/Probably Stolen_Data/Managed/UnityEngine.CoreModule.dll</HintPath>
       <Private>false</Private>

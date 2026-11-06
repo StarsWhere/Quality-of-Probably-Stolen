@@ -45,6 +45,10 @@ public static class PlayerProbe
     {
         if (created) return;
         created = true;
+        Application.runInBackground = true;
+        Application.targetFrameRate = 60;
+        AudioListener.volume = 0f;
+        Debug.Log("[PLAYER-QA] batchMode=" + Application.isBatchMode + " graphics=" + SystemInfo.graphicsDeviceType);
         var go = new GameObject("Player QA driver");
         UnityEngine.Object.DontDestroyOnLoad(go);
         go.AddComponent<PlayerQaDriver>();
@@ -143,8 +147,8 @@ public sealed class PlayerQaDriver : MonoBehaviour
                 Require(check != null && check.Refusal == null && check.Scan != null && !check.Scan.Refused && check.Fingerprint != null,
                     "Native activation refused: " + (check == null ? "null" : check.Refusal));
                 Require(check.Scan.HardFlags.Count == 0 && check.Scan.Capabilities.All(c =>
-                    c == "dynamic-code" && mod.Manifest.Capabilities.Contains(c)) &&
-                    mod.Manifest.Capabilities.All(c => c == "dynamic-code"), "Unexpected native capability or hard flag");
+                    (c == "dynamic-code" || c == "reflection-external") && mod.Manifest.Capabilities.Contains(c)) &&
+                    mod.Manifest.Capabilities.All(c => c == "dynamic-code" || c == "reflection-external"), "Unexpected native capability or hard flag");
                 ModLoader.ApproveAndEnable(mod, check);
                 Require(ModLoader.IsModEnabled(ModId), "Native activation did not persist enabled state");
                 Log("PASS native activation: scanned methods=" + check.Scan.MethodsScanned + ", capabilities=" + check.Scan.Capabilities.Count);
@@ -167,7 +171,7 @@ public sealed class PlayerQaDriver : MonoBehaviour
                 var toggle = window.Get(ModId + ":f15.enabled");
                 var apply = window.Get("apply");
                 Require(toggle != null && toggle.toggle != null && apply != null && apply.button != null, "Options controls missing");
-                for (int id = 1; id <= 41; id++)
+                for (int id = 1; id <= 42; id++)
                 {
                     string key = "f" + id.ToString("D2") + ".enabled";
                     Require(config.Get(key) is ConfigEntry<bool> && window.Get(ModId + ":" + key)?.toggle != null,
