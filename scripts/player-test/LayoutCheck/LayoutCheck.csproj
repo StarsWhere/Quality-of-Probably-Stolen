@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <GameDir Condition="'$(GameDir)' == ''">$(PROBABLY_STOLEN_GAME_DIR)</GameDir>
+    <GameDir Condition="'$(GameDir)' == ''">D:/SteamLibrary/steamapps/common/Probably Stolen</GameDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="obj/**/*.cs;bin/**/*.cs" />
+    <Compile Include="../../../src/ShopAssist/Machines/ModuleLayout.cs" Link="ModuleLayout.cs" />
+    <Reference Include="Assembly-CSharp"><HintPath>$(GameDir)/Probably Stolen_Data/Managed/Assembly-CSharp.dll</HintPath></Reference>
+    <Reference Include="Assembly-CSharp-firstpass"><HintPath>$(GameDir)/Probably Stolen_Data/Managed/Assembly-CSharp-firstpass.dll</HintPath></Reference>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>$(GameDir)/Probably Stolen_Data/Managed/UnityEngine.CoreModule.dll</HintPath></Reference>
+  </ItemGroup>
+</Project>
