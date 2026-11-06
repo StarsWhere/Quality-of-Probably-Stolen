@@ -103,7 +103,7 @@ public sealed class ContextToolsScenario
                 var stock = ToolButton(EmporiumEntry.Instance.invWindow);
                 if (stock == null || stock.isDisabled) return false;
                 var menu = OpenItemMenu(bag);
-                var node = menu.handler.transform.Find("ShopAssist_f24_choose");
+                var node = QaItemUi.Descendant(menu.handler.transform, "ShopAssist_f24_choose");
                 Need(node != null && node.gameObject.activeInHierarchy, "Owned container has no receipt destination context action");
                 RichTextElement action = node.GetComponent<TreeNodeRender>()?.element as RichTextElement;
                 Need(action != null, "Receipt context row is not a native selectable");

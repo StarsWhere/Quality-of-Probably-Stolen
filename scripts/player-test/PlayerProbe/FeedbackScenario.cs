@@ -68,14 +68,20 @@ public sealed class FeedbackScenario
         if (step == 4)
         {
             if (Time.realtimeSinceStartup < until) return false;
-            Need(NoticeText() == "", "Duplicate queued notice was shown twice");
+            Need(NoticeText() == "QA second notice", "Independent events with equal text were incorrectly merged");
+            until = Time.realtimeSinceStartup + 1.15f; step++; return false;
+        }
+        if (step == 5)
+        {
+            if (Time.realtimeSinceStartup < until) return false;
+            Need(NoticeText() == "", "Completed notice did not expire");
             Call(book, "Open");
             if (SystemInfo.graphicsDeviceType != UnityEngine.Rendering.GraphicsDeviceType.Null)
                 ScreenCapture.CaptureScreenshot(Path.Combine(Application.persistentDataPath, "qa-feedback.png"));
             var p = PlayerStore.Instance;
             File.WriteAllText(Path.Combine(Application.persistentDataPath, "qa-feedback-run.txt"), string.Join("|", p.runID, p.saveSlotId, item.uniqueId));
             p.SaveGame();
-            result = "PASS queued deduplicated notices, persistent unresolved operation, resource identity and attention access with F30 disabled";
+            result = "PASS event-identity deduplication, independent equal-text events, persistent unresolved operation and attention access";
             return true;
         }
         return false;
