@@ -65,10 +65,11 @@ public sealed class ScannerLayoutScenario
         {
             string path = r.name; Transform p = r.parent;
             while (p != null && p != panel.transform.parent) { path = p.name + "/" + path; p = p.parent; }
-            var t = r.GetComponent<TMP_Text>(); var b = r.GetComponent<Button>();
+            var t = r.GetComponent<TMP_Text>(); var b = r.GetComponent<Button>(); var image = r.GetComponent<Image>();
             return path + " active=" + r.gameObject.activeInHierarchy + " anchors=" + r.anchorMin + "/" + r.anchorMax +
                 " pivot=" + r.pivot + " pos=" + r.anchoredPosition + " size=" + r.sizeDelta + " rect=" + r.rect +
                 " scale=" + r.localScale + (t != null ? " TMP=" + t.text.Replace("\n", "|") + " font=" + t.fontSize : "") +
+                (image != null ? " IMAGE=" + image.enabled + " sprite=" + (image.sprite != null ? image.sprite.name : "<none>") + " color=" + image.color : "") +
                 (b != null ? " BUTTON" : "");
         });
         File.WriteAllLines(Path.Combine(Application.persistentDataPath, "qa-scanner-layout-" + name + ".txt"), lines);
