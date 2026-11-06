@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../src/ShopAssist/Inventory/AreaLabelPolicy.cs" Link="AreaLabelPolicy.cs" />
+    <Compile Include="../../src/ShopAssist/Inventory/ItemOverlayLayout.cs" />
+    <Compile Include="../../src/ShopAssist/Inventory/ItemLabels.cs" />
+    <Compile Include="../../src/ShopAssist/Inventory/AreaLabels.cs" Link="AreaLabels.cs" />
+    <Compile Include="../../src/ShopAssist/Inventory/VisibleInventoryViews.cs" Link="VisibleInventoryViews.cs" />
+    <Compile Include="AreaLabelTests.cs" />
+    <Compile Include="FakeGame.cs" />
+    <Compile Include="ItemLabelFake.cs" />
+  </ItemGroup>
+</Project>
