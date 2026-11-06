@@ -1,0 +1,48 @@
+f07.enabled,设置储藏区收货规则
+f07.tip,右键储藏区网格或从工具入口打开，指定接收物品、排除项和优先级；归仓时按规则选择目标，同一容器各页可分别设置。
+f07.open,设置这个储藏区收什么
+f07.receive,允许收货
+f07.exclusive,专用目标
+f07.priority,优先级 -100 至 100
+f07.exclude,添加为排除项
+f07.add_category,添加品类
+f07.add_item,添加选中物品
+f07.save,保存规则
+f07.delete,删除规则
+f07.saved,区域规则已保存。
+f07.failed,无法保存区域规则。
+f07.invalid,请输入 -100 至 100 的优先级。
+f07.unreadable,无法读取本档区域规则。
+f07.no_area,没有可编辑的区域。
+f08.enabled,按规则归仓选中货物
+f08.tip,选中货物后通过工具入口或快捷键归仓，按储藏区收货规则选择目标；未匹配或无法移动的货物留在原处。
+f08.occupied_drag,允许从物品上框选归仓货物
+f08.occupied_drag.tip,开启归仓后，按住游戏框选键和 Alt，从已有物品的格子拖出选框。
+f08.key,归仓选中货物
+f08.key.tip,对当前选区执行归仓；是否先预览由归仓预览设置决定。
+f08.open,按规则归仓选中物品
+f08.apply,确认归仓
+f08.select,请先选中货物。
+f08.no_rule,没有匹配的收货规则
+f08.missing,目标不可用
+f08.full,目标没有空间
+f08.locked,物品或区域不可移动
+f08.special,特殊区域不可收货
+f08.already,已在目标区域
+f08.parent,已选中外层容器
+f08.cycle,不能放入自身或后代容器
+f08.partial,暂不能移动部分堆叠
+f08.unknown,条件无法安全确认
+f08.changed,货物或位置已变化，请重新预览。
+f08.failed,无法生成归仓预览。
+f08.moved,已归仓 {0} 件。
+f08.stopped,已归仓 {0} 件；{1}
+f09.enabled,归仓前预览货物和去向
+f09.tip,归仓时按所选方式显示目标和未移动原因；关闭后直接执行归仓。
+f09.mode,归仓预览方式
+f09.mode.tip,选择每次预览、有未移动物品时预览，或仅预览不移动。
+f09.always,归仓时总是预览
+f09.conflicts,有未移动物品时预览归仓
+f09.simulate,只预览归仓，不移动货物
+f09.open,确认物品和归仓位置
+f09.target,{0}　{1} 件

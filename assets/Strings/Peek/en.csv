@@ -1,0 +1,9 @@
+f20.enabled,Preview container contents on hover
+f20.tip,In the store, hover over an accessible ordinary container to preview its contents. Locked, hidden or sealed contents still follow the game's normal opening rules.
+f20.delay,Container preview delay (ms)
+f20.delay.tip,Time to hover over a container before its preview appears; lower values show it sooner.
+f20.side,Container preview side
+f20.side.tip,Choose which side of the pointer shows the preview. Automatic chooses based on available screen space.
+f20.auto,Automatic
+f20.left,Left
+f20.right,Right

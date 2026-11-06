@@ -1,0 +1,48 @@
+f07.enabled,Set receiving rules for storage areas
+f07.tip,Right-click a storage grid or use its tools to choose accepted items, exclusions and priority. Routing uses these rules; each container page can have its own rules.
+f07.open,Set what this area receives
+f07.receive,Allow receiving goods
+f07.exclusive,Exclusive destination
+f07.priority,Priority -100 to 100
+f07.exclude,Add as exclusion
+f07.add_category,Add category
+f07.add_item,Add selected item
+f07.save,Save rule
+f07.delete,Delete rule
+f07.saved,Area rule saved.
+f07.failed,Could not save the area rule.
+f07.invalid,Enter a priority from -100 to 100.
+f07.unreadable,Could not read this save's routing rules.
+f07.no_area,No editable storage area is available.
+f08.enabled,Route selected goods using storage rules
+f08.tip,Select goods and route them from the tools or with a shortcut. Receiving rules choose the destination; unmatched or immovable goods stay where they are.
+f08.occupied_drag,Start routing selections on occupied cells
+f08.occupied_drag.tip,When routing is enabled, hold the game selection key and Alt to drag a selection from an occupied cell.
+f08.key,Route selected goods
+f08.key.tip,Route the current selection. The routing preview settings determine whether a preview appears first.
+f08.open,Route selected goods by rule
+f08.apply,Move goods
+f08.select,Select goods first.
+f08.no_rule,No matching receiving rule
+f08.missing,Destination unavailable
+f08.full,Destination has no space
+f08.locked,Item or area is locked
+f08.special,Special areas cannot receive goods
+f08.already,Already in the destination
+f08.parent,The enclosing container is selected
+f08.cycle,Cannot place an item in itself or its descendants
+f08.partial,Partial stacks are not supported yet
+f08.unknown,Conditions cannot be confirmed safely
+f08.changed,The items or locations changed. Preview again.
+f08.failed,Could not build the routing preview.
+f08.moved,Moved {0} units.
+f08.stopped,Moved {0} units; {1}
+f09.enabled,Preview goods and destinations before routing
+f09.tip,Show destinations and reasons goods cannot move according to the selected preview mode. When disabled, routing proceeds directly.
+f09.mode,Routing preview mode
+f09.mode.tip,Choose to preview every time, only when goods will not move, or without moving any goods.
+f09.always,Always preview routing
+f09.conflicts,Preview routing when goods will not move
+f09.simulate,Preview routing without moving goods
+f09.open,Check items and storage destinations
+f09.target,{0}　{1} units
