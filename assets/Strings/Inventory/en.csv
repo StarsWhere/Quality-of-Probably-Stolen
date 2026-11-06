@@ -1,0 +1,10 @@
+f02.enabled,Show container and machine names
+f02.tip,Show names on visible storage containers and machines, and in suitable untitled window headers. Default names, position and text size can be adjusted.
+f02.defaults,Show default container and machine names
+f02.defaults.tip,Also show default names for containers and machines without custom names.
+f02.background,Container and machine name background
+f02.background.tip,Add a dark background behind the name to improve contrast with the item icon.
+f02.upper,Move container and machine names upward
+f02.upper.tip,Place names near the top of items instead of the center.
+f02.font_size,Container and machine name size
+f02.font_size.tip,Set the name text size. It follows game scaling; long names shrink or truncate.

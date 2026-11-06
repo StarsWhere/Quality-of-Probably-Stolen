@@ -1,0 +1,22 @@
+grid.cancel,Cancel
+grid.open_storage,Open storage
+grid.hide_storage,Hide storage
+grid.capacity,Free cells: {0} / {1}
+grid.tab_idle,Idle
+grid.tab_other,Machines
+grid.tab_storage,Storage
+grid.compatible,Compatible
+grid.current_bay,Current bay
+grid.preview_bay,Preview
+grid.arrange,Arrange
+grid.choose_storage,Choose storage
+grid.storage_missing,No available storage selected
+grid.storage_footer,Return to: {0} · {1}/{2} cells free
+grid.stat_delta,{0} {1}% → {2}% ({3:+#;-#;0}%)
+grid.too_many,{0} selected; preview accepts up to 5.
+grid.more,More
+grid.mark_stuck,STK
+grid.mark_fixed,PIN
+grid.mark_reserved,RES
+grid.mark_locked,LCK
+grid.selected,{0} selected

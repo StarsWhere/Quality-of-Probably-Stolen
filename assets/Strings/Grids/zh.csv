@@ -1,0 +1,22 @@
+grid.cancel,取消
+grid.open_storage,打开收纳区
+grid.hide_storage,收起收纳区
+grid.capacity,空余格：{0} / {1}
+grid.tab_idle,闲置
+grid.tab_other,其他机器
+grid.tab_storage,收纳区
+grid.compatible,仅适用
+grid.current_bay,当前模组舱
+grid.preview_bay,预览
+grid.arrange,配装
+grid.choose_storage,选择收纳区
+grid.storage_missing,未指定或收纳区不可用
+grid.storage_footer,拖回：{0} · 空余 {1}/{2} 格
+grid.stat_delta,{0} {1}% → {2}%（{3:+#;-#;0}%）
+grid.too_many,已选 {0} 件，最多可预演 5 件。
+grid.more,更多
+grid.mark_stuck,卡
+grid.mark_fixed,固
+grid.mark_reserved,预
+grid.mark_locked,锁
+grid.selected,已选 {0}

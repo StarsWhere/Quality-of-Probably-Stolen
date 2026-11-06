@@ -1,0 +1,107 @@
+f25.enabled,Unload goods brought back from a trip
+f25.tip,When enabled, the backpack is recorded at departure. After returning, use the backpack or tools to choose newly acquired goods and a destination. New goods merged into an old stack need manual handling.
+f25.open,Unload this trip’s goods
+f25.none,No new cargo to unload.
+f25.choose,Choose an unloading area
+f25.check,Stack changed — check this item
+f25.bagmissing,The backpack used for this outing could not be found.
+f25.unload,Unload selected cargo
+f25.select,Select cargo to unload first.
+f25.record_failed,Could not record this trip's cargo. Check the backpack manually.
+f25.result,Unloaded {0} units
+f22.enabled,Batch-label matching items
+f22.tip,First label a sample with a labeler, then use the tools or shortcut to select matching items. The blue labeler copies names; the ordinary labeler repeats feature labels.
+f22.overwrite,Allow batch replacement of existing labels
+f22.overwrite.tip,Allow the batch to replace existing custom names or feature labels.
+f22.key,Open batch labeling
+f22.key.tip,Open batch labeling. If items are already selected, list only matching items in that selection.
+f22.open,Label a batch
+f22.sample,Equip the labeler and finish labeling one sample first.
+f22.copyName,Copy name · {0}
+f22.repeat,Repeat feature labels · {0}
+f22.none,No eligible matching items in the visible inventory.
+f22.apply,Label checked items
+f22.result,Labeled {0} · skipped {1}
+f29.enabled,Restock the showcase using rules
+f29.tip,Use the tools or right-click a source item to set the source, display target and source reserve. Preview and confirm restocking; ineligible goods and those that do not fit stay in place.
+f29.price,Restock only goods with a purchase price
+f29.price.tip,When enabled, both selecting goods and applying existing rules require a purchase price record on each item. Turn it off to allow goods without that record.
+f29.goal,Showcase target quantity (units)
+f29.goal.tip,Set the desired showcase count for this item when saving or updating a restock rule. Save the rule again after changing this value.
+f29.keep,Restock source reserve (units)
+f29.keep.tip,Set the minimum count of this item to retain at the source when saving or updating a restock rule. Save the rule again after changing this value.
+f29.open,Restock the showcase
+f29.choose,Choose an item from the source
+f29.add,Save rule · display {0} / retain {1}
+f29.row,{0} · display {1}/{2} · retain {3} · {4}
+f29.preview,Preview restock
+f29.summary,Ready to display {0} · still missing {1}
+f29.plan_line,{0} · take {1} · {2} left in the stack
+f29.shortfall_line,{0} · missing {1} · {2}
+f29.source_unavailable,Source area unavailable
+f29.keep_limit,Source stock cannot meet the goal while retaining the requested amount
+f29.blocked,Some goods are locked or do not match the filters
+f29.target_blocked,The display has no room or cannot accept this quantity
+f29.recovery_space,No space is available for recovery; free a storage cell first
+f29.back,Back to list
+f29.apply,Place on display
+f29.result,Placed {0} units on display
+f34.enabled,Choose customer goods by quote
+f34.tip,Open from negotiation or the customer goods list to compare selected goods using the customer’s quotes and budget. Get quotes at the trade counter first; staging the chosen goods can be enabled separately.
+f34.move,Allow staging the chosen goods on the counter
+f34.move.tip,After confirmation, place items one at a time and recheck each customer quote. Staging stops if quotes, budget or goods change; complete the sale yourself.
+f34.open,Choose goods within the budget
+f34.budget,Displayed customer budget · {0}
+f34.unshown,Enter the spending limit for this basket.
+f34.limit,Custom spending limit
+f34.unpriced,Get a native counter quote first
+f34.compare,Compare baskets
+f34.noOffer,No selected and quoted goods fit within the budget.
+f34.summary,{0} units · total {1} · remaining {2}
+f34.place,Stage on the trade counter
+f34.back,Back to item selection
+f34.desk,Open negotiation and clear counter items outside this basket.
+f34.ready,Basket staged. Complete the deal yourself.
+f34.changed,Staging stopped. Check the goods, quote and budget on the counter.
+f36.enabled,Plan which scavenged goods to take
+f36.tip,Open the packing list at the dumping ground to select revealed goods, priorities and excluded categories. Preview before packing into the backpack or pockets; goods that do not fit stay behind.
+f36.space,Scavenging backpack reserve (cells)
+f36.space.tip,Leave this many of the backpack’s existing empty cells free when planning a pack. Pockets are unaffected.
+f36.key,Open scavenging packing list
+f36.key.tip,Open the scavenging packing list at the dumping ground.
+f36.open,Choose items to bring back
+f36.priority,Take marked priority items first
+f36.value,Only pack items with known values, highest first
+f36.first,Favorite
+f36.exclude_category,Exclude category
+f36.category_excluded,Category excluded
+f36.type_unknown,Category unknown
+f36.noPrice,Value unknown
+f36.preview,Preview packing
+f36.summary,Can pack {0} units · leave {1} stacks
+f36.pack_row,Pack: {0} × {1}
+f36.leave_row,Leave: {0} × {1}
+f36.apply,Pack this selection
+f36.result,Packed {0} units
+f26.enabled,Pour multiple water sources into one container
+f26.tip,In the shop, right-click a water container or use the tools. Choose an empty target or one with an identified grade, and identified sources. Preview and confirm; remaining sources pause if the filter is exhausted.
+f26.mix,Allow mixing different water grades
+f26.mix.tip,Allow identified sources of different grades when gathering water. Mixing still requires confirmation.
+f26.key,Open water gathering
+f26.key.tip,Open the water gathering window in the shop to choose available containers.
+f26.open,Gather liquids into one vessel
+f26.target,Choose target vessel
+f26.hint,Use an empty or tested target. Open the bags containing your vessels first.
+f26.free,Target capacity remaining · {0} mL
+f26.preview,Preview pouring
+f26.mixNotice,Composition may differ even within one grade. Pouring combines these liquids.
+f26.filter,The target contains a filter. The amount received may be lower.
+f26.approveMix,Confirm mixing and pour
+f26.pour,Confirm pour
+f26.result,Source outflow {0} mL · received {1} mL
+f26.confirmed,Confirmed outflow {0} mL · received {1} mL
+f26.filterPaused,Filter exhausted · outflow {0} mL · received {1} mL. Remaining sources are still selected.
+f26.pourUnfiltered,Pour with the exhausted filter
+f25.split,New units merged with an older stack. Handle this stack manually.
+f25.handled,Mark handled
+f34.limited,Compared the {0} lowest and highest priced items out of {1}. Uncheck goods to narrow the search.
