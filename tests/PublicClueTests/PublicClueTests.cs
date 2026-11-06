@@ -13,19 +13,6 @@ internal static class PublicClueTests
 
     private static void CategoryMatch()
     {
-        var interests = new HashSet<string> { "FOOD" };
-        var restrictions = new HashSet<string> { "CONTRABAND" };
-        var visible = new HashSet<string> { "FOOD", "FRESH_FOOD" };
-        Check(PublicClues.Match(interests, restrictions, visible) == PublicMatch.Match, "a disclosed category matches");
-        Check(PublicClues.Match(interests, restrictions, null) == PublicMatch.Unknown, "undisclosed types stay unknown");
-        Check(PublicClues.Match(null, restrictions, visible) == PublicMatch.Unknown, "undisclosed demand stays unknown");
-        Check(PublicClues.Match(interests, restrictions, new[] { "FOOD", "CONTRABAND" }) == PublicMatch.Unknown,
-            "a public restriction prevents a match");
-        Check(PublicClues.Match(interests, restrictions, new[] { "FOOD", "NOT_FOR_RESALE" }) == PublicMatch.Unknown,
-            "the visible not-for-resale type prevents a match");
-        // No hidden item identifier, unseen feature or actual acceptance result is an input.
-        Check(PublicClues.Match(interests, restrictions, new[] { "FOOD" }) ==
-            PublicClues.Match(interests, restrictions, new[] { "FOOD" }), "identical public facts must have identical output");
         Check(PublicClues.ContainsShownType("Bread [Food] [Fresh]", "Food"), "shown type can be recorded");
         Check(!PublicClues.ContainsShownType("Bread [Fresh]", "Food"), "unshown type cannot be inferred");
         Check(PublicClues.AllowedByExclusions(null, null), "unknown types remain selectable without a category filter");

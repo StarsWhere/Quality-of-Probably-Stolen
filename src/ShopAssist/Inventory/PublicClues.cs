@@ -5,25 +5,9 @@ namespace ShopAssist
 {
     [Flags]
     internal enum PublicRisk { None = 0, Stolen = 1, Contraband = 2 }
-    internal enum PublicMatch { Unknown, Match }
-
-    // Only already-public categories enter this calculation. A match denotes
-    // the displayed interest category, not a sale or an accepted price.
+    // Observation helpers remain shared by inventory labels and routing.
     internal static class PublicClues
     {
-        internal static PublicMatch Match(ICollection<string> interests, ICollection<string> restrictions,
-            ICollection<string> types)
-        {
-            if (interests == null || types == null) return PublicMatch.Unknown;
-            if (types.Contains("NOT_FOR_RESALE")) return PublicMatch.Unknown;
-            if (restrictions != null)
-                foreach (string type in types)
-                    if (restrictions.Contains(type)) return PublicMatch.Unknown;
-            foreach (string type in types)
-                if (interests.Contains(type)) return PublicMatch.Match;
-            return PublicMatch.Unknown;
-        }
-
         internal static bool ContainsShownType(string tooltip, string localizedType)
         {
             return !string.IsNullOrEmpty(tooltip) && !string.IsNullOrEmpty(localizedType) &&

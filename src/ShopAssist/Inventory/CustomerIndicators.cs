@@ -18,12 +18,10 @@ namespace ShopAssist
         private static CustomerIndicators current;
         private readonly ShopSettings settings;
         private readonly Action<string> log;
-        private readonly ConfigEntry<bool> demandEnabled, inspectionEnabled, stolenEnabled, contrabandEnabled, inspectUnseen;
+        private readonly ConfigEntry<bool> demandEnabled, ignoreMerchant, clientGoods, inspectionEnabled, stolenEnabled, contrabandEnabled, inspectUnseen;
         private readonly ViewOutlines outlines = new ViewOutlines();
         private readonly Dictionary<GameItem, Observation> observations = new Dictionary<GameItem, Observation>();
         private readonly KnownRiskLedger<GameItem, GameInventory> risks = new KnownRiskLedger<GameItem, GameInventory>();
-        private readonly HashSet<string> interests = new HashSet<string>(StringComparer.Ordinal);
-        private readonly HashSet<string> restrictions = new HashSet<string>(StringComparer.Ordinal);
         private readonly HashSet<GameItemElement> visible = new HashSet<GameItemElement>();
         private readonly HashSet<GameItemElement> drawn = new HashSet<GameItemElement>();
         private readonly List<TreeNodeRender> scratchNodes = new List<TreeNodeRender>();
@@ -32,6 +30,7 @@ namespace ShopAssist
         private RichText pendingTooltip;
         private int pendingTooltipFrame;
         private bool started, dirty = true;
+        private float nextRefresh;
         private string lastError;
 
         internal CustomerIndicators(ShopSettings settings, Action<string> log)
@@ -39,6 +38,8 @@ namespace ShopAssist
             this.settings = settings ?? throw new ArgumentNullException(nameof(settings));
             this.log = log ?? throw new ArgumentNullException(nameof(log));
             demandEnabled = settings.Toggle("f03.enabled", "f03.tip", true);
+            ignoreMerchant = settings.Toggle("f03.ignore_merchant", "f03.ignore_merchant.tip", true);
+            clientGoods = settings.Toggle("f03.client_goods", "f03.client_goods.tip");
             inspectionEnabled = settings.Toggle("f04.enabled", "f04.tip", true);
             stolenEnabled = settings.Toggle("f04.stolen", "f04.stolen.tip", true);
             contrabandEnabled = settings.Toggle("f04.contraband", "f04.contraband.tip", true);
@@ -48,8 +49,14 @@ namespace ShopAssist
         internal event Action Changed;
         internal static event Action<GameItemElement, string> PublicTooltipShown;
         internal StoreClientInstance Customer => CurrentCustomer();
-        internal bool HasPublicDemand => CurrentCustomer() != null && ReferenceEquals(customer, CurrentCustomer()) &&
-            interests.Count != 0;
+        internal bool HasDemand => DemandClient() != null;
+        internal bool HasBuyingDemand => DemandClient()?.IsClientBuying() == true;
+
+        private static StoreClient DemandClient()
+        {
+            StoreClient client = CurrentCustomer()?.GetClientBlueprint();
+            return client != null && (client.IsClientBuying() || client.clientIntent == StoreClient.ClientIntent.BARTER) ? client : null;
+        }
 
         public void Start()
         {
@@ -82,10 +89,15 @@ namespace ShopAssist
             if (!ReferenceEquals(customer, active))
             {
                 customer = active;
-                interests.Clear();
-                restrictions.Clear();
                 dirty = true;
                 NotifyChanged();
+            }
+            // Native acceptance can change in place as item features, barter offers,
+            // and buyer variety change without a window or inventory event.
+            if (active != null && Time.unscaledTime >= nextRefresh)
+            {
+                dirty = true;
+                nextRefresh = Time.unscaledTime + 0.5f;
             }
             if (!dirty || WindowsHandler.current == null || WindowsHandler.current.visibleWindows == null ||
                 RenderHandler.current == null) return;
@@ -115,17 +127,21 @@ namespace ShopAssist
                 return;
             }
             var locations = new Dictionary<GameInventory, ShopInventory.Location>();
-            foreach (ShopInventory.Location location in ShopInventory.OwnedLocations(true))
+            foreach (ShopInventory.Location location in ShopInventory.CustomerLocations())
                 if (location.Inventory != null) locations[location.Inventory] = location;
             foreach (PixelWindow window in WindowsHandler.current.visibleWindows)
                 VisibleInventoryViews.Collect(window, scratchNodes, visible);
 
             bool inspector = IsInspector();
             var extra = inspector && inspectionEnabled.Value && inspectUnseen.Value ? RiskInAccessibleBags() : null;
+            StoreClient activeClient = CurrentCustomer()?.GetClientBlueprint();
+            bool showDemand = demandEnabled.Value && !inspector && HasDemand &&
+                !(ignoreMerchant.Value && activeClient.clientIntent != StoreClient.ClientIntent.BARTER && BuysEverything(activeClient));
+            var containedDemand = showDemand ? DemandInsideVisibleContainers(locations.Values) : null;
             foreach (GameItemElement item in visible)
             {
                 if (!locations.TryGetValue(item.parentInventory, out ShopInventory.Location location) ||
-                    location.IsMachine || !GeneralHelper.IsItemEffectivelyOwned(item) ||
+                    !DemandLocation(location) || !GeneralHelper.IsItemEffectivelyOwned(item) ||
                     item.background == null || item.background.image == null || !item.background.image.enabled)
                     continue;
                 PublicRisk direct = KnownRisk(item);
@@ -137,11 +153,12 @@ namespace ShopAssist
             foreach (GameItemElement item in visible)
             {
                 if (!locations.TryGetValue(item.parentInventory, out ShopInventory.Location location) ||
-                    location.IsMachine || !GeneralHelper.IsItemEffectivelyOwned(item) ||
+                    !DemandLocation(location) ||
                     item.background == null || item.background.image == null || !item.background.image.enabled)
                     continue;
                 ViewOutlineKind? kind = null;
-                if (inspector && inspectionEnabled.Value && ShopInventory.Owned(item))
+                bool owned = ShopInventory.Owned(item);
+                if (inspector && inspectionEnabled.Value && owned)
                 {
                     PublicRisk direct = SelectedRisk(KnownRisk(item));
                     containedRisks.TryGetValue(item, out PublicRisk knownInside);
@@ -156,8 +173,17 @@ namespace ShopAssist
                     else if ((contained & PublicRisk.Contraband) != 0) kind = ViewOutlineKind.ContainsContraband;
                     else if ((contained & PublicRisk.Stolen) != 0) kind = ViewOutlineKind.ContainsStolen;
                 }
-                if (kind == null && demandEnabled.Value && !inspector && Match(item) == PublicMatch.Match)
-                    kind = ViewOutlineKind.Demand;
+                if (kind == null && showDemand && owned)
+                {
+                    if (Matches(item)) kind = DemandKind(item, false);
+                    else if (containedDemand.TryGetValue(item, out ViewOutlineKind contained)) kind = contained;
+                }
+                if (kind == null && demandEnabled.Value && !inspector && clientGoods.Value && activeClient?.IsClientSelling() == true &&
+                    !GeneralHelper.IsItemOwned(item) && !item.IsTag("ITEM_HIDDEN_TAG") && !item.IsTag("ITEM_BEHIND_LOCK_TAG"))
+                {
+                    if (ContrabandHelper.IsContraband(item)) kind = ViewOutlineKind.Contraband;
+                    else if (StolenHelper.IsStolenItem(item)) kind = ViewOutlineKind.Stolen;
+                }
                 if (kind.HasValue)
                 {
                     outlines.Show(item, kind.Value);
@@ -180,14 +206,63 @@ namespace ShopAssist
             return value;
         }
 
-        internal PublicMatch Match(GameItem item)
+        internal static bool DemandLocation(ShopInventory.Location location) => location != null &&
+            (!location.IsMachine || location.Role == "output");
+
+        private static bool BuysEverything(StoreClient client) => client?.clientBuyingTagList != null &&
+            (client.clientBuyingTagList.Contains("ALL_TYPE") || client.clientBuyingTagList.Contains("ALL_TYPE_EXCEPT_CONTRABAND"));
+
+        internal bool Matches(GameItem item)
         {
-            if (!HasPublicDemand || !(item is GameItemElement element)) return PublicMatch.Unknown;
-            if (restrictions.Contains("CONTRABAND") && (KnownRisk(element) & PublicRisk.Contraband) != 0)
-                return PublicMatch.Unknown;
-            ICollection<string> types = KnownTypes(element);
-            return PublicClues.Match(interests, restrictions, types);
+            StoreClient client = DemandClient();
+            if (client == null || item == null) return false;
+            if (client.clientIntent == StoreClient.ClientIntent.BARTER)
+            {
+                var conditions = client.barterOffer?.conditions;
+                if (conditions != null && conditions.Count != 0)
+                {
+                    foreach (BarterCondition condition in conditions)
+                        if (condition != null && condition.IsItemValid(item)) return true;
+                    return false;
+                }
+            }
+            return client.IsClientBuyingThisItem(item);
         }
+
+        private static ViewOutlineKind DemandKind(GameItem item, bool contained)
+        {
+            if (ContrabandHelper.IsContraband(item)) return contained ? ViewOutlineKind.ContainsContraband : ViewOutlineKind.Contraband;
+            if (StolenHelper.IsStolenItem(item)) return contained ? ViewOutlineKind.ContainsStolen : ViewOutlineKind.Stolen;
+            return contained ? ViewOutlineKind.ContainsDemand : ViewOutlineKind.Demand;
+        }
+
+        private Dictionary<GameItem, ViewOutlineKind> DemandInsideVisibleContainers(IEnumerable<ShopInventory.Location> locations)
+        {
+            var result = new Dictionary<GameItem, ViewOutlineKind>();
+            foreach (ShopInventory.Location location in locations)
+            {
+                if (!DemandLocation(location) || location.Path == null || location.Path.Length == 0) continue;
+                bool hasVisibleAncestor = false;
+                foreach (GameItem host in location.Path)
+                    if (host is GameItemElement element && visible.Contains(element)) { hasVisibleAncestor = true; break; }
+                if (!hasVisibleAncestor) continue;
+                foreach (GameItem child in location.Inventory.childItems)
+                {
+                    if (!ShopInventory.Owned(child) || !Matches(child)) continue;
+                    ViewOutlineKind kind = DemandKind(child, true);
+                    foreach (GameItem host in location.Path)
+                    {
+                        if (host is not GameItemElement element || !visible.Contains(element)) continue;
+                        if (!result.TryGetValue(host, out ViewOutlineKind prior) || DemandPriority(kind) > DemandPriority(prior))
+                            result[host] = kind;
+                    }
+                }
+            }
+            return result;
+        }
+
+        private static int DemandPriority(ViewOutlineKind kind) => kind == ViewOutlineKind.ContainsContraband ? 3 :
+            kind == ViewOutlineKind.ContainsStolen ? 2 : 1;
 
         internal ICollection<string> KnownTypes(GameItemElement item)
         {
@@ -277,8 +352,6 @@ namespace ShopAssist
         {
             observations.Clear();
             risks.Clear();
-            interests.Clear();
-            restrictions.Clear();
             customer = null;
             pendingTooltipItem = null;
             pendingTooltip = null;
@@ -290,20 +363,10 @@ namespace ShopAssist
         internal static void DemandDisplayed(StoreClient client)
         {
             CustomerIndicators owner = current;
-            if (owner == null || !owner.started || client == null || !client.IsClientBuying() ||
-                NegociationUIManager.Instance == null || !NegociationUIManager.Instance.IsOpen) return;
+            if (owner == null || !owner.started || client == null) return;
             StoreClientInstance active = CurrentCustomer();
             if (active == null || !ReferenceEquals(active.GetClientBlueprint(), client)) return;
             owner.customer = active;
-            owner.interests.Clear();
-            owner.restrictions.Clear();
-            if (client.clientBuyingTagList != null)
-                foreach (string type in client.clientBuyingTagList)
-                    if (TypeHelper.ALL_TYPES_LIST.Contains(type)) owner.interests.Add(type);
-            if (client.clientBlackTagList != null)
-                foreach (string type in client.clientBlackTagList)
-                    if (TypeHelper.ALL_TYPES_LIST.Contains(type)) owner.restrictions.Add(type);
-            if (client.noAcceptingContraband) owner.restrictions.Add("CONTRABAND");
             owner.dirty = true;
             owner.NotifyChanged();
         }
@@ -385,13 +448,10 @@ namespace ShopAssist
         {
             CustomerIndicators owner = current;
             if (owner == null || !owner.started || item == null) return;
-            bool changed = owner.observations.Remove(item);
-            changed |= owner.risks.InvalidateItem(item);
-            if (changed)
-            {
-                owner.dirty = true;
-                owner.NotifyChanged();
-            }
+            owner.observations.Remove(item);
+            owner.risks.InvalidateItem(item);
+            owner.dirty = true;
+            owner.NotifyChanged();
         }
 
         private void NotifyChanged()
@@ -422,6 +482,18 @@ namespace ShopAssist
     internal static class PublicDemandDisplayedPatch
     {
         private static void Postfix(StoreClient storeClient) => CustomerIndicators.DemandDisplayed(storeClient);
+    }
+
+    [HarmonyPatch(typeof(NegociationUIManager), "BuildBarter")]
+    internal static class BarterDemandDisplayedPatch
+    {
+        private static void Postfix(StoreClient storeClient) => CustomerIndicators.DemandDisplayed(storeClient);
+    }
+
+    [HarmonyPatch(typeof(PlayerStore), nameof(PlayerStore.SellItem))]
+    internal static class CustomerSoldPatch
+    {
+        private static void Postfix() => CustomerIndicators.DemandDisplayed(PlayerStore.Instance?.currentClientInstance?.GetClientBlueprint());
     }
 
     [HarmonyPatch(typeof(GameItemElement), nameof(GameItemElement.GetTooltip))]

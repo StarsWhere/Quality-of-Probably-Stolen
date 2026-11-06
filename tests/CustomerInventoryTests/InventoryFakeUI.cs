@@ -21,15 +21,30 @@ public sealed class CustomUIWindow
     public bool IsAlive = true;
     public GameObject root = new GameObject();
     internal Action Closed;
+    private readonly Dictionary<string, Action> actions = new Dictionary<string, Action>();
+    private readonly Dictionary<string, CustomUIElement> elements = new Dictionary<string, CustomUIElement>();
+    public RectTransform ContentRoot => (RectTransform)root.transform;
+    public RectTransform Rect => (RectTransform)root.transform;
+    public void SetSize(float width, float height) => Rect.sizeDelta = new Vector2(width, height);
+    internal void AddAction(string id, Action action) { if (id != null) actions[id] = action; }
+    internal void Click(string id) => actions[id]();
     public void BringToFront() { }
     public void Close() { if (!IsAlive) return; IsAlive = false; Closed?.Invoke(); }
 }
 
 public sealed class CustomUIBuilder
 {
-    private readonly CustomUIWindow window = new CustomUIWindow();
-    public FakeElement Last = new FakeElement();
-    public CustomUIBuilder SetSize(int x, int y) => this;
+    private readonly CustomUIWindow window;
+    public RectTransform CurrentContainer;
+    public CustomUIBuilder() { window = new CustomUIWindow(); CurrentContainer = window.ContentRoot; }
+    public CustomUIBuilder(CustomUIManager manager, CustomUIWindow window, RectTransform parent) { this.window = window; CurrentContainer = parent; }
+    public CustomUIElement Last = new CustomUIElement();
+    public static void ClearContainer(RectTransform parent)
+    {
+        while (parent.childCount != 0) UnityEngine.Object.Destroy(parent.GetChild(0).gameObject);
+    }
+    public static void RebuildLayout(RectTransform parent) { }
+    public CustomUIBuilder SetSize(float x, float y) { window.SetSize(x, y); return this; }
     public CustomUIBuilder SetDraggable(bool value) => this;
     public CustomUIBuilder SetCloseOnEscape(bool value) => this;
     public CustomUIWindow GetWindow() => window;
@@ -37,13 +52,19 @@ public sealed class CustomUIBuilder
     public CustomUIBuilder BeginRow() => this;
     public CustomUIBuilder AddLabel(string value) => this;
     public CustomUIBuilder AddFlexibleSpace() => this;
-    public CustomUIBuilder AddButton(string value, Action action, string id = null) => this;
-    public CustomUIBuilder End() => this;
-    public CustomUIBuilder BeginScrollFlexible(int value) => this;
+    public CustomUIBuilder AddButton(string value, Action action, string id = null) { window.AddAction(id, action); return this; }
+    public CustomUIBuilder End() { CurrentContainer = window.ContentRoot; return this; }
+    public CustomUIBuilder BeginScrollFlexible(int value)
+    {
+        var viewport = new GameObject("scroll"); viewport.transform.SetParent(CurrentContainer);
+        viewport.Add(new UnityEngine.UI.ScrollRect());
+        var body = new GameObject("scroll content"); body.transform.SetParent(viewport.transform);
+        CurrentContainer = body.transform; return this;
+    }
     public void Show() { }
 }
 
-public sealed class FakeElement
+public sealed class CustomUIElement
 {
     public TMPro.TMP_Text text;
     public void SetFlexible(int width, int height) { }
@@ -83,7 +104,7 @@ namespace ShopAssist
         internal sealed class Entry
         {
             internal readonly GameItem Item;
-            internal string Caption, Badge, Reason;
+            internal string Caption, SourceLabel, StatusLabel, QuoteLabel;
             internal Entry(GameItem item) { Item = item; }
         }
         internal sealed class Options
@@ -97,9 +118,30 @@ namespace ShopAssist
         }
         internal static List<Entry> LastEntries = new List<Entry>();
         internal static Options LastOptions;
+        internal static int AddCount;
+        internal static bool DragActive = false;
         internal static void Add(CustomUIBuilder builder, IEnumerable<Entry> entries, Options options)
         {
-            LastEntries = entries.ToList(); LastOptions = options;
+            LastEntries = entries.ToList(); LastOptions = options; AddCount++;
+        }
+    }
+    internal static class UiLayout
+    {
+        internal static int Page, Pages;
+        internal static Action Previous, Next;
+        internal static Vector2 Fit(float width, float height) => new Vector2(width, height);
+        internal static void RestoreScroll(Transform content, float position)
+        {
+            var scroll = content?.GetComponentInParent<UnityEngine.UI.ScrollRect>();
+            if (scroll != null) scroll.verticalNormalizedPosition = Math.Max(0, Math.Min(1, position));
+        }
+        internal static void Pager(CustomUIBuilder builder, int page, int count, int size, Action<int> change)
+        {
+            Pages = Math.Max(1, (count + size - 1) / size);
+            Page = Math.Max(0, Math.Min(page, Pages - 1));
+            int current = Page;
+            Previous = Pages > 1 && current > 0 ? () => change(current - 1) : null;
+            Next = Pages > 1 && current + 1 < Pages ? () => change(current + 1) : null;
         }
     }
     internal static class ItemGridMove

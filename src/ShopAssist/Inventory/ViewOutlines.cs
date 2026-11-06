@@ -4,7 +4,7 @@ using UnityEngine;
 
 namespace ShopAssist
 {
-    internal enum ViewOutlineKind { Demand, Stolen, Contraband, ContainsStolen, ContainsContraband, Locate, Hold }
+    internal enum ViewOutlineKind { Demand, Stolen, Contraband, ContainsDemand, ContainsStolen, ContainsContraband, Locate, Hold }
 
     // Owned render nodes are children of the same rotating view as the item.
     // Each boundary is inset into an occupied cell, so irregular shapes do not
@@ -37,7 +37,7 @@ namespace ShopAssist
             for (int y = 0; y < shape.height; y++)
                 for (int x = 0; x < shape.width; x++)
                     cells[y * shape.width + x] = shape.GetLocal(x, y) != 0;
-            bool dashed = kind == ViewOutlineKind.ContainsStolen || kind == ViewOutlineKind.ContainsContraband;
+            bool dashed = kind == ViewOutlineKind.ContainsDemand || kind == ViewOutlineKind.ContainsStolen || kind == ViewOutlineKind.ContainsContraband;
             bool insetForPeer = InsetForPeer(item, kind);
             List<OutlineSegment> segments = OutlineGeometry.Build(cells, shape.width, shape.height,
                 UISettings.current.gridSize, dashed, insetForPeer ? 2.5f : 0);
@@ -55,7 +55,7 @@ namespace ShopAssist
             }
             Color color = kind == ViewOutlineKind.Hold ? new Color(0.7f, 0.6f, 1f, 1f) :
                 kind == ViewOutlineKind.Locate ? new Color(0.35f, 0.7f, 1f, 1f) :
-                kind == ViewOutlineKind.Demand ? new Color(0.2f, 0.95f, 0.75f, 1f) :
+                kind == ViewOutlineKind.Demand || kind == ViewOutlineKind.ContainsDemand ? new Color(0.2f, 0.95f, 0.75f, 1f) :
                 (kind == ViewOutlineKind.Stolen || kind == ViewOutlineKind.ContainsStolen
                     ? new Color(1f, 0.65f, 0.15f, 1f) : new Color(1f, 0.25f, 0.22f, 1f));
             outline.Kind = kind;
@@ -139,7 +139,7 @@ namespace ShopAssist
             bool amber = Math.Abs(color.r - 1f) < 0.02f && Math.Abs(color.g - 0.7f) < 0.02f && Math.Abs(color.b - 0.1f) < 0.02f;
             bool red = Math.Abs(color.r - 0.95f) < 0.02f && Math.Abs(color.g - 0.22f) < 0.02f && Math.Abs(color.b - 0.2f) < 0.02f;
             bool green = Math.Abs(color.r - 0.3f) < 0.02f && Math.Abs(color.g - 0.9f) < 0.02f && Math.Abs(color.b - 0.35f) < 0.02f;
-            return kind == ViewOutlineKind.Demand ? green || amber || red : kind == ViewOutlineKind.Stolen ? amber : red;
+            return kind == ViewOutlineKind.Demand ? green : kind == ViewOutlineKind.Stolen ? amber : red;
         }
 
         private static TreeNodeRender NewNode(TreeNodeRender parent, string name)
