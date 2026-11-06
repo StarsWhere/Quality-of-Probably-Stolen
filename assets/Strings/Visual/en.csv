@@ -18,3 +18,10 @@ f36.leave,Leave here
 f27.order_summary,{0} items needed · {1} days remaining
 f27.ready,Reserved
 visual.attention,Needs attention
+visual.attention_count,Needs attention {0}
+visual.manage,Manage features
+visual.show_disabled,Show disabled
+visual.no_actions,No enabled tools
+visual.object_tools,Object tools
+visual.no_object_actions,No tools to show
+visual.no_quick_actions,No shortcuts in this category

@@ -23,6 +23,15 @@ namespace UnityEngine
             gameObject.Collect(includeInactive, result);
             return result.ToArray();
         }
+        public T GetComponentInParent<T>() where T : Component
+        {
+            for (Transform node = transform; node != null; node = node.parent)
+            {
+                T found = node.gameObject.GetComponent<T>();
+                if (found != null) return found;
+            }
+            return null;
+        }
     }
 
     public class Behaviour : Component
@@ -37,6 +46,12 @@ namespace UnityEngine
         public Vector2(float x, float y) { this.x = x; this.y = y; }
         public static Vector2 zero => new Vector2(0, 0);
         public static Vector2 one => new Vector2(1, 1);
+    }
+
+    public struct Vector3
+    {
+        public float x, y, z;
+        public Vector3(float x, float y, float z = 0) { this.x = x; this.y = y; this.z = z; }
     }
 
     public struct Color
@@ -61,10 +76,12 @@ namespace UnityEngine
 
     public enum RenderMode { ScreenSpaceOverlay, ScreenSpaceCamera }
     public class Camera { }
-    public class Canvas { public RenderMode renderMode; public Camera worldCamera; }
+    public class Canvas : Component { public RenderMode renderMode; public Camera worldCamera; public float scaleFactor = 1; }
+    public static class Screen { public static int width = 1280, height = 720; }
     public static class RectTransformUtility
     {
         public static bool RectangleContainsScreenPoint(RectTransform rect, Vector2 position, Camera camera) => false;
+        public static Vector2 WorldToScreenPoint(Camera camera, Vector3 position) => new Vector2(position.x, position.y);
     }
 
     public static class Time { public static int frameCount; public static float unscaledTime; }
@@ -73,7 +90,9 @@ namespace UnityEngine
     public static class Input
     {
         public static Vector2 mousePosition;
-        public static bool GetMouseButton(int button) => false;
+        public static readonly bool[] MouseHeld = new bool[3], MouseUp = new bool[3];
+        public static bool GetMouseButton(int button) => MouseHeld[button];
+        public static bool GetMouseButtonUp(int button) => MouseUp[button];
         public static bool GetKeyDown(KeyCode key) => false;
     }
 
@@ -85,6 +104,7 @@ namespace UnityEngine
     public class Transform : Component
     {
         internal readonly List<Transform> children = new List<Transform>();
+        public Vector3 position;
         private Transform parentValue;
         public Transform parent => parentValue;
         public void SetParent(Transform value)
@@ -129,6 +149,7 @@ namespace UnityEngine
 
         public void SetActive(bool value) => activeSelf = value;
         public T GetComponent<T>() where T : Component => components.Find(c => c is T) as T;
+        public T GetComponentInParent<T>() where T : Component => transform.GetComponentInParent<T>();
         public void GetComponents<T>(List<T> result) where T : Component
         {
             result.Clear();
@@ -162,7 +183,10 @@ namespace UnityEngine.UI
         public UnityEngine.Color color;
     }
     public sealed class Image : Graphic { public object sprite; }
+    public sealed class ScrollRect : UnityEngine.Behaviour { public float verticalNormalizedPosition = 1; }
 }
+
+public static class UIDragHandler { public static bool isDraggingAnyUI; }
 
 namespace TMPro
 {
@@ -294,11 +318,12 @@ public class GameItem
     public PixelWindow contentWindow;
     public GameInventory parentInventory = new GameGridInventory();
     public bool isDebugMenu;
-    public string customText, customName, name = "Storage";
+    public string customText, customName, name = "Storage", identifier = "item";
     public int unitCount = 1;
     public bool machineTag;
     public bool safeToOpen = true;
     public bool hiddenAcceptance;
+    public bool isOwned = true;
     public object tooltipRichTextFunc;
     public readonly HashSet<string> tags = new HashSet<string>();
     public readonly List<string> types = new List<string>();
@@ -325,7 +350,8 @@ public static class GeneralHelper
 {
     public static bool HasCustomName(GameItem item) => item.customName != null;
     public static string GetCustomName(GameItem item) => item.customName;
-    public static bool IsItemEffectivelyOwned(GameItem item) => true;
+    public static bool IsItemEffectivelyOwned(GameItem item) => item.isOwned;
+    public static bool IsItemOwned(GameItem item) => item.isOwned;
 }
 
 public static class StorageExpansionHelper
@@ -392,11 +418,16 @@ public sealed class ItemFeature
     public string GetBaseCurrentDisplay() { reads++; return display; }
 }
 public static class WaterHelper { public static bool IsEmpty(GameItem item) => false; }
-public static class StolenHelper { public const string STOLEN_TAG = "STOLEN_TAG"; }
+public static class StolenHelper
+{
+    public const string STOLEN_TAG = "STOLEN_TAG";
+    public static bool IsStolenItem(GameItem item) => item.IsTag(STOLEN_TAG);
+}
 public static class ContrabandHelper
 {
     public const string CONTRABAND_ITEM_TAG = "CONTRABAND_ITEM_TAG", CONTRABAND_LEVEL = "CONTRABAND_LEVEL";
     public const string CONTRABAND_LEVEL_LOW = "LOW", CONTRABAND_LEVEL_MID = "MID", CONTRABAND_LEVEL_HIGH = "HIGH", CONTRABAND_LEVEL_CRITICAL = "CRITICAL";
+    public static bool IsContraband(GameItem item) => item.IsTag(CONTRABAND_ITEM_TAG);
 }
 public static class TypeHelper
 {
@@ -410,12 +441,29 @@ public static class LocHelper
 }
 public sealed class StoreClient
 {
-    public enum ClientIntent { BUY, INSPECTION }
+    public enum ClientIntent { BUY, SELL, SELLNBUY, INSPECTION, BARTER }
     public ClientIntent clientIntent = ClientIntent.BUY;
     public bool isBusinessComplete, noAcceptingContraband;
     public List<string> clientBuyingTagList = new List<string>();
+    public List<string> clientBuyingIdList = new List<string>();
     public List<string> clientBlackTagList = new List<string>();
-    public bool IsClientBuying() => clientIntent == ClientIntent.BUY;
+    public BarterOffer barterOffer;
+    public bool IsClientBuying() => clientIntent == ClientIntent.BUY || clientIntent == ClientIntent.SELLNBUY;
+    public bool IsClientSelling() => clientIntent == ClientIntent.SELL || clientIntent == ClientIntent.SELLNBUY;
+    public bool IsClientBuyingThisItem(GameItem item)
+    {
+        if (item.hiddenAcceptance || item.IsTag("NOT_FOR_RESALE") ||
+            (noAcceptingContraband && ContrabandHelper.IsContraband(item)) || item.types.Exists(clientBlackTagList.Contains)) return false;
+        return clientBuyingTagList.Contains("ALL_TYPE") ||
+            (clientBuyingTagList.Contains("ALL_TYPE_EXCEPT_CONTRABAND") && !ContrabandHelper.IsContraband(item)) ||
+            clientBuyingIdList.Contains(item.identifier) || item.types.Exists(clientBuyingTagList.Contains);
+    }
+}
+public sealed class BarterOffer { public List<BarterCondition> conditions = new List<BarterCondition>(); }
+public sealed class BarterCondition
+{
+    public string requiredItemId;
+    public bool IsItemValid(GameItem item) => item.identifier == requiredItemId && !item.hiddenAcceptance;
 }
 public sealed class StoreClientInstance
 {
@@ -429,6 +477,7 @@ public sealed class PlayerStore
     public string runID = "run";
     public int saveSlotId = 1;
     public StoreClientInstance currentClientInstance = new StoreClientInstance();
+    public void SellItem(GameItem item) { }
 }
 public sealed class NegociationUIManager
 {
@@ -468,7 +517,8 @@ namespace ShopAssist
         internal static readonly List<Location> Locations = new List<Location>();
         internal static List<Location> OwnedLocations(bool onlyOpen) => Locations;
         internal static List<Location> CustomerLocations() => Locations;
-        internal static bool Owned(GameItem item) => item != null;
+        internal static bool Owned(GameItem item) => item != null && item.isOwned &&
+            !item.IsTag("ITEM_HIDDEN_TAG") && !item.IsTag("ITEM_BEHIND_LOCK_TAG");
         internal static bool Movable(GameItem item) => Owned(item);
         internal static bool SafeContainerForPeek(GameItem item) => item != null && item.safeToOpen;
         internal static bool TryRefresh(Location previous, out Location refreshed)

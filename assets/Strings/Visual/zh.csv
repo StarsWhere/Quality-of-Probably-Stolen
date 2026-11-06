@@ -18,3 +18,10 @@ f36.leave,留在原处
 f27.order_summary,需要 {0} 件 · 剩余 {1} 天
 f27.ready,已留好
 visual.attention,待处理
+visual.attention_count,待处理 {0}
+visual.manage,管理功能
+visual.show_disabled,显示未启用
+visual.no_actions,暂无启用的工具
+visual.object_tools,对象工具
+visual.no_object_actions,暂无可显示的工具
+visual.no_quick_actions,此分类没有快捷操作
