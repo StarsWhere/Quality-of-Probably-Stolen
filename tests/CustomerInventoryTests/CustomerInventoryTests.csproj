@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../src/ShopAssist/Inventory/PublicClues.cs" />
+    <Compile Include="../../src/ShopAssist/Inventory/KnownRiskLedger.cs" />
+    <Compile Include="../../src/ShopAssist/Inventory/OutlineGeometry.cs" />
+    <Compile Include="../../src/ShopAssist/Inventory/ViewOutlines.cs" />
+    <Compile Include="../../src/ShopAssist/Inventory/VisibleInventoryViews.cs" />
+    <Compile Include="../../src/ShopAssist/Inventory/CustomerIndicators.cs" />
+    <Compile Include="../../src/ShopAssist/Inventory/CustomerInventory.cs" />
+    <Compile Include="../AreaLabelTests/FakeGame.cs" />
+    <Compile Include="InventoryFakeUI.cs" />
+    <Compile Include="CustomerInventoryTests.cs" />
+  </ItemGroup>
+</Project>

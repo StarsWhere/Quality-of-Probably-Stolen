@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../src/ShopAssist/Inventory/PublicClues.cs" Link="PublicClues.cs" />
+    <Compile Include="../../src/ShopAssist/Inventory/KnownRiskLedger.cs" Link="KnownRiskLedger.cs" />
+    <Compile Include="../../src/ShopAssist/Inventory/OutlineGeometry.cs" Link="OutlineGeometry.cs" />
+    <Compile Include="PublicClueTests.cs" />
+  </ItemGroup>
+</Project>
