@@ -178,18 +178,16 @@ namespace ShopAssist
             if (!ShopInventory.InStore || CustomUIManager.Instance == null) return;
             Ensure(); Render(Snapshot());
         }
-        private static string Signature(IEnumerable<AttentionItem> items, Dictionary<int, PixelWindow> locations) => string.Join("|", items.Select(item =>
+        private static string Signature(IEnumerable<AttentionItem> items, Dictionary<int, GameItem> locations) => string.Join("|", items.Select(item =>
             item.Key + ":" + item.Title + ":" + item.Location + ":" + item.ReasonKey + ":" + (item.Retry != null) + ":" + (item.Resolve != null) +
             ":" + item.ActionLabelKey + ":" + item.ResolveLabelKey + ":" + locations.ContainsKey(item.ItemId)));
 
-        private static void Render(List<AttentionItem> items, Dictionary<int, PixelWindow> locations = null)
+        private static void Render(List<AttentionItem> items, Dictionary<int, GameItem> locations = null)
         {
             locations = locations ?? LocateItems(items);
             string ownRun = run; int ownSlot = slot;
-            Vector2? position = window?.IsAlive == true ? window.Rect.anchoredPosition : (Vector2?)null;
-            var builder = CustomUIManager.Window(ModEntry.Id + ".attention", ShopSettings.Text("attention.open"), CustomUIManager.LAYER_META)
-                .SetSize(620, 440).SetDraggable(true).SetCloseOnEscape(true);
-            window = builder.GetWindow(); CustomUIWindow own = window;
+            var builder = UiLayout.Rebuild(ref window, ModEntry.Id + ".attention", ShopSettings.Text("attention.open"), 620, 440);
+            CustomUIWindow own = window;
             builder.OnClose(() => { if (ReferenceEquals(window, own)) window = null; });
             builder.BeginScrollFlexible(160);
             if (items.Count == 0) builder.AddLabel(ShopSettings.Text("attention.empty"));
@@ -210,9 +208,8 @@ namespace ShopAssist
                 builder.End();
             }
             builder.End().BeginRow();
-            if (ShopNotice.HasResult) builder.AddButton(ShopSettings.Text("operation.last"), ShopNotice.OpenLastResult);
+            if (ShopNotice.HasResult) builder.AddButton(ShopSettings.Text("operation.last"), ShopNotice.OpenLastResult, "last_result");
             builder.AddButton(ShopSettings.Text("attention.refresh"), () => { if (SameScope(ownRun, ownSlot)) Render(Snapshot()); }).End().Show();
-            if (position.HasValue) window.Rect.anchoredPosition = position.Value;
             signature = Signature(items, locations); dirty = false; refreshAt = Time.unscaledTime + 0.5f;
         }
         private static bool SameScope(string expectedRun, int expectedSlot) => ShopInventory.InStore &&
@@ -240,27 +237,23 @@ namespace ShopAssist
             foreach (var location in ShopInventory.MachineLocations())
                 foreach (GameItem item in location.Inventory.childItems)
                 {
-                    if (item?.uniqueId != id || !(item is GameItemElement element) || !VisibleInventoryViews.Visible(element)) continue;
-                    PixelWindow parent = element.handler.FindParentWindow();
-                    if (parent == null) return false;
-                    if (perform) parent.ToFront();
-                    return true;
+                    if (item?.uniqueId != id || !ShopInventory.Owned(item)) continue;
+                    if (!perform) return true;
+                    if (ItemLocator.TryLocate(item, out string reason)) return true;
+                    ShopNotice.Show(ShopSettings.Text(reason)); return false;
                 }
+            if (perform) ShopNotice.Show(ShopSettings.Text("inv.changed"));
             return false;
         }
-        private static Dictionary<int, PixelWindow> LocateItems(IEnumerable<AttentionItem> items)
+        private static Dictionary<int, GameItem> LocateItems(IEnumerable<AttentionItem> items)
         {
-            var result = new Dictionary<int, PixelWindow>();
+            var result = new Dictionary<int, GameItem>();
             var wanted = new HashSet<int>(items.Where(item => item.ItemId > 0).Select(item => item.ItemId));
             if (wanted.Count == 0 || !ShopInventory.InStore) return result;
             foreach (var location in ShopInventory.MachineLocations())
                 foreach (GameItem item in location.Inventory.childItems)
-                    if (item != null && wanted.Contains(item.uniqueId) && item is GameItemElement element &&
-                        VisibleInventoryViews.Visible(element))
-                    {
-                        PixelWindow parent = element.handler.FindParentWindow();
-                        if (parent != null) result[item.uniqueId] = parent;
-                    }
+                    if (item != null && wanted.Contains(item.uniqueId) && ShopInventory.Owned(item))
+                        result[item.uniqueId] = item;
             return result;
         }
         internal static void Tick()

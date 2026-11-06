@@ -24,6 +24,9 @@ namespace ShopAssist
             internal string Caption;
             internal string Badge;
             internal string Marker;
+            internal string SourceLabel;
+            internal string StatusLabel;
+            internal string QuoteLabel;
 
             internal Entry(GameItem item, GameInventory source = null, GridShape shape = null)
             {
@@ -126,7 +129,15 @@ namespace ShopAssist
             var list = (entries ?? Enumerable.Empty<Entry>()).Where(e => e?.Item != null && e.Shape != null).ToList();
             int columns = Mathf.Clamp(options.Columns, 1, 12);
             float width = Mathf.Clamp(options.CardWidth, 64f, 300f), height = Mathf.Clamp(options.CardHeight, 64f, 300f);
-            int rows = Math.Max(1, (list.Count + columns - 1) / columns);
+            bool compact = options.Columns == 1 && options.CardHeight < 90;
+            if (!compact)
+            {
+                float available = Mathf.Max(160, (UiLayout.Window(builder)?.Rect.rect.width ?? columns * width) - 48);
+                columns = Mathf.Clamp(Mathf.FloorToInt(available / 180), 1, Math.Max(1, Math.Min(columns, list.Count)));
+                width = Mathf.Min(240, available / columns);
+            }
+            int rows = (list.Count + columns - 1) / columns;
+            height = Mathf.Max(height, list.Count == 0 ? 0 : list.Max(entry => (compact ? 74f : 54f) + CardDetails(entry).Count * 18f));
             RectTransform root = NewRect("ShopAssist_ItemCards", builder.CurrentContainer, Vector2.zero, new Vector2(columns * width, rows * height));
             var rootImage = root.gameObject.AddComponent<Image>(); rootImage.color = new Color(0, 0, 0, .01f);
             var rootView = root.gameObject.AddComponent<View>();
@@ -139,18 +150,21 @@ namespace ShopAssist
             for (int i = 0; i < list.Count; i++)
             {
                 Entry entry = list[i]; GridShape shape = entry.Shape;
-                RectTransform card = NewRect("card", root, new Vector2((i % columns) * width, -(i / columns) * height), new Vector2(width - 3, height - 3));
+                RectTransform card = NewRect("card", root, new Vector2((i % columns) * width, -(i / columns) * height), new Vector2(width - 7, height - 7));
                 var background = card.gameObject.AddComponent<Image>();
-                background.color = entry.Selected ? new Color(.2f, .48f, .58f, .9f) : new Color(.14f, .13f, .16f, .9f);
+                background.color = CardColor(entry.Selected);
                 background.raycastTarget = true;
                 string caption = entry.Caption ?? entry.Item.GetDisplayName(true);
-                string badge = entry.Badge ?? entry.Reason;
-                float badgeHeight = string.IsNullOrEmpty(badge) ? 0 : 20f;
+                List<string> details = CardDetails(entry);
+                float badgeHeight = details.Count * 18f;
                 const float captionHeight = 30f;
-                float imageHeight = Mathf.Max(8, height - captionHeight - badgeHeight - 9);
-                float cell = Mathf.Clamp(Mathf.Min(options.CellSize, (width - 8) / shape.globalWidth, imageHeight / shape.globalHeight), 4, 64);
+                float imageHeight = compact ? Mathf.Max(8, height - captionHeight - badgeHeight - 9) : Mathf.Min(76, height - 20);
+                float imageWidth = compact ? width - 12 : 52;
+                float cell = Mathf.Clamp(Mathf.Min(options.CellSize, imageWidth / shape.globalWidth, imageHeight / shape.globalHeight), 4, 64);
                 float gridWidth = shape.globalWidth * cell, gridHeight = shape.globalHeight * cell;
-                RectTransform grid = NewRect("grid", card, new Vector2((width - gridWidth) / 2, -3), new Vector2(gridWidth, gridHeight));
+                RectTransform grid = NewRect("grid", card,
+                    compact ? new Vector2((width - gridWidth) / 2, -6) : new Vector2(9 + (52 - gridWidth) / 2, -(height - gridHeight) / 2),
+                    new Vector2(gridWidth, gridHeight));
                 var view = grid.gameObject.AddComponent<View>();
                 view.Initialize(grid, options, cell, shape.globalWidth, shape.globalHeight);
                 view.CardBackground = background;
@@ -158,23 +172,45 @@ namespace ShopAssist
                 GridShape pose = new GridShapeBuilder(shape).SetPosition(0, 0).Build();
                 card.gameObject.AddComponent<Hit>().Initialize(view, entry, pose);
                 DrawPart(view, new Placed { Entry = entry, Shape = pose });
-                Label(card, "caption", caption, new Vector2(3, -height + badgeHeight + captionHeight + 3),
-                    new Vector2(width - 9, captionHeight), 12, TextAlignmentOptions.Center, true);
-                if (badgeHeight > 0) Label(card, "badge", badge, new Vector2(3, -height + badgeHeight + 3),
-                    new Vector2(width - 9, badgeHeight), 10, TextAlignmentOptions.Center, false);
+                Vector2 titlePosition = compact ? new Vector2(6, -height + badgeHeight + captionHeight + 3) : new Vector2(70, -8);
+                Vector2 titleSize = new Vector2(compact ? width - 18 : width - 85, captionHeight);
+                var title = Label(card, "caption", caption, titlePosition, titleSize, compact ? 12 : 14,
+                    compact ? TextAlignmentOptions.Center : TextAlignmentOptions.MidlineLeft, true);
+                title.color = new Color(.91f, .88f, .79f); title.fontStyle = FontStyles.Bold;
+                for (int detail = 0; detail < details.Count; detail++)
+                {
+                    var text = Label(card, "detail_" + detail, details[detail],
+                        compact ? new Vector2(6, -height + badgeHeight + 3 - detail * 18) : new Vector2(70, -40 - detail * 18),
+                        new Vector2(compact ? width - 18 : width - 85, 19), 11,
+                        compact ? TextAlignmentOptions.Center : TextAlignmentOptions.MidlineLeft, false);
+                    text.color = detail == 0 ? new Color(.70f, .75f, .72f) : new Color(.64f, .78f, .76f);
+                }
             }
             return root;
         }
 
-        private static void Label(Transform parent, string name, string value, Vector2 position, Vector2 size, float fontSize, TextAlignmentOptions align, bool wrap)
+        private static Color CardColor(bool selected) => selected ? new Color(.18f, .34f, .34f, 1f) : new Color(.19f, .17f, .23f, .98f);
+
+        private static List<string> CardDetails(Entry entry)
+        {
+            var details = new List<string>(3);
+            foreach (string value in new[] { entry.SourceLabel, entry.StatusLabel, entry.QuoteLabel })
+                if (!string.IsNullOrWhiteSpace(value) && !details.Contains(value)) details.Add(value);
+            if (details.Count == 0)
+                foreach (string value in new[] { entry.Badge, entry.Reason })
+                    if (!string.IsNullOrWhiteSpace(value) && !details.Contains(value)) details.Add(value);
+            return details;
+        }
+
+        private static TextMeshProUGUI Label(Transform parent, string name, string value, Vector2 position, Vector2 size, float fontSize, TextAlignmentOptions align, bool wrap)
         {
             RectTransform rect = NewRect(name, parent, position, size);
             var text = rect.gameObject.AddComponent<TextMeshProUGUI>();
             text.text = value; text.fontSize = fontSize; text.alignment = align; text.richText = false;
-            text.enableWordWrapping = wrap; text.enableAutoSizing = true;
-            text.fontSizeMin = 9; text.fontSizeMax = fontSize;
-            text.overflowMode = TextOverflowModes.Truncate; text.raycastTarget = false;
+            text.enableWordWrapping = wrap; text.enableAutoSizing = false;
+            text.overflowMode = TextOverflowModes.Ellipsis; text.raycastTarget = false;
             ApplyLocaleFont(rect.gameObject);
+            return text;
         }
 
         private static void ApplyLocaleFont(GameObject target)
@@ -419,7 +455,7 @@ namespace ShopAssist
                 if (itemCells.TryGetValue(entry, out List<Image> cells))
                     foreach (Image image in cells) if (image != null) image.color = entry.Selected ? new Color(.24f, .62f, .78f, .85f) :
                         !entry.Enabled ? new Color(.4f, .18f, .18f, .55f) : new Color(.44f, .43f, .46f, .7f);
-                if (CardBackground != null) CardBackground.color = entry.Selected ? new Color(.2f, .48f, .58f, .9f) : new Color(.14f, .13f, .16f, .9f);
+                if (CardBackground != null) CardBackground.color = CardColor(entry.Selected);
                 if (itemArt != null && itemArt.TryGetValue(entry, out var art) && art.Image != null)
                 {
                     Color color = art.Color;
@@ -807,8 +843,7 @@ namespace ShopAssist
             if (native == null) return null;
             var extra = new RichTextBuilder(60);
             if (!string.IsNullOrWhiteSpace(entry.Caption) && entry.Caption != item.GetDisplayName(true)) extra.AddLine(Clean(entry.Caption));
-            if (!string.IsNullOrWhiteSpace(entry.Badge)) extra.AddLine(Clean(entry.Badge));
-            if (!string.IsNullOrWhiteSpace(entry.Reason) && entry.Reason != entry.Badge) extra.AddLine(Clean(entry.Reason));
+            foreach (string detail in CardDetails(entry)) extra.AddLine(Clean(detail));
             RichText suffix = extra.Build();
             if (string.IsNullOrWhiteSpace(suffix.nakedText)) return native;
             return new RichText(native.nakedText + "\n" + suffix.nakedText,

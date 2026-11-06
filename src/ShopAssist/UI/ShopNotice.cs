@@ -8,12 +8,18 @@ namespace ShopAssist
 {
     internal static class ShopNotice
     {
+        internal enum NoticeKind { Status, Warning, Error }
         private static GameObject panel;
         private static CustomUIElement label;
         private static float until;
-        private sealed class Notice { internal string Message; internal float Seconds; }
+        private sealed class Notice { internal Guid Id; internal NoticeKind Kind; internal string Subject, Message; internal float Seconds; }
         private static readonly Queue<Notice> pending = new Queue<Notice>();
-        private static string current;
+        private static readonly HashSet<Guid> seen = new HashSet<Guid>();
+        private static readonly Queue<Guid> recent = new Queue<Guid>();
+        private static NoticeKind currentKind;
+        private static Notice activeNotice;
+        private static readonly Stack<Notice> interrupted = new Stack<Notice>();
+        private static float born;
         private static OperationResult lastResult;
         private static string resultRun;
         private static int resultSlot;
@@ -30,25 +36,41 @@ namespace ShopAssist
 
         internal static void Show(string message, float seconds = 4f)
         {
-            if (string.IsNullOrWhiteSpace(message)) return;
+            ShowEvent(Guid.NewGuid(), NoticeKind.Status, null, message, seconds);
+        }
+
+        internal static void ShowEvent(Guid id, NoticeKind kind, string subject, string message, float seconds = 4f)
+        {
+            if (string.IsNullOrWhiteSpace(message) || !seen.Add(id)) return;
+            recent.Enqueue(id);
+            while (recent.Count > 512) seen.Remove(recent.Dequeue());
+            var notice = new Notice { Id = id, Kind = kind, Subject = subject, Message = message, Seconds = Mathf.Clamp(seconds, 1f, 30f) };
             if (panel != null && panel.activeSelf && Time.unscaledTime < until)
             {
-                if (current != message && !pending.Any(notice => notice.Message == message))
-                    pending.Enqueue(new Notice { Message = message, Seconds = Mathf.Clamp(seconds, 1f, 30f) });
+                if (kind > currentKind)
+                {
+                    if (activeNotice != null)
+                    {
+                        activeNotice.Seconds = Mathf.Max(1f, until - Time.unscaledTime);
+                        interrupted.Push(activeNotice);
+                    }
+                    Display(notice);
+                }
+                else pending.Enqueue(notice);
                 return;
             }
             if (pending.Count > 0)
             {
-                if (!pending.Any(notice => notice.Message == message)) pending.Enqueue(new Notice { Message = message, Seconds = seconds });
-                Notice next = pending.Dequeue(); Display(next.Message, next.Seconds);
+                pending.Enqueue(notice);
+                Display(pending.Dequeue());
             }
-            else Display(message, seconds);
+            else Display(notice);
         }
 
-        private static void Display(string message, float seconds)
+        private static void Display(Notice notice)
         {
             var manager = CustomUIManager.Instance;
-            if (manager == null || string.IsNullOrWhiteSpace(message)) return;
+            if (manager == null) return;
             if (panel == null)
             {
                 var layer = manager.GetLayerRoot(CustomUIManager.LAYER_META);
@@ -58,23 +80,31 @@ namespace ShopAssist
                 rect.SetParent(layer, false);
                 rect.anchorMin = rect.anchorMax = rect.pivot = new Vector2(0.5f, 1);
                 rect.anchoredPosition = new Vector2(0, -12);
-                rect.sizeDelta = new Vector2(420, 54);
+                rect.sizeDelta = new Vector2(360, 36);
                 var group = panel.GetComponent<CanvasGroup>();
                 group.interactable = false;
                 group.blocksRaycasts = false;
                 var bg = panel.AddComponent<Image>();
-                bg.color = new Color(0.09f, 0.10f, 0.12f, 0.88f);
+                bg.sprite = MachineryStyle.ButtonNormal;
+                bg.type = Image.Type.Sliced;
+                bg.color = MachineryStyle.PANEL;
                 bg.raycastTarget = false;
-                label = manager.BuildInto(rect).AddLabel("", "message").Last;
+                label = manager.BuildInto(rect).UseMachineryStyle(true).AddLabel("", "message").Last;
                 label.text.alignment = TMPro.TextAlignmentOptions.Center;
                 label.text.richText = false;
-                label.text.color = Color.white;
+                label.text.color = MachineryStyle.BODY_TEXT;
+                label.text.fontSize = 15;
+                label.text.enableAutoSizing = false;
+                label.text.enableWordWrapping = true;
+                label.text.margin = new Vector4(12, 4, 12, 4);
             }
             panel.SetActive(true);
             panel.transform.SetAsLastSibling();
-            label.SetText(message);
-            current = message;
-            until = Time.unscaledTime + Mathf.Clamp(seconds, 1f, 30f);
+            label.SetText(notice.Message);
+            float width = Mathf.Clamp(label.text.GetPreferredValues(notice.Message).x + 28, 200, UiLayout.Fit(560, 100).x);
+            ((RectTransform)panel.transform).sizeDelta = new Vector2(width, Mathf.Max(36, label.text.GetPreferredValues(notice.Message, width - 24, 0).y + 12));
+            activeNotice = notice; currentKind = notice.Kind; born = Time.unscaledTime;
+            until = born + notice.Seconds;
         }
 
         internal static void Report(OperationResult result)
@@ -92,9 +122,10 @@ namespace ShopAssist
         private static void Publish(OperationResult result, GameInventory ground, Action refresh = null)
         {
             AttentionBook.Report(result, true);
-            refresh?.Invoke();
             lastResult = result; resultRun = PlayerStore.Instance.runID; resultSlot = PlayerStore.Instance.saveSlotId;
             resultGround = ground;
+            refresh?.Invoke();
+            if (resultWindow?.IsAlive == true && resultWindow.root.activeInHierarchy) OpenLastResult();
             string summary = ShopSettings.Format("operation.summary", ShopSettings.Text(result.ActionKey), result.Completed, result.Remaining);
             if (result.NeedsInspection) summary += " · " + ShopSettings.Text("operation.inspect");
             else
@@ -103,18 +134,16 @@ namespace ShopAssist
                     .Select(item => item.Reason).Distinct().ToArray();
                 if (reasons.Length == 1) summary += " · " + ShopSettings.Text(reasons[0]);
             }
-            Show(summary, result.Remaining > 0 ? 7f : 4f);
-            if (result.Remaining > 0 && (GenericConfirmationUIManager.Instance == null || !GenericConfirmationUIManager.Instance.panel.activeInHierarchy))
-                OpenLastResult();
+            ShowEvent(result.EventId, result.NeedsInspection ? NoticeKind.Error : result.Remaining > 0 ? NoticeKind.Warning : NoticeKind.Status,
+                result.ActionKey, summary, result.Remaining > 0 ? 7f : 4f);
         }
 
         internal static void OpenLastResult()
         {
             if (!HasResult || CustomUIManager.Instance == null) return;
             OperationResult result = lastResult;
-            var builder = CustomUIManager.Window(ModEntry.Id + ".operation", ShopSettings.Text("operation.details"), CustomUIManager.LAYER_META)
-                .SetSize(620, 420).SetDraggable(true).SetCloseOnEscape(true);
-            resultWindow = builder.GetWindow(); CustomUIWindow own = resultWindow;
+            var builder = UiLayout.Rebuild(ref resultWindow, ModEntry.Id + ".operation", ShopSettings.Text("operation.details"), 620, 420);
+            CustomUIWindow own = resultWindow;
             builder.OnClose(() => { if (ReferenceEquals(resultWindow, own)) resultWindow = null; });
             builder.AddLabel(ShopSettings.Format("operation.summary", ShopSettings.Text(result.ActionKey), result.Completed, result.Remaining));
             if (!string.IsNullOrEmpty(result.Detail))
@@ -137,18 +166,22 @@ namespace ShopAssist
         {
             if (panel != null && panel.activeSelf && Time.unscaledTime >= until)
             {
-                panel.SetActive(false); current = null;
-                if (pending.Count > 0)
+                panel.SetActive(false);
+                if (interrupted.Count > 0) Display(interrupted.Pop());
+                else if (pending.Count > 0)
                 {
-                    Notice next = pending.Dequeue(); Display(next.Message, next.Seconds);
+                    Display(pending.Dequeue());
                 }
             }
+            if (panel != null && panel.activeSelf)
+                panel.GetComponent<CanvasGroup>().alpha = Mathf.Min(Mathf.Clamp01((Time.unscaledTime - born) / .12f),
+                    Mathf.Clamp01((until - Time.unscaledTime) / .25f));
             if (resultWindow?.IsAlive == true && !HasResult) { resultWindow.Close(); resultWindow = null; }
         }
 
         internal static void ResetSession()
         {
-            pending.Clear(); current = null; until = 0; lastResult = null; resultRun = null; resultGround = null;
+            pending.Clear(); interrupted.Clear(); activeNotice = null; seen.Clear(); recent.Clear(); until = 0; lastResult = null; resultRun = null; resultGround = null;
             if (panel != null) panel.SetActive(false);
             CustomUIWindow previous = resultWindow; resultWindow = null; previous?.Close();
         }
