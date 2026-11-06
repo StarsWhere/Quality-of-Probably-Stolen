@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>ShopAssist</AssemblyName>
+    <RootNamespace>ShopAssist</RootNamespace>
+    <Version>0.7.1</Version>
+    <GameDir Condition="'$(GameDir)' == ''">$(PROBABLY_STOLEN_GAME_DIR)</GameDir>
+    <GameDir Condition="'$(GameDir)' == '' and Exists('D:\SteamLibrary\steamapps\common\Probably Stolen\Probably Stolen.exe')">D:\SteamLibrary\steamapps\common\Probably Stolen</GameDir>
+    <ManagedDir>$(GameDir)\Probably Stolen_Data\Managed</ManagedDir>
+    <UseSharedCompilation>false</UseSharedCompilation>
+    <NuGetAudit>false</NuGetAudit>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="Assembly-CSharp;UnityEngine.CoreModule;UnityEngine.UI;UnityEngine.UIModule;UnityEngine.AudioModule;UnityEngine.TextRenderingModule;Unity.TextMeshPro;UnityEngine.InputLegacyModule;UnityEngine.JSONSerializeModule;Newtonsoft.Json;0Harmony">
+      <HintPath>$(ManagedDir)\%(Identity).dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <ModAsset Include="$(MSBuildProjectDirectory)\..\..\assets\**\*"
+              Exclude="$(MSBuildProjectDirectory)\..\..\assets\Strings\**;$(MSBuildProjectDirectory)\..\..\assets\Localization\**" />
+    <English Include="$(MSBuildProjectDirectory)\..\..\assets\Localization\en.csv;$(MSBuildProjectDirectory)\..\..\assets\Strings\**\en.csv" />
+    <Chinese Include="$(MSBuildProjectDirectory)\..\..\assets\Localization\zh.csv;$(MSBuildProjectDirectory)\..\..\assets\Strings\**\zh.csv" />
+  </ItemGroup>
+  <Target Name="CheckGameDirectory" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="!Exists('$(ManagedDir)\Assembly-CSharp.dll')" Text="Set GameDir to the directory containing Probably Stolen.exe." />
+  </Target>
+  <Target Name="StageMod" DependsOnTargets="Build">
+    <Error Condition="'$(PackageDir)' == ''" Text="StageMod needs a dedicated empty PackageDir." />
+    <MakeDir Directories="$(PackageDir)\Localization" />
+    <Copy SourceFiles="$(TargetPath)" DestinationFolder="$(PackageDir)" />
+    <Copy SourceFiles="@(ModAsset)" DestinationFiles="@(ModAsset->'$(PackageDir)\%(RecursiveDir)%(Filename)%(Extension)')" />
+    <ReadLinesFromFile File="%(English.Identity)"><Output TaskParameter="Lines" ItemName="EnglishLines" /></ReadLinesFromFile>
+    <ReadLinesFromFile File="%(Chinese.Identity)"><Output TaskParameter="Lines" ItemName="ChineseLines" /></ReadLinesFromFile>
+    <WriteLinesToFile File="$(PackageDir)\Localization\en.csv" Lines="@(EnglishLines)" Overwrite="true" Encoding="UTF-8" />
+    <WriteLinesToFile File="$(PackageDir)\Localization\zh.csv" Lines="@(ChineseLines)" Overwrite="true" Encoding="UTF-8" />
+  </Target>
+</Project>
