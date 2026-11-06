@@ -1,10 +1,25 @@
 f05.enabled,Arrange container items from the context menu
-f05.tip,In the store, right-click an empty grid cell and choose Smart Arrange. If items in that grid are selected, only those items are arranged. Pinned items, held items and containers stay in place. When Smart Inventory Arrange is enabled, use its menu and settings.
+f05.tip,Right-click a storage grid or an item in it to arrange. A selection limits the operation to selected items; you can keep containers in place.
 f05.rotate,Allow item rotation during arrangement
 f05.rotate.tip,Let Smart Arrange rotate eligible items to pack them more tightly.
 f05.key,Arrange current container
 f05.key.tip,Arrange the accessible container under the pointer, or the most recently focused accessible container when the pointer is not over one. With Smart Inventory Arrange enabled, bind the shortcut in its settings.
 f05.open,Smart arrange
+f05.all,Smart arrange all
+f05.selected,Smart arrange selection
+f05.preserve_all,Arrange all and keep containers
+f05.preserve_selected,Arrange selection and keep containers
+f05.undo,Undo arrangement
+f05.undone,Undid the last arrangement.
+f05.undo_stale,The items or container changed; the arrangement cannot be undone.
+f05.undo_restored,Undo did not complete; the arranged layout was restored.
+f05.keep_menu,Keep arrange menu open after moving away
+f05.keep_menu.tip,Return to the menu after moving away; click outside or press Escape to close it.
+f05.auto_insert,Make room when a dragged item does not fit
+f05.auto_insert.tip,Try rearranging an ordinary storage grid when a dragged item does not fit and allow the operation to be undone.
+f05.auto_done,Made room for {0} items.
+f05.auto_partial,Made room for {0} of the remaining items.
+f05.auto_no_plan,No layout was found; remaining items stay where they are.
 f05.no_plan,No complete arrangement is available; items stay in place.
 f05.failed,Arrange could not complete. Check this container.
 f05.applied,Organized {0} items.

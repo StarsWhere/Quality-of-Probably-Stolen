@@ -53,6 +53,8 @@ namespace ShopAssist
 
         private static bool PreciseEnabled => preciseEnabled?.Invoke() == true;
         private static bool RotationEnabled => rotationEnabled?.Invoke() == true;
+        internal static bool AutomaticPlacementAllowed => !PreciseEnabled &&
+            !Input.GetKey(KeyCode.LeftShift) && !Input.GetKey(KeyCode.RightShift);
         private static bool SameGesture => active != null && ShopInventory.InStore &&
             ReferenceEquals(owner, PlayerStore.Instance) && PlayerStore.Instance.runID == run &&
             PlayerStore.Instance.saveSlotId == saveSlot && startedPrecise == PreciseEnabled && startedRotation == RotationEnabled;

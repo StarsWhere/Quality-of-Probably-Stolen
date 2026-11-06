@@ -4,6 +4,15 @@ using System.Linq;
 
 namespace ShopAssist
 {
+    internal interface IInventoryArrangeUndo
+    {
+        IEnumerable<GameGridInventory> Grids { get; }
+        bool Affects(GameGridInventory inventory);
+        bool CanUndo();
+        InventorySortPlan.ApplyResult Undo();
+        Exception LastError { get; }
+    }
+
     // A plan is entirely detached from the live grid. The game is asked whether
     // each candidate shape is legal, while already planned shapes form a shadow grid.
     internal sealed class InventorySortPlan
@@ -20,6 +29,9 @@ namespace ShopAssist
             internal GameItem Item;
             internal GridShape Shape;
             internal int Count;
+            internal string Identifier;
+            internal string State;
+            internal bool Movable;
         }
 
         private const int MaxDimension = 64, MaxItems = 256, MaxCandidates = 1000000;
@@ -27,6 +39,7 @@ namespace ShopAssist
         private readonly GridShape gridShape;
         private readonly List<Snapshot> snapshot;
         internal readonly List<Placement> Placements;
+        private static string State(GameItem item) => InventoryArrangeTransaction.StateSignature(item);
 
         private InventorySortPlan(GameGridInventory grid, GridShape shape, List<Snapshot> snapshot, List<Placement> placements)
         {
@@ -37,7 +50,7 @@ namespace ShopAssist
         }
 
         internal static InventorySortPlan Create(GameGridInventory grid, ISet<GameItem> selected,
-            ISet<GameItem> held, bool groupByItem, bool rotate)
+            ISet<GameItem> held, bool groupByItem, bool rotate, bool preserveContainers = true)
         {
             if (grid?.inventoryShape == null || grid.inventoryShape.width < 1 || grid.inventoryShape.height < 1 ||
                 grid.inventoryShape.width > MaxDimension || grid.inventoryShape.height > MaxDimension ||
@@ -46,7 +59,9 @@ namespace ShopAssist
             if (all == null || all.Count > MaxItems || all.Any(item => item?.modifiedShape == null ||
                 item.modifiedShape.width < 1 || item.modifiedShape.height < 1 ||
                 item.modifiedShape.width > MaxDimension || item.modifiedShape.height > MaxDimension)) return null;
-            var snapshot = all.Select(item => new Snapshot { Item = item, Shape = item.modifiedShape.Clone(), Count = item.unitCount }).ToList();
+            var snapshot = all.Select(item => new Snapshot { Item = item, Shape = item.modifiedShape.Clone(), Count = item.unitCount,
+                Identifier = item.identifier, Movable = InventoryArrangeTransaction.SafelyMovable(grid, item), State = State(item) }).ToList();
+            if (snapshot.Any(item => item.State == null)) return null;
             var order = new Dictionary<GameItem, int>();
             for (int i = 0; i < all.Count; i++)
             {
@@ -55,7 +70,7 @@ namespace ShopAssist
             }
             bool limited = selected != null && selected.Count > 0;
             var moving = all.Where(item => (!limited || selected.Contains(item)) &&
-                (held == null || !held.Contains(item)) && item.contentWindow == null && SafeToCheck(grid, item) &&
+                (held == null || !held.Contains(item)) && (!preserveContainers || item.contentWindow == null) && SafeToCheck(grid, item) &&
                 ShopInventory.Movable(item) && item.MaxNumRemove() >= item.unitCount).ToList();
             if (moving.Count == 0) return null;
             int Area(GameItem item)
@@ -123,7 +138,9 @@ namespace ShopAssist
             if (current.Count != all.Count) return false;
             foreach (Snapshot entry in snapshot)
                 if (!current.Contains(entry.Item) || !ReferenceEquals(entry.Item.parentInventory, grid) ||
-                    entry.Item.unitCount != entry.Count || !SameShape(entry.Shape, entry.Item.modifiedShape)) return false;
+                    entry.Item.unitCount != entry.Count || entry.Item.identifier != entry.Identifier ||
+                    State(entry.Item) != entry.State || InventoryArrangeTransaction.SafelyMovable(grid, entry.Item) != entry.Movable ||
+                    !SameShape(entry.Shape, entry.Item.modifiedShape)) return false;
             var moving = Placements.Select(entry => entry.Item).ToList();
             for (int i = 0; i < Placements.Count; i++)
             {
@@ -145,69 +162,27 @@ namespace ShopAssist
             grid.parentItemShapeModifierForItemFunc == null && item.parentItemShapeModifierForItemFunc == null;
 
         internal enum ApplyResult { Applied, Stale, Unsupported, Restored, Inspect }
-        internal Exception LastError { get; private set; }
 
         internal bool CanApply()
         {
-            if (!StillValid() || grid.GetType() != typeof(GameGridInventory) ||
+            return StillValid() && SafeForRefresh();
+        }
+
+        internal bool SafeForRefresh()
+        {
+            if (grid.GetType() != typeof(GameGridInventory) ||
                 grid.parentItemStateModifierForItemFunc != null || grid.parentItemSpriteModifierForItemFunc != null) return false;
             // Validate refreshes every item in the grid; do not invoke unknown
             // position/sprite callbacks, descendants or custom Validate overrides.
             foreach (Placement entry in Placements)
             {
                 GameItem item = entry.Item;
-                if (item.GetType() != typeof(GameItemElement) || item.contentWindow != null || item.examineWindow != null ||
+                if (item.GetType() != typeof(GameItemElement) ||
                     item.parentItemShapeModifierForItemFunc != null || item.parentItemStateModifierForItemFunc != null ||
                     item.parentItemSpriteModifierForItemFunc != null || item.getItemSpriteModifierForItemFunc != null ||
                     item.isItemStateValidFunc != null || item.modifiedXOrigin != 0 || item.modifiedYOrigin != 0 ||
                     !SameCells(item.shape, item.modifiedShape)) return false;
             }
-            return true;
-        }
-
-        internal ApplyResult Apply()
-        {
-            LastError = null;
-            if (!StillValid()) return ApplyResult.Stale;
-            if (!CanApply()) return ApplyResult.Unsupported;
-            var shapes = new List<GridShape>(Placements.Count);
-            foreach (Placement entry in Placements)
-                shapes.Add(new GridShapeBuilder(entry.Item.modifiedShape).SetTransform(entry.After).Build());
-            try
-            {
-                for (int i = 0; i < Placements.Count; i++) Placements[i].Item.modifiedShape = shapes[i];
-                foreach (var entry in Placements) entry.Item.Validate();
-                if (MatchesSnapshot(true)) return ApplyResult.Applied;
-            }
-            catch (Exception error) { LastError = error; }
-            if (!CanRestore()) return ApplyResult.Inspect;
-            try
-            {
-                foreach (Placement entry in Placements) entry.Item.modifiedShape = entry.Before.Clone();
-                foreach (var entry in Placements) entry.Item.Validate();
-                return MatchesSnapshot(false) ? ApplyResult.Restored : ApplyResult.Inspect;
-            }
-            catch (Exception error) { LastError = LastError == null ? error : new AggregateException(LastError, error); return ApplyResult.Inspect; }
-        }
-
-        private bool CanRestore()
-        {
-            List<GameItem> all = grid.childItems;
-            if (all == null || all.Count != snapshot.Count || new HashSet<GameItem>(all).Count != snapshot.Count) return false;
-            var current = new HashSet<GameItem>(all);
-            foreach (Snapshot entry in snapshot)
-                if (!current.Contains(entry.Item) || !ReferenceEquals(entry.Item.parentInventory, grid) ||
-                    entry.Item.unitCount != entry.Count || !SameCells(entry.Shape, entry.Item.modifiedShape)) return false;
-            return SameShape(gridShape, grid.inventoryShape);
-        }
-
-        private bool MatchesSnapshot(bool applied)
-        {
-            if (!CanRestore()) return false;
-            var desired = new Dictionary<GameItem, GridShape>();
-            foreach (Placement entry in Placements) desired.Add(entry.Item, applied ? entry.After : entry.Before);
-            foreach (Snapshot entry in snapshot)
-                if (!SameShape(desired.TryGetValue(entry.Item, out GridShape shape) ? shape : entry.Shape, entry.Item.modifiedShape)) return false;
             return true;
         }
 

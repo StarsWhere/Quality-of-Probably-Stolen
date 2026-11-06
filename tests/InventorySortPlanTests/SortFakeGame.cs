@@ -83,11 +83,15 @@ public sealed class GridShapeBuilder : GridShape
 public class GameItem
 {
     public string identifier;
+    public int uniqueId;
+    public TagSystem state = new TagSystem(), modifiedState = new TagSystem();
+    public List<ItemFeature> itemFeatures = new List<ItemFeature>();
     public GridShape shape, modifiedShape;
     public GameGridInventory parentInventory;
     public int unitCount = 1;
     public int modifiedXOrigin, modifiedYOrigin;
     public bool movable = true;
+    public bool reserved;
     public object contentWindow, examineWindow;
     public object isItemStateValidFunc, mayInventoryRemoveItemFunc, minSlotAmountItemFunc, maxSlotRemoveItemFunc;
     public object parentItemShapeModifierForItemFunc, parentItemStateModifierForItemFunc;
@@ -98,9 +102,17 @@ public class GameItem
     public void Validate() { validations++; onValidate?.Invoke(); }
 }
 public sealed class GameItemElement : GameItem { }
+public sealed class ItemFeature { public string identifier; public int value; public ItemCondition condition; }
+public sealed class ItemCondition { public string identifier; public int value; }
 
-public sealed class GameGridInventory
+public class GameInventory
 {
+    public virtual bool Expel(GameItem item) => false;
+}
+
+public sealed class GameGridInventory : GameInventory
+{
+    public string scope = "open";
     public GridShape inventoryShape;
     public readonly List<GameItem> childItems = new List<GameItem>();
     public bool insertLocked, removeLocked, denyPlacements;
@@ -109,9 +121,16 @@ public sealed class GameGridInventory
     public int validations, placementChecks;
     public Action onValidate;
     public Action onPlacementCheck;
+    public Action<GameItem> onAccept;
     public void Validate() { validations++; onValidate?.Invoke(); }
     public bool IsInsertLocked() => insertLocked;
     public bool IsRemoveLocked() => removeLocked;
+    public override bool Expel(GameItem item)
+    {
+        if (item.parentInventory != this || !childItems.Remove(item)) return false;
+        item.parentInventory = null;
+        return true;
+    }
     public bool CheckShapePlacement(GameItem item, GridShape shape, List<GameItem> ignored)
     {
         placementChecks++;
@@ -124,5 +143,50 @@ public sealed class GameGridInventory
     }
 }
 
+public sealed class TagState
+{
+    public bool valueEnabled, valueBool;
+    public int valueInt;
+    public float valueFloat;
+    public long valueLong;
+    public double valueDouble;
+    public string valueString;
+}
+public sealed class TagSystem { public Dictionary<string, TagState> dict = new Dictionary<string, TagState>(); }
+public sealed class PlayerStore
+{
+    public static PlayerStore Instance = new PlayerStore();
+    public string runID = "test";
+    public int saveSlotId;
+}
+public sealed class SlotMarker
+{
+    public GameGridInventory inventory;
+    public GameItem item;
+    public GridShape shape;
+    public int TryAcceptOnce(int amount)
+    {
+        if (item.parentInventory != null && !item.parentInventory.Expel(item)) return 0;
+        item.modifiedShape = shape.Clone();
+        item.parentInventory = inventory;
+        inventory.childItems.Add(item);
+        inventory.onAccept?.Invoke(item);
+        return amount;
+    }
+}
 public static class GeneralHelper { public static bool MayPlayerInsertInto(GameGridInventory grid) => true; }
-namespace ShopAssist { internal static class ShopInventory { internal static bool Movable(GameItem item) => item.movable; } }
+namespace ShopAssist
+{
+    internal static class RequestBook { internal static bool Reserved(GameItem item) => item.reserved; }
+    internal static class ShopInventory
+    {
+        internal static bool InStore => true;
+        internal static bool Movable(GameItem item) => item.movable;
+    }
+    internal static class GridPlacements
+    {
+        internal static SlotMarker Exact(GameGridInventory grid, GameItem item, GridShape shape) =>
+            grid.CheckShapePlacement(item, shape, new List<GameItem> { item }) ?
+                new SlotMarker { inventory = grid, item = item, shape = shape.Clone() } : null;
+    }
+}

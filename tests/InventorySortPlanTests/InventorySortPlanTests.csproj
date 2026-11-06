@@ -6,6 +6,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../src/ShopAssist/Inventory/InventorySortPlan.cs" />
+    <Compile Include="../../src/ShopAssist/Inventory/InventoryArrangeTransaction.cs" />
     <Compile Include="SortFakeGame.cs" />
     <Compile Include="InventorySortPlanTests.cs" />
   </ItemGroup>
