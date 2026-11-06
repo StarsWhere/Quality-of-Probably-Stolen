@@ -34,8 +34,7 @@ public sealed class CoexistTradeScenario
     }
     private static string Notice()
     {
-        var go = GameObject.Find(Mod + ".notice");
-        return go == null ? "" : string.Join(" ", go.GetComponentsInChildren<TMP_Text>().Select(t => t.text));
+        return QaTradeReceipt.Text();
     }
     private static double Pending(string faction)
     {

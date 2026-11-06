@@ -155,16 +155,15 @@ public sealed class DailyReceiptScenario
         options.CloseUI();
     }
 
-    private static GameObject Notice() => GameObject.Find(Mod + ".notice");
+    private static GameObject Notice() => QaTradeReceipt.Latest();
 
     private static void CheckNotice(string text)
     {
         var notice = Notice();
         Need(!string.IsNullOrEmpty(text) && notice != null, "F16 receipt did not appear");
-        var label = notice.GetComponentsInChildren<TMP_Text>().SingleOrDefault();
-        Need(label != null && label.text == text, "F16 receipt did not match the actual transaction: " + label?.text + " / " + text);
-        var canvas = notice.GetComponent<CanvasGroup>();
-        Need(canvas != null && !canvas.blocksRaycasts && !canvas.interactable, "F16 receipt blocked input");
+        Need(QaTradeReceipt.Text() == text, "F16 receipt did not match the actual transaction: " + QaTradeReceipt.Text() + " / " + text);
+        Need(notice.GetComponentsInChildren<UnityEngine.UI.Graphic>().All(graphic => !graphic.raycastTarget), "F16 receipt blocked input");
+        Need(notice.GetComponentsInChildren<TMP_Text>().All(label => label.enabled && label.fontSize >= 12), "Receipt text is hidden or unreadable");
     }
 
     private bool Expired()

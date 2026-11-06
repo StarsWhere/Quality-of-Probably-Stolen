@@ -13,7 +13,11 @@ public sealed class CustomerScenario
     private readonly QaNewRun start = new QaNewRun();
     private readonly string token = Guid.NewGuid().ToString("N").Substring(0, 8);
     private GameItemElement ordinary, hiddenRejection, customTooltip, bag, nested, stolen, unseenBag;
-    private int step;
+    private CustomUIWindow retainedList;
+    private Vector2 listPosition, listSize;
+    private float listScroll;
+    private int step, captureFrame;
+    private string gridCapture;
     private float since = Time.realtimeSinceStartup;
 
     public bool Tick(out string result)
@@ -32,9 +36,8 @@ public sealed class CustomerScenario
                 Prepare();
                 Advance(2); return false;
             case 2:
-                if (!Outlined(ordinary) || !Outlined(hiddenRejection)) return false;
-                Require(!Outlined(bag) && !Outlined(customTooltip),
-                    "F03 highlighted an unrelated item or a replacement tooltip before display");
+                if (!Outlined(ordinary) || !Outlined(customTooltip)) return false;
+                Require(!Outlined(hiddenRejection), "F03 highlighted a native buyer rejection");
                 var shown = customTooltip.GetTooltip();
                 Require(shown != null && shown.nakedText.Contains("[" + TypeHelper.GetTypeDisplayName("FOOD") + "]"),
                     "Fixture did not produce the public custom tooltip");
@@ -48,21 +51,64 @@ public sealed class CustomerScenario
             case 4:
                 if (Outlined(ordinary) || Outlined(hiddenRejection) || Outlined(customTooltip)) return false;
                 OpenList();
-                var first = List();
-                Require(QaItemUi.Hit(first.root, ordinary) != null && QaItemUi.Hit(first.root, hiddenRejection) != null && QaItemUi.Hit(first.root, nested) != null,
-                    "F11 omitted public-category goods with F03 disabled, including the safe closed container");
-                Require(!bag.contentWindow.IsVisible(), "F11 search opened the container as a side effect");
                 if (SystemInfo.graphicsDeviceType != UnityEngine.Rendering.GraphicsDeviceType.Null)
-                    ScreenCapture.CaptureScreenshot(Path.Combine(Application.persistentDataPath, "qa-customer-grid.png"));
+                {
+                    gridCapture = Path.Combine(Application.persistentDataPath, "qa-customer-grid-" + token + ".png");
+                    ScreenCapture.CaptureScreenshot(gridCapture);
+                    Debug.Log("[PLAYER-QA] customer diagnostic capture " + gridCapture);
+                }
+                captureFrame = Time.frameCount + 4; Advance(40); return false;
+            case 40:
+                if (Time.frameCount < captureFrame || gridCapture != null && !File.Exists(gridCapture)) return false;
+                var first = List();
+                var buyer = PlayerStore.Instance.currentClientInstance.GetClientBlueprint();
+                Debug.Log("[PLAYER-QA] customer fixture: " + QaItemUi.Describe(first.root, ordinary, customTooltip, hiddenRejection, nested) +
+                    " | native acceptance=" + buyer.IsClientBuyingThisItem(ordinary) + "/" + buyer.IsClientBuyingThisItem(customTooltip) +
+                    "/" + buyer.IsClientBuyingThisItem(hiddenRejection) + "/" + buyer.IsClientBuyingThisItem(nested));
+                Require(QaItemUi.Hit(first.root, ordinary) != null && QaItemUi.Hit(first.root, customTooltip) != null &&
+                    QaItemUi.Hit(first.root, hiddenRejection) == null && QaItemUi.Hit(first.root, nested) != null,
+                    "F11 did not follow native buyer acceptance with F03 disabled: " +
+                    QaItemUi.Describe(first.root, ordinary, customTooltip, hiddenRejection, nested));
+                Require(!bag.contentWindow.IsVisible(), "F11 search opened the container as a side effect");
                 Advance(5); return false;
             case 5:
                 var view = List();
-                foreach (GameItem item in new[] { ordinary, hiddenRejection, customTooltip, nested }) RequireCaptionVisible(view, item);
+                foreach (GameItem item in new[] { ordinary, customTooltip, nested }) RequireCaptionVisible(view, item);
+                PlayerStore.Instance.currentClientInstance.GetClientBlueprint().clientBlackIdList.Add(ordinary.identifier);
+                Advance(50); return false;
+            case 50:
+                if (Time.realtimeSinceStartup - since < .7f) return false;
+                Require(QaItemUi.Hit(List().root, ordinary) == null, "F11 retained a newly refused item without an invalidation event");
+                PlayerStore.Instance.currentClientInstance.GetClientBlueprint().clientBlackIdList.Remove(ordinary.identifier);
+                Advance(51); return false;
+            case 51:
+                if (Time.realtimeSinceStartup - since < .7f) return false;
+                view = List();
+                Require(QaItemUi.Hit(view.root, ordinary) != null, "F11 did not restore the newly accepted item");
+                retainedList = view; listPosition = view.Rect.anchoredPosition; listSize = view.Rect.sizeDelta;
+                var scroll = view.root.GetComponentsInChildren<ScrollRect>(true).FirstOrDefault(s => s.gameObject.activeInHierarchy);
+                Require(scroll != null, "F11 lacks a scrollable list");
+                scroll.verticalNormalizedPosition = .4f; listScroll = scroll.verticalNormalizedPosition;
                 QaItemUi.Click(view, nested);
                 Advance(6); return false;
             case 6:
                 if (!bag.contentWindow.IsVisible() || !Outlined(nested)) return false;
-                Require(ListOrNull() == null, "F11 did not close after locating the existing instance");
+                view = List();
+                Require(view == retainedList && view.Get("return")?.button != null &&
+                    view.Rect.sizeDelta.x <= 240 && view.Rect.sizeDelta.y <= 94,
+                    "F11 did not fold its existing window after locating");
+                Canvas targetCanvas = nested.handler.GetComponentInParent<Canvas>();
+                Camera targetCamera = targetCanvas == null || targetCanvas.renderMode == RenderMode.ScreenSpaceOverlay ? null : targetCanvas.worldCamera;
+                Vector2 targetPoint = RectTransformUtility.WorldToScreenPoint(targetCamera, nested.handler.rectTransform.position);
+                Canvas listCanvas = view.root.GetComponentInParent<Canvas>();
+                Camera listCamera = listCanvas == null || listCanvas.renderMode == RenderMode.ScreenSpaceOverlay ? null : listCanvas.worldCamera;
+                Require(!RectTransformUtility.RectangleContainsScreenPoint(view.Rect, targetPoint, listCamera),
+                    "The folded F11 window still covers the located item");
+                view.Get("return").button.onClick.Invoke();
+                scroll = view.root.GetComponentsInChildren<ScrollRect>(true).FirstOrDefault(s => s.gameObject.activeInHierarchy);
+                Require(List() == retainedList && view.Rect.anchoredPosition == listPosition && view.Rect.sizeDelta == listSize &&
+                    scroll != null && Mathf.Abs(scroll.verticalNormalizedPosition - listScroll) < .02f,
+                    "Returning from locate lost the window position, size or scroll");
                 Require(ReferenceEquals(nested.parentInventory, bag.contentWindow.childElement),
                     "F11 moved the located item");
                 NegociationUIManager.Instance.CloseUI();
@@ -99,7 +145,7 @@ public sealed class CustomerScenario
                 Advance(10); return false;
             case 10:
                 if (Outlined(stolen)) return false;
-                result = "PASS F03 public buyer categories and tooltip evidence, F11 independent search and native nested locate, F04 observed risk and invalidation";
+                result = "PASS F03 native buyer acceptance, F11 independent search and native nested locate, F04 observed risk and invalidation";
                 return true;
             case 11:
                 Require(!Outlined(unseenBag), "Strict mode discovered the contents of a never-opened bag");
@@ -184,7 +230,7 @@ public sealed class CustomerScenario
     }
     private static bool Outlined(GameItemElement item)
     {
-        var outline = item?.rotator?.transform.Find("ShopAssist_Outline");
+        var outline = item?.rotator?.transform.Find("ShopAssist_Outline") ?? item?.rotator?.transform.Find("ShopAssist_LocateOutline");
         return outline != null && outline.gameObject.activeInHierarchy && outline.GetComponentsInChildren<Image>(true)
             .Any(image => image.isActiveAndEnabled && image.color.a > 0 && image.rectTransform.rect.width > 0 && image.rectTransform.rect.height > 0);
     }

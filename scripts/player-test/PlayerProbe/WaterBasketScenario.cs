@@ -134,7 +134,7 @@ public sealed class WaterBasketScenario
             W("water").Get("pour").button.onClick.Invoke();
         }
         finally { harmony.UnpatchAll(patchId); faultSource = faultTarget = null; }
-        var operation = W("operation");
+        var operation = QaItemUi.OpenOperationDetails();
         string confirmed = ModHelper.GetLocalized(Mod, "f26.confirmed", "0", "0");
         Need(WaterHelper.GetCurrentCapacityUL(source) == 0 && WaterHelper.GetCurrentCapacityUL(dest) == 2500 &&
             operation?.IsAlive == true && operation.Get("attention")?.button != null && Labels(operation).Contains(confirmed) &&

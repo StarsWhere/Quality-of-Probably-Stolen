@@ -123,7 +123,7 @@ public sealed class TradeScenario
 
     private static TMPro.TMP_Text Receipt()
     {
-        var panel = GameObject.Find(Mod + ".notice");
+        var panel = QaTradeReceipt.Latest();
         return panel == null ? null : panel.GetComponentsInChildren<TMPro.TMP_Text>().FirstOrDefault(t => !string.IsNullOrEmpty(t.text));
     }
 

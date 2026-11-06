@@ -40,7 +40,7 @@ public class RepeatedPurchaseScenario
             if (allFeatures)
             {
                 var config = ModConfig.Find(Mod);
-                originalOptions = Enumerable.Range(1, 41).ToDictionary(i => "f" + i.ToString("00") + ".enabled",
+                originalOptions = Enumerable.Range(1, 42).ToDictionary(i => "f" + i.ToString("00") + ".enabled",
                     i => ((ConfigEntry<bool>)config.Get("f" + i.ToString("00") + ".enabled")).Value);
                 TradeScenario.SetOptions(true, originalOptions.Keys.ToArray());
                 if (AdvCalendarUIManager.Instance?.UIPanel?.activeSelf == true) StoreUIManager.Instance.storeCalendar.OnClick();
@@ -79,7 +79,7 @@ public class RepeatedPurchaseScenario
                 "Restoring all 37 settings failed");
         }
         result = "PASS native buy button excludes retained goods across repeated and subsequent offers" +
-            (allFeatures ? " with all 41 live settings enabled, disabled and restored" : "");
+            (allFeatures ? " with all 42 live settings enabled, disabled and restored" : "");
         return true;
     }
 }
