@@ -10,21 +10,24 @@ using UnityEngine.UI;
 public sealed class SettingsPresentationScenario
 {
     private const string Mod = "starswhere.shopassist";
-    private static readonly string[] Sections = { "shopassist", "shopassist.batch", "shopassist.advanced", "shopassist.calendar" };
+    private static readonly string[] Sections = { "shopassist", "shopassist.batch", "shopassist.advanced", "shopassist.calendar", "shopassist.playback" };
     private static readonly int[][] Categories = {
         new[] { 2, 5, 6, 7, 8, 9, 20, 22, 25, 26, 36, 38, 39, 40, 41 },
         new[] { 1, 3, 4, 11, 16, 23, 24, 27, 28, 29, 34 },
         new[] { 10, 12, 19, 30, 31, 32, 33, 35, 37 },
-        new[] { 13, 14, 15, 17, 18, 21 }
+        new[] { 13, 14, 15, 17, 18, 21 },
+        new[] { 42 }
     };
-    private static readonly string[] ChoiceKeys = { "f09.mode", "f14.side", "f20.side", "f24.destination", "f39.corner", "f39.style" };
+    private static readonly string[] ChoiceKeys = { "f09.mode", "f14.side", "f20.side", "f24.destination", "f39.corner", "f39.style", "f42.mode", "f42.speed" };
     private static readonly string[][] ChoiceLabels = {
         new[] { "f09.always", "f09.conflicts", "f09.simulate" },
         new[] { "f14.auto", "f14.left", "f14.right" },
         new[] { "f20.auto", "f20.left", "f20.right" },
         new[] { "f24.front", "f24.box", "f24.trash" },
         new[] { "f39.top_left", "f39.top_right", "f39.bottom_left", "f39.bottom_right" },
-        new[] { "f39.filled", "f39.outline" }
+        new[] { "f39.filled", "f39.outline" },
+        new[] { "f42.hold", "f42.toggle" },
+        new[] { "f42.speed2", "f42.speed4", "f42.speed8", "f42.speed16" }
     };
     private static readonly int[] Widths = { 1280, 1280, 1920, 1920 };
     private static readonly int[] Heights = { 720, 720, 1080, 1080 };
@@ -71,8 +74,11 @@ public sealed class SettingsPresentationScenario
             if (options == null || mod == null || config == null) return false;
             Need(mod.IsEnabled && mod.Instance != null && mod.LoadError == null, "ShopAssist is not enabled");
             Need(SystemInfo.graphicsDeviceType != UnityEngine.Rendering.GraphicsDeviceType.Null, "Run settings presentation with the rendered Player");
-            Need(config.Entries.Count == 80 && config.Entries.Select(entry => entry.Key).Distinct().Count() == 80,
-                "Expected 80 distinct saved settings");
+            Need(config.Entries.Select(entry => entry.Key).Distinct().Count() == config.Entries.Count,
+                "Duplicate saved settings");
+            for (int feature = 1; feature <= 42; feature++)
+                Need(config.Get("f" + feature.ToString("00") + ".enabled")?.ValueType == typeof(bool),
+                    "Missing feature switch: " + feature);
             Need(config.Get("f19.pinned")?.ValueType == typeof(string), "Missing pinned liquid setting");
             original = Snapshot();
             originalLanguage = LocHelper.GetCurrentLocaleCode();
@@ -160,7 +166,7 @@ public sealed class SettingsPresentationScenario
             AssertValues(original, "final restoration");
             VerifyFile();
             restored = true;
-            result = "PASS 80 settings across native and Mods views; grouped rows, localized labels and all dropdown values; draft/cancel/reset/apply/persistence; rendered Chinese and English labels at 1280x720 and 1920x1080";
+            result = "PASS " + original.Count + " settings across native and Mods views; grouped rows, localized labels and all dropdown values; draft/cancel/reset/apply/persistence; rendered Chinese and English labels at 1280x720 and 1920x1080";
             return true;
         }
         throw new InvalidOperationException("Unknown settings presentation step " + step);
@@ -247,9 +253,10 @@ public sealed class SettingsPresentationScenario
         Need(Equals(WidgetValue(Control(window, toggle.Key, false), toggle), before[toggle.Key]) &&
             Equals(WidgetValue(Control(window, choice.Key, false), choice), before[choice.Key]), "Cancel after Reset lost committed values");
         Reset(window); AssertDraftDefaults(window); Apply(window);
-        foreach (var entry in config.Entries) Need(Equals(entry.BoxedValue, entry.BoxedDefault), "Reset Apply did not commit default for " + entry.Key);
+        foreach (var entry in config.Entries)
+            Need(Equals(entry.BoxedValue, entry.Key == "f19.pinned" ? before[entry.Key] : entry.BoxedDefault), "Reset Apply changed an unexpected value for " + entry.Key);
         VerifyFile();
-        foreach (var entry in config.Entries) SetWidget(Control(window, entry.Key, false), entry, original[entry.Key]);
+        foreach (var entry in config.Entries.Where(entry => entry.Key != "f19.pinned")) SetWidget(Control(window, entry.Key, false), entry, original[entry.Key]);
         Apply(window);
         AssertValues(original, "restoring all settings through Mods Apply"); VerifyFile();
         window.Close(); window = null;
@@ -275,8 +282,8 @@ public sealed class SettingsPresentationScenario
                 "Wrong " + language + " section title: " + titleId);
             Need(expected.All(key => Categories[tier].Contains(int.Parse(key.Substring(1, 2)))),
                 "Setting in the wrong category: " + sectionId);
-            var keys = native ? expected.Where(key => key != "f19.pinned").ToArray() : expected;
-            Need(new HashSet<string>(keys).SetEquals(native ? nativeKeys : expected), "Section membership differs: " + sectionId);
+            var keys = expected.Where(key => key != "f19.pinned").ToArray();
+            Need(new HashSet<string>(keys).SetEquals(native ? nativeKeys : expected.Where(key => key != "f19.pinned")), "Section membership differs: " + sectionId);
             var rows = new List<KeyValuePair<string, Transform>>();
             foreach (string key in keys)
             {
@@ -311,8 +318,9 @@ public sealed class SettingsPresentationScenario
                 Need(members[0] == (members.Contains(master) ? master : "f04.unseen"), "Group has no leading primary: " + group.Key);
             }
         }
-        Need(seen.Count == (native ? 79 : 80), "Settings were lost from " + (native ? "native options" : "Mods"));
-        Need((view.Get(native ? Mod + ":f19.pinned" : "f19.pinned") == null) == native, "f19.pinned has wrong entrance visibility");
+        Need(seen.Count == config.Entries.Count - 1, "Settings were lost from " + (native ? "native options" : "Mods"));
+        var storedPins = view.Get(native ? Mod + ":f19.pinned" : "f19.pinned");
+        Need(storedPins?.root?.activeInHierarchy != true, "Stored pin data is exposed as a raw field");
         for (int i = 0; i < ChoiceKeys.Length; i++)
         {
             var control = Choice(view, ChoiceKeys[i], native, ChoiceLabels[i].Length);
@@ -479,7 +487,7 @@ public sealed class SettingsPresentationScenario
     private Dictionary<string, object> Snapshot() => config.Entries.ToDictionary(entry => entry.Key, entry => entry.BoxedValue, StringComparer.Ordinal);
     private void AssertValues(Dictionary<string, object> expected, string phase)
     {
-        Need(config.Entries.Count == 80, "Saved setting count changed during " + phase);
+        Need(config.Entries.Count == original.Count, "Saved setting count changed during " + phase);
         foreach (var entry in config.Entries)
             Need(expected.TryGetValue(entry.Key, out object value) && Equals(entry.BoxedValue, value), "Unexpected value for " + entry.Key + " during " + phase);
     }
@@ -500,7 +508,7 @@ public sealed class SettingsPresentationScenario
     }
     private void AssertDraftDefaults(CustomUIWindow view)
     {
-        foreach (var entry in config.Entries)
+        foreach (var entry in config.Entries.Where(entry => entry.Key != "f19.pinned"))
             Need(Equals(WidgetValue(Control(view, entry.Key, false), entry), entry.BoxedDefault), "Reset did not show default for " + entry.Key);
         foreach (var entry in config.Entries.Where(value => value.ValueType == typeof(int) && !ChoiceKeys.Contains(value.Key)))
             Need(view.Get("value_" + entry.Key)?.GetText() == entry.BoxedDefault.ToString(), "Reset left a stale numeric readout for " + entry.Key);

@@ -31,6 +31,13 @@ public sealed class SettingsFinderScenario
         if (step == 1)
         {
             var w = Find(); Need(w?.IsAlive == true, "Main-menu settings finder did not open");
+            Need(w.Get("tier").dropdown.options.Count == 6, "Fast playback is missing its top-level category");
+            w.Get("tier").SetIndex(5, true);
+            Need(Visible("f42.enabled") && Visible("f42.mode") && Visible("f42.speed") && Visible("f42.key") && !Visible("f15.enabled"),
+                "Playback category does not contain its own settings and shortcut");
+            w.Get("tier").SetIndex(4, true);
+            Need(!Visible("f42.enabled"), "Playback is still inside calendar settings");
+            w.Get("tier").SetIndex(0, true);
             var input = w.Get("query").input;
             w.Get("query").SetString("本周和下周", true);
             Need(ReferenceEquals(Find(), w) && ReferenceEquals(Find().Get("query").input, input) && Visible("f15.enabled"),
