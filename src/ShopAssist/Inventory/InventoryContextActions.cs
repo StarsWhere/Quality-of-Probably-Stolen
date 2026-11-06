@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Reflection;
 using HarmonyLib;
 using UnityEngine;
 
 namespace ShopAssist
 {
-    // Adds independent rows to the game's existing item and grid context menus.
+    // The original menu grid remains the window's child: other mods can own that object.
     internal static class InventoryContextActions
     {
         private sealed class Entry
@@ -22,7 +24,40 @@ namespace ShopAssist
             internal PixelWindow Parent;
         }
 
+        private sealed class Layout
+        {
+            internal PixelWindow Window;
+            internal GridPixelElement Rows;
+        }
+
         private static readonly List<Entry> entries = new List<Entry>();
+        private static readonly Dictionary<PixelWindow, Layout> layouts = new Dictionary<PixelWindow, Layout>();
+        private static readonly FieldInfo Background = AccessTools.Field(typeof(PixelWindow), "background");
+        private static readonly FieldInfo Border = AccessTools.Field(typeof(PixelWindow), "outsideBorder");
+        private static readonly MethodInfo ClearItemHover = AccessTools.Method(typeof(ItemContextHandler), "UpdateSelectButtonColor");
+        private static readonly MethodInfo ClearGridHover = AccessTools.Method(typeof(ItemContextHandler), "UpdateSortSelectButtonColor");
+        private static readonly MethodInfo OpenGridMenu = AccessTools.Method(typeof(ItemContextHandler), "TryOpenSortMenu");
+        private static Func<bool> keepOpen;
+        private static Func<GameGridInventory, bool> validSortTarget;
+        private static PixelWindow persistentWindow;
+        private static GameGridInventory persistentGrid;
+        private static GameItem persistentItem;
+        private static RichTextElement hovered;
+        private static int consumedFrame = -1;
+        private static int escapeFrame = -1;
+
+        internal static void ConfigureSortMenu(Func<bool> keep, Func<GameGridInventory, bool> valid)
+        { keepOpen = keep; validSortTarget = valid; }
+
+        internal static void ClearSortMenu()
+        { ForgetSession(); keepOpen = null; validSortTarget = null; }
+
+        internal static void DismissSortMenu()
+        {
+            if (persistentWindow == null) return;
+            ItemContextHandler.current?.Stop();
+            ForgetSession();
+        }
 
         internal static void RegisterItem(string id, Func<GameItem, string> label, Func<GameItem, bool> canOpen, Action<GameItem> open)
         {
@@ -55,6 +90,26 @@ namespace ShopAssist
                 throw new ArgumentException("Invalid or duplicate inventory menu action.");
             entries.Add(entry);
         }
+        internal static ActionAvailability EvaluateGrid(string id, GameGridInventory grid)
+        {
+            Entry entry = entries.Find(candidate => candidate.Grid && candidate.Id == id);
+            if (entry == null) return ActionAvailability.Blocked(ActionUnavailableReason.Unsupported, "availability.unsupported");
+            try { return entry.GridAvailable(grid); }
+            catch (Exception error)
+            {
+                Debug.LogError("[ShopAssist] Context action " + id + " availability failed: " + error);
+                return ActionAvailability.Blocked(ActionUnavailableReason.Unknown, "availability.unknown");
+            }
+        }
+        internal static void RunGrid(string id, GameGridInventory grid)
+        {
+            Entry entry = entries.Find(candidate => candidate.Grid && candidate.Id == id);
+            ActionAvailability availability = EvaluateGrid(id, grid);
+            if (!availability.Allowed) { ShopNotice.Show(availability.Message); return; }
+            try { entry.GridAction(grid); }
+            catch (Exception error)
+            { Debug.LogError("[ShopAssist] Context action " + id + " failed: " + error); ShopNotice.Show(ShopSettings.Text("availability.unknown")); }
+        }
         internal static void Hide(string id)
         {
             Entry entry = entries.Find(candidate => candidate.Id == id);
@@ -66,52 +121,103 @@ namespace ShopAssist
             if (entry == null) return;
             Destroy(entry);
             entries.Remove(entry);
+            if (entries.Count == 0)
+            {
+                foreach (Layout layout in layouts.Values.ToArray()) DestroyLayout(layout);
+                layouts.Clear();
+                ForgetSession();
+            }
         }
-
         private static void Destroy(Entry entry)
         {
             if (entry.Button?.handler != null) UnityEngine.Object.Destroy(entry.Button.handler.gameObject);
             entry.Button = null;
             entry.Parent = null;
         }
+        private static void DestroyLayout(Layout layout)
+        {
+            if (layout?.Rows?.handler != null)
+            {
+                layout.Rows.handler.gameObject.SetActive(false);
+                UnityEngine.Object.Destroy(layout.Rows.handler.gameObject);
+            }
+            foreach (Entry entry in entries)
+                if (ReferenceEquals(entry.Parent, layout?.Window)) { entry.Button = null; entry.Parent = null; }
+        }
         private static string NodeName(string id) => id == "f05.open" ? "ShopAssist_SortMenu" :
             id == "f06.hold" ? "ShopAssist_HoldMenu" : id == "f07.open" ? "ShopAssist_RouteMenu" : "ShopAssist_" + id.Replace('.', '_');
 
         private static void Render(bool gridMenu, PixelWindow menu, GameItem item, GameGridInventory grid, bool opened)
         {
-            foreach (Entry entry in entries)
-                if (entry.Grid == gridMenu && entry.Button?.handler != null) entry.Button.handler.gameObject.SetActive(false);
-            if (!opened || menu?.handler == null || !menu.IsVisible()) return;
-            float y = -menu.heightPixels;
-            float right = menu.widthPixels;
+            if (menu != null && layouts.TryGetValue(menu, out Layout previous))
+            { DestroyLayout(previous); layouts.Remove(menu); }
+            if (!opened || menu?.handler == null || !menu.IsVisible()) { ForgetSession(); return; }
+            if (!(menu.childElement is GridPixelElement original)) return;
+
+            var visible = new List<(Entry entry, string label)>();
             foreach (Entry entry in entries.ToArray())
             {
                 if (entry.Grid != gridMenu) continue;
                 try
                 {
                     if (!(gridMenu ? entry.GridAvailable(grid) : entry.ItemAvailable(item)).Allowed) continue;
-                    if (entry.Button?.handler == null || !ReferenceEquals(entry.Parent, menu))
-                    {
-                        Destroy(entry);
-                        entry.Parent = menu;
-                        entry.Button = new RichTextElement();
-                        entry.Button.handler.SetParent(menu.handler);
-                        entry.Button.handler.gameObject.name = NodeName(entry.Id);
-                    }
                     string label = gridMenu ? entry.GridLabel(grid) : entry.ItemLabel(item);
-                    if (string.IsNullOrWhiteSpace(label)) continue;
-                    entry.Button.SetText(label, 10000, RenderHandler.ColorPalette.LightGray);
-                    entry.Button.handler.rectTransform.anchoredPosition = new Vector2(2f, y);
-                    entry.Button.handler.gameObject.SetActive(true);
-                    foreach (Transform child in entry.Button.handler.GetComponentsInChildren<Transform>(true)) child.gameObject.tag = "ContextMenuNode";
-                    right = Mathf.Max(right, 2f + entry.Button.widthPixels);
-                    y -= entry.Button.heightPixels;
+                    if (!string.IsNullOrWhiteSpace(label)) visible.Add((entry, label));
                 }
                 catch (Exception error) { Debug.LogError("[ShopAssist] Context action " + entry.Id + " failed: " + error); }
             }
-            if (y < -menu.heightPixels) FitOnScreen(menu, -y, right);
+            if (visible.Count == 0) { ForgetSession(); return; }
+
+            var rows = new GridPixelElement(1, visible.Count).SetSpacing(0, menu.yPadding);
+            var layout = new Layout { Window = menu, Rows = rows };
+            layouts[menu] = layout;
+            int width = 0;
+            foreach (var row in visible)
+            {
+                row.entry.Parent = menu;
+                row.entry.Button = new RichTextElement();
+                row.entry.Button.handler.gameObject.name = NodeName(row.entry.Id);
+                row.entry.Button.SetText(row.label, 10000, RenderHandler.ColorPalette.LightGray);
+                width = Mathf.Max(width, row.entry.Button.widthPixels);
+            }
+            for (int y = 0; y < original.gridHeight; y++)
+                for (int x = 0; x < original.gridWidth; x++)
+                    if (original.GetElement(x, y) is RichTextElement native) width = Mathf.Max(width, native.widthPixels);
+            for (int y = 0; y < original.gridHeight; y++)
+                for (int x = 0; x < original.gridWidth; x++)
+                    if (original.GetElement(x, y) is RichTextElement native) native.SetFixedSize(width, -1);
+            original.Validate();
+            menu.Validate();
+            for (int i = 0; i < visible.Count; i++)
+            {
+                Entry entry = visible[i].entry;
+                entry.Button.SetFixedSize(width, -1);
+                if (!rows.AttachPos(entry.Button, 0, i)) throw new InvalidOperationException("Could not attach a context menu row.");
+                foreach (Transform child in entry.Button.handler.GetComponentsInChildren<Transform>(true)) child.gameObject.tag = "ContextMenuNode";
+            }
+            rows.handler.SetParent(menu.handler);
+            rows.handler.rectTransform.anchoredPosition = new Vector2(menu.xPadding, -menu.heightPixels);
+            rows.Validate();
+            int fullWidth = Mathf.Max(menu.widthPixels, width + 2 * menu.xPadding);
+            int fullHeight = menu.heightPixels + rows.heightPixels + menu.yPadding;
+            ResizeChrome(menu, fullWidth, fullHeight);
+            FitOnScreen(menu, fullHeight, fullWidth);
+            if (visible.Any(row => row.entry.Id.StartsWith("f05.", StringComparison.Ordinal)))
+            {
+                persistentWindow = menu;
+                persistentGrid = gridMenu ? grid : item?.parentInventory as GameGridInventory;
+                persistentItem = gridMenu ? null : item;
+            }
+            else ForgetSession();
         }
 
+        private static void ResizeChrome(PixelWindow menu, int width, int height)
+        {
+            if (!(Background?.GetValue(menu) is TreeNodeRender background) || !(Border?.GetValue(menu) is TreeNodeRender border))
+                throw new InvalidOperationException("Native context menu chrome changed.");
+            background.rectTransform.sizeDelta = new Vector2(width, height);
+            border.rectTransform.sizeDelta = new Vector2(width, height);
+        }
         private static void FitOnScreen(PixelWindow menu, float height, float width)
         {
             RectTransform rect = menu.handler.rectTransform;
@@ -119,16 +225,42 @@ namespace ShopAssist
             Canvas canvas = menu.handler.GetComponentInParent<Canvas>(true);
             canvas = canvas != null ? canvas.rootCanvas : RenderHandler.current?.windowUICanvas;
             if (canvas == null) return;
-            // Match PixelWindow.FixBounds, but include the independent rows below
-            // the native menu. Do not resize its grid: peers also own its layout.
-            Vector2 screenCorner = canvas.pixelRect.max;
-            screenCorner.y = canvas.pixelRect.min.y;
-            Vector2 bounds = rect.parent.InverseTransformPoint(screenCorner);
+            Vector2 corner = canvas.pixelRect.max;
+            corner.y = canvas.pixelRect.min.y;
+            Vector2 bounds = rect.parent.InverseTransformPoint(corner);
             bounds.y = -bounds.y;
             Vector2 position = rect.anchoredPosition;
             position.x = Mathf.Clamp(position.x, 0f, Mathf.Max(0f, bounds.x - width));
             position.y = -Mathf.Clamp(-position.y, 0f, Mathf.Max(0f, bounds.y - height));
             rect.anchoredPosition = position;
+        }
+
+        private static bool Persistent(ItemContextHandler handler)
+        {
+            if (keepOpen?.Invoke() != true || persistentWindow?.handler == null || !persistentWindow.IsVisible() ||
+                persistentGrid == null || validSortTarget?.Invoke(persistentGrid) != true ||
+                (persistentItem != null && persistentItem.parentInventory != persistentGrid)) return false;
+            return ReferenceEquals(handler, ItemContextHandler.current);
+        }
+        private static bool Inside(ItemContextHandler handler)
+        {
+            if (!(Background?.GetValue(persistentWindow) is TreeNodeRender background)) return false;
+            Canvas canvas = handler.overlayCanvas;
+            Camera camera = canvas == null || canvas.renderMode == RenderMode.ScreenSpaceOverlay ? null : canvas.worldCamera;
+            return RectTransformUtility.RectangleContainsScreenPoint(background.rectTransform, Input.mousePosition, camera);
+        }
+        private static void ForgetSession()
+        { persistentWindow = null; persistentGrid = null; persistentItem = null; hovered = null; }
+        private static void SetHover(RichTextElement button)
+        {
+            if (ReferenceEquals(hovered, button)) return;
+            foreach (Entry entry in entries)
+            {
+                if (entry.Button?.handler == null || !ReferenceEquals(entry.Parent, persistentWindow) || !entry.Button.handler.gameObject.activeSelf) continue;
+                string label = entry.Grid ? entry.GridLabel(persistentGrid) : entry.ItemLabel(persistentItem);
+                entry.Button.SetText(label, 10000, ReferenceEquals(entry.Button, button) ? RenderHandler.ColorPalette.VeryLightGray : RenderHandler.ColorPalette.LightGray);
+            }
+            hovered = button;
         }
 
         private static bool Trigger(ItemContextHandler handler, RichTextElement button, GameItem item, GameGridInventory grid)
@@ -140,14 +272,15 @@ namespace ShopAssist
                 try
                 {
                     ActionAvailability availability = entry.Grid ? entry.GridAvailable(grid) : entry.ItemAvailable(item);
-                    handler.Stop();
+                    handler.Stop(); ForgetSession();
                     if (availability.Allowed)
                     {
                         if (entry.Grid) entry.GridAction(grid); else entry.ItemAction(item);
                     }
                     else ShopNotice.Show(availability.Message);
                 }
-                catch (Exception error) { Debug.LogError("[ShopAssist] Context action " + entry.Id + " failed: " + error); }
+                catch (Exception error)
+                { Debug.LogError("[ShopAssist] Context action " + entry.Id + " failed: " + error); ShopNotice.Show(ShopSettings.Text("availability.unknown")); }
                 return false;
             }
             return true;
@@ -162,8 +295,68 @@ namespace ShopAssist
         [HarmonyPatch(typeof(ItemContextHandler), "OnEventPress")]
         private static class ItemMenuPatch
         {
-            private static void Postfix(PixelWindow ___contextWindow, GameItem ___currentItem) =>
-                Render(false, ___contextWindow, ___currentItem, null, ___currentItem != null);
+            private static bool Prefix(ItemContextHandler __instance, ISet<KeyCode> keysPressed)
+            {
+                if (Persistent(__instance) && (keysPressed.Contains(KeyCode.Escape) || (!Inside(__instance) &&
+                    (keysPressed.Contains(__instance.key) || keysPressed.Contains(__instance.triggerKey)))))
+                {
+                    if (keysPressed.Contains(KeyCode.Escape)) escapeFrame = Time.frameCount;
+                    __instance.Stop(); ForgetSession(); consumedFrame = Time.frameCount;
+                    return false;
+                }
+                if (keysPressed.Contains(__instance.triggerKey) && EmporiumOption.SortMenuDisabled &&
+                    ItemSelectHandler.current != null && !ItemSelectHandler.current.IsEquipped && !ItemPinHelper.BlocksClicks &&
+                    ItemMouseDragHandler.current != null && !ItemMouseDragHandler.current.IsDraggingItem &&
+                    RenderHandler.RaycastElement<GameItem>(Input.mousePosition) == null)
+                {
+                    var grid = RenderHandler.RaycastElement<GameGridInventory>(Input.mousePosition);
+                    if (InventoryOrganizer.CanOpenSortGrid(grid)) OpenGridMenu?.Invoke(__instance, new object[] { (Vector2)Input.mousePosition });
+                }
+                return true;
+            }
+            private static void Postfix(PixelWindow ___contextWindow, GameItem ___currentItem)
+            {
+                if (___currentItem != null) Render(false, ___contextWindow, ___currentItem, null, true);
+            }
+        }
+        [HarmonyPatch(typeof(ItemContextHandler), "get_keyListeners")]
+        private static class KeyPatch
+        {
+            private static void Postfix(ItemContextHandler __instance, ref List<KeyCode> __result)
+            { if (Persistent(__instance) && !__result.Contains(KeyCode.Escape)) __result.Add(KeyCode.Escape); }
+        }
+        [HarmonyPatch(typeof(ItemContextHandler), "OnEventUpdate")]
+        private static class UpdatePatch
+        {
+            private static bool Prefix(ItemContextHandler __instance, ref bool __result)
+            {
+                if (consumedFrame == Time.frameCount) { __result = true; return false; }
+                if (persistentWindow != null && keepOpen?.Invoke() == true && !Persistent(__instance))
+                { __instance.Stop(); ForgetSession(); __result = false; return false; }
+                if (!Persistent(__instance)) return true;
+                if (Inside(__instance)) { SetHover(__instance.FindRichTextNode(Input.mousePosition, __instance.overlayCanvas)); return true; }
+                ClearItemHover?.Invoke(__instance, new object[] { null });
+                ClearGridHover?.Invoke(__instance, new object[] { null });
+                SetHover(null);
+                __result = false;
+                return false;
+            }
+        }
+        [HarmonyPatch(typeof(ItemContextHandler), "OnEventReset")]
+        private static class ResetPatch { private static void Postfix() => ForgetSession(); }
+        [HarmonyPatch(typeof(StoreUIManager), nameof(StoreUIManager.ResolveEscape))]
+        private static class EscapePatch
+        {
+            private static bool Prefix(ref bool __result)
+            {
+                if (escapeFrame == Time.frameCount) { __result = true; return false; }
+                ItemContextHandler handler = ItemContextHandler.current;
+                if (handler == null || !Persistent(handler) || !ShopInput.Ready()) return true;
+                handler.Stop(); ForgetSession();
+                consumedFrame = escapeFrame = Time.frameCount;
+                __result = true;
+                return false;
+            }
         }
         [HarmonyPatch(typeof(ItemContextHandler), "TriggerButton")]
         private static class ActionPatch

@@ -76,9 +76,8 @@ namespace ShopAssist
         private void Draw(GameItem initial)
         {
             if (!enabled.Value || !ShopInventory.InStore || phase != 0) return;
-            var b = CustomUIManager.Window(ModEntry.Id + ".label", ShopSettings.Text("f22.open"), CustomUIManager.LAYER_META)
-                .SetSize(475, 365).SetCloseOnEscape(true).SetDraggable(true);
-            window = b.GetWindow(); b.OnClose(() => window = null);
+            var b = UiLayout.Rebuild(ref window, ModEntry.Id + ".label", ShopSettings.Text("f22.open"), 475, 365);
+            b.OnClose(() => window = null);
             if (!HasTool || (Blue && !GeneralHelper.HasCustomName(sample)))
             { b.AddLabel(ShopSettings.Text("f22.sample")).Show(); return; }
             var selection = initial == null ? ShopSelection.Current() : new List<GameItem> { initial };

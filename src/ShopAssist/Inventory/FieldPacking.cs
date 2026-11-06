@@ -73,9 +73,7 @@ namespace ShopAssist
             i is GameItemElement el && VisibleInventoryViews.Visible(el) && ShopInventory.Movable(i) && !AttentionBook.HasInspection("f36.open", i.uniqueId));
         private CustomUIBuilder Window()
         {
-            var b = CustomUIManager.Window(ModEntry.Id + ".packing", ShopSettings.Text("f36.open"), CustomUIManager.LAYER_META)
-                .SetSize(590, 410).SetDraggable(true).SetCloseOnEscape(true);
-            window = b.GetWindow();
+            var b = UiLayout.Rebuild(ref window, ModEntry.Id + ".packing", ShopSettings.Text("f36.open"), 590, 410);
             CustomUIWindow own = window;
             b.OnClose(() => { if (ReferenceEquals(window, own)) window = null; });
             return b;
@@ -123,7 +121,9 @@ namespace ShopAssist
                 else { if (!excluded.Add(entry.Item)) excluded.Remove(entry.Item); }
                 Draw();
             } });
-            b.End().AddButton(ShopSettings.Text("f36.preview"), Preview, "preview").Show();
+            b.End().BeginRow().AddButton(ShopSettings.Text("f36.preview"), Preview, "preview");
+            if (ShopNotice.HasResult) b.AddButton(ShopSettings.Text("operation.last"), ShopNotice.OpenLastResult, "last_result");
+            b.End().Show();
         }
         private static ICollection<string> KnownTypes(GameItem item) => item is GameItemElement element ? CustomerIndicators.PublicTypes(element) : null;
         private bool CategoryAllowed(GameItem item)

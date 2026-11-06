@@ -153,9 +153,8 @@ namespace ShopAssist
         {
             if (!enabled.Value || !ShopInventory.InStore || !Load()) return;
             bool fresh = window == null || !window.IsAlive;
-            var b = CustomUIManager.Window(Id, ShopSettings.Text("f25.open"), CustomUIManager.LAYER_META)
-                .SetSize(570, 400).SetCloseOnEscape(true).SetDraggable(true);
-            window = b.GetWindow(); b.OnClose(() => window = null);
+            var b = UiLayout.Rebuild(ref window, Id, ShopSettings.Text("f25.open"), 570, 400);
+            b.OnClose(() => window = null);
             if (!trip.returned || trip.gains.Count == 0) { b.AddLabel(ShopSettings.Text("f25.none")).Show(); return; }
             if (fresh) { selected.Clear(); foreach (var g in trip.gains) if (!g.manual) selected.Add(g.id); }
             var locations = ShopInventory.OwnedLocations(false);
@@ -187,9 +186,9 @@ namespace ShopAssist
             }
             ItemGrid.Add(b, tiles, new ItemGrid.Options { Cards = true, Columns = 4, CardWidth = 125, CardHeight = 92,
                 OnClick = entry => { if (!selected.Add(entry.Item.uniqueId)) selected.Remove(entry.Item.uniqueId); entry.Selected = selected.Contains(entry.Item.uniqueId); } });
-            b.End().BeginRow().AddButton("‹", () => { if (page > 0) { page--; Draw(); } })
-                .AddButton("›", () => { if ((page + 1) * 18 < trip.gains.Count) { page++; Draw(); } })
-                .AddButton(ShopSettings.Text("f25.unload"), Unload, "unload").End().Show();
+            b.End();
+            UiLayout.Pager(b, page, trip.gains.Count, 18, next => { page = next; Draw(); });
+            b.AddButton(ShopSettings.Text("f25.unload"), Unload, "unload").Show();
         }
 
         private void Unload()

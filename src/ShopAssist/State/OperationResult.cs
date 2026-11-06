@@ -16,6 +16,7 @@ namespace ShopAssist
         }
 
         internal string ActionKey { get; }
+        internal Guid EventId { get; } = Guid.NewGuid();
         internal string Detail { get; set; }
         internal readonly List<ItemResult> Items = new List<ItemResult>();
         internal int Completed => Items.Where(i => i.Status == OperationItemStatus.Completed).Sum(i => i.Quantity);

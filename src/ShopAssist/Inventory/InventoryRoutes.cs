@@ -19,6 +19,14 @@ namespace ShopAssist
         private CustomUIWindow rulesWindow, planWindow;
         private ShopInventory.Location editing;
         private RoutingRule draft;
+        private sealed class DraftState
+        {
+            internal RoutingRule Rule;
+            internal string Priority;
+            internal int Category, Sample;
+            internal bool Excluded;
+        }
+        private readonly Dictionary<GameInventory, DraftState> drafts = new Dictionary<GameInventory, DraftState>();
         private List<GameItem> samples = new List<GameItem>(), selection;
         private string priority = "0", run;
         private int slot, categoryIndex, sampleIndex, planRevision;
@@ -81,13 +89,21 @@ namespace ShopAssist
         private void OpenRules(GameGridInventory preferred)
         {
             if (!started || !rulesEnabled.Value || !ShopInventory.InStore || CustomUIManager.Instance == null) return;
-            if (rulesWindow != null && rulesWindow.IsAlive && SameRun()) { rulesWindow.BringToFront(); return; }
+            var locations = Locations();
+            ShopInventory.Location requested = preferred == null ? null : locations.FirstOrDefault(location => ReferenceEquals(location.Inventory, preferred));
+            if (preferred != null && requested == null) { ShopNotice.Show(ShopSettings.Text("f08.changed")); return; }
+            if (rulesWindow != null && rulesWindow.IsAlive && SameRun())
+            {
+                if (requested != null && !ReferenceEquals(editing?.Inventory, preferred))
+                { SwitchDraft(requested); RenderRules(); }
+                rulesWindow?.BringToFront();
+                return;
+            }
             CloseRules();
             SetRun();
             if (!store.Load()) { ShopNotice.Show(ShopSettings.Text("f07.unreadable")); return; }
-            var locations = Locations();
             if (locations.Count == 0) { ShopNotice.Show(ShopSettings.Text("f07.no_area")); return; }
-            editing = locations.FirstOrDefault(location => location.Inventory == preferred) ?? locations[0];
+            editing = requested ?? locations[0];
             var visibleLocations = ShopInventory.OwnedLocations(true).Where(ShopInventory.IsMainStockBranch).ToList();
             var visibleInventories = new HashSet<GameInventory>(visibleLocations.Select(location => location.Inventory));
             var sampleItems = ShopSelection.Current().Where(item => item != null && visibleInventories.Contains(item.parentInventory)).ToList();
@@ -111,6 +127,16 @@ namespace ShopAssist
             excluded = false;
         }
 
+        private void SwitchDraft(ShopInventory.Location location)
+        {
+            if (editing?.Inventory != null && draft != null)
+                drafts[editing.Inventory] = new DraftState { Rule = draft, Priority = priority, Category = categoryIndex, Sample = sampleIndex, Excluded = excluded };
+            editing = location;
+            if (drafts.TryGetValue(location.Inventory, out DraftState state))
+            { draft = state.Rule; priority = state.Priority; categoryIndex = state.Category; sampleIndex = state.Sample; excluded = state.Excluded; }
+            else LoadDraft();
+        }
+
         private void RenderRules()
         {
             if (!SameRun() || !rulesEnabled.Value || CustomUIManager.Instance == null || editing == null) { CloseRules(); return; }
@@ -125,7 +151,11 @@ namespace ShopAssist
             CustomUIWindow thisView = rulesWindow;
             b.OnClose(() => { if (ReferenceEquals(rulesWindow, thisView)) rulesWindow = null; });
             VisualChoices.Location(b, ShopSettings.Text("f07.open"), editing, locations, location =>
-            { editing = location; LoadDraft(); RenderRules(); }, "area");
+            {
+                if (!SameRun() || !ShopInventory.TryRefresh(location, out ShopInventory.Location refreshed) || !ShopInventory.IsMainStockBranch(refreshed))
+                { ShopNotice.Show(ShopSettings.Text("f08.changed")); return; }
+                SwitchDraft(refreshed); RenderRules();
+            }, "area");
             b.BeginRow().AddToggle(ShopSettings.Text("f07.receive"), draft.receive, value => draft.receive = value, "receive");
             b.Last.SetInteractable(editing.Ordinary && !editing.IsMachine);
             b.AddToggle(ShopSettings.Text("f07.exclusive"), draft.exclusive, value => draft.exclusive = value, "exclusive").End();
@@ -330,7 +360,7 @@ namespace ShopAssist
         private void CloseRules()
         {
             if (rulesWindow != null && rulesWindow.IsAlive) rulesWindow.Close();
-            rulesWindow = null; editing = null; draft = null; samples.Clear();
+            rulesWindow = null; editing = null; draft = null; drafts.Clear(); samples.Clear();
         }
         private void ClosePlan()
         {
