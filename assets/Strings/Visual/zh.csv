@@ -1,0 +1,20 @@
+visual.choose,点击选择
+visual.stacks,堆物品
+visual.no_containers,先在店内准备一个可用的储藏区或容器。
+visual.no_items,当前没有可选择的物品。
+visual.machine,这台机器
+visual.installed,当前装着
+visual.source,从这里取
+visual.target,放到这里
+visual.tools,店铺工具
+visual.open,打开
+f28.cash,现有现金 {0}
+f28.kind,收支类型
+f28.income,收入
+f28.expense,支出
+f36.priority_edit,点击物品标为优先带走
+f36.take,带走选中物品
+f36.leave,留在原处
+f27.order_summary,需要 {0} 件 · 剩余 {1} 天
+f27.ready,已留好
+visual.attention,待处理

@@ -1,0 +1,140 @@
+machines.refresh,Refresh
+machines.partial,Showing the first 100 results.
+f10.enabled,Manually install and remove modules in the cabinet
+f10.tip,Open an owned machine's Module Cabinet to browse idle modules across the store and modules in other machines. Drag modules into a machine or remove them to your selected module storage.
+f10.key,Open the machine module cabinet
+f10.key.tip,Press while an owned machine window is open to open its Module Cabinet.
+f10.open,Module cabinet
+f10.idle,Available modules
+f10.installed,Installed in other machines
+f10.empty,No modules found.
+f10.stuck,Stuck
+f10.fixed,Pinned
+f10.locked,Locked
+f10.type_match,Type matches
+f10.type_mismatch,Type differs
+f10.type_unknown,Type not checked
+f10.performance,Performance
+f10.efficiency,Efficiency
+f10.quality,Quality
+f12.enabled,Plan machine module layouts by attribute
+f12.tip,Enable the Module Cabinet. Select 1–5 compatible idle modules there, choose Arrange and select performance, efficiency or quality. Preview the layout and stat changes before applying the recommended modules. Existing modules stay installed but movable ones may change position; evaporators fill empty cells only.
+f12.open,Arrange modules
+f12.preview,Preview layout
+f12.apply,Apply layout
+f12.values,Performance {0}% → {1}% · Efficiency {2}% → {3}% · Quality {4}% → {5}%
+f12.keep,Keep in place
+f12.move,Move inside bay
+f12.add,Add from inventory
+f12.unsupported,Open a supported unlocked machine and select 1–5 movable compatible idle modules. Layouts with unverified effects cannot be previewed.
+f12.no_better,No better layout found.
+f12.timeout,Search timed out. Select fewer modules and retry.
+f12.changed,The machine or selected items changed. Preview again.
+f12.inspect,The move stopped. Check the machine and source inventory.
+f12.applied,Layout applied.
+f19.enabled,Enhance water and chemical scan results
+f19.tip,After scanning a sample in a water or chemical scanner, view its label, volume and component shares. Open a component's treatment card for filter, UV, tablet and machine conditions and limits.
+f19.size,Scan result base text size (pt)
+f19.size.tip,Scale labels, components, values and treatment cards in water and chemical scan results relative to a 14 pt base. Text may shrink to fit and scaling has upper and lower limits.
+f19.pinned,Pinned scan component
+f19.pinned.tip,After scanning, select the star beside a component or choose one from the current result in Shop Tools. You can also enter its name or identifier in the configuration. Water and chemical scans share one pin, shown first when present.
+f19.choose,Choose a component to pin in scan results
+f19.none,Do not pin
+f30.enabled,View machine supplies, power and output
+f30.tip,Open Machine Status in the store to review input, power and output for hydroponic machines, collectors, evaporators, printers and furnaces. Filter for machines needing attention. Select a card to see its location and bring its already-open inventory window forward. Up to 100 entries are shown.
+f30.key,Open machine status overview
+f30.key.tip,Press in the store to open the machine status overview.
+f30.open,Machine status
+f30.all,All areas
+f30.attention,Needs attention
+f30.empty,No machines to display.
+f30.locate,Locate
+f30.unknown,Status unknown
+f30.seed,No seed
+f30.water_container,No water container
+f30.water,Not enough water
+f30.battery,No battery
+f30.power,Not enough battery power
+f30.power_unknown,Power status unknown
+f30.ready,Ready
+f30.working,Working
+f30.output,Output stacks: {0}
+f32.enabled,Automatically replant a chosen hydroponic seed
+f32.selected,Selected
+f32.tip,Open Shop Tools on a hydroponic machine and choose a seed from its input or output. Turn on gene scanning to choose between strains. After a non-perennial harvest an unstacked matching seed is taken from that machine's output. If replanting cannot proceed fix the issue and retry.
+f32.open,Choose the hydroponic replant seed
+f32.stop,Stop replanting this machine
+f32.empty,No seed is available in this machine.
+f32.scan,Multiple strains. Turn on the gene scanner to choose.
+f32.invalid,Replant settings could not be read.
+f32.limit,The replant rule limit has been reached.
+f32.stack,The chosen seed is stacked. Separate one seed to replant.
+f32.missing,The chosen seed is not in the machine output.
+f32.inspect,Replanting stopped. Check the machine and inventory.
+f32.pending,Waiting to replant.
+f32.waiting,Waiting for the machine and seed slot to become available.
+f32.unavailable,The chosen seed cannot be moved right now.
+f32.machine_unavailable,The hydroponic machine is unavailable.
+f32.paused,Replanting is paused.
+f32.retry,Retry replanting
+f32.resolve,Checked — continue
+f32.need_machine,Open a hydroponic machine first.
+f33.enabled,Automatically supply and collect furnace batches
+f33.tip,Open Shop Tools on a furnace and choose material, source, output container and 1–10 batches. Each batch takes two unstacked items from the source and collects the ingot after confirmed production. It stops at the limit and pauses for missing supplies or power, insufficient output space or an incompatible machine state. Fix the issue and resume manually.
+f33.open,Schedule furnace batches
+f33.progress,Batches completed: {0} / {1}
+f33.choose_source,Choose source storage
+f33.choose_destination,Choose output storage
+f33.choose_material,Choose a material
+f33.choose_all,Choose a source destination and material.
+f33.batch_count,Batch limit: {0} batch(es)
+f33.bind,Start this rule
+f33.stop,Stop this rule
+f33.resume,Resume this rule
+f33.invalid,Batch settings could not be read.
+f33.source,Source is unavailable or lacks two separate selected items.
+f33.output,Output storage is unavailable or full.
+f33.power,Furnace needs usable power.
+f33.machine,Clear the furnace input and output and remove conflicting hopper or furnace modules.
+f33.no_progress,The furnace did not consume the staged material. Check the machine before resuming.
+f33.inspect,The batch stopped. Check furnace input and output before resuming.
+f33.need_machine,Open a furnace first.
+f30.farmFull,Collector vessel is full
+f30.broken,Machine is broken
+f10.compatible,Compatible modules only
+f10.by_location,By compatibility and location
+f10.search,Search modules
+f10.all_types,All types
+f10.universal,Universal
+f10.hydroponic,Hydroponic
+f10.evaporator,Evaporator
+f10.printer,Printer
+f10.furnace,Furnace
+f10.other,Other
+f10.reserved,Reserved
+f10.choose_storage,Choose module storage
+f10.bind_storage,Use storage
+f10.storage,Module storage: {0} · {1}/{2} cells free
+f10.change_storage,Change storage
+f10.storage_failed,Could not save the storage choice.
+f10.changed,The item or destination changed.
+f10.inspect,The move stopped. Check the source and destination.
+f30.chip,Missing printer chip
+f30.materials,Missing recipe materials or requirements
+f30.distillate,Distillate available to collect
+f30.no_evaporation,No evaporative liquid in the vessel
+f30.supplied,Input and power available
+f19.component,Component
+f19.volume,Volume
+f19.share,Share
+f19.how,How
+f19.back,‹ Back
+f19.methods,Processing: {0}
+f19.unknown,No verified processing method for this component.
+f19.total,Total {0}
+f19.filter,Pore {0} · particle {1} · with remaining durability. Minimum retained is {2:0.##}% of this component in the transfer rounded down to whole uL. Each step removes up to {3:0.##} mL and uses {4} durability.
+f19.uv_direct,Use on a nonempty container to remove microbes without durability consumption.
+f19.tablet,Adds 15 mL chlorine. Each reaction consumes up to 15 mL and treats up to 76.5 mL in total. Chemicals above 0.7% of current volume are treated before microbes. Chlorine also decays; reactions occur over time.
+f19.purifier,Requires water and power. Cycle budget = (0.3% of volume up to 10 L + 25 mL) × max(0; dirt multiplier + performance bonus / 100) × 1.25. Larger particles go first; minerals / chemicals / metals last. Successful removal uses power. Purity cap by quality: 0 = 99%; 15 = 99.15%; 25 = 99.35%; 50 = 99.65%; 75 = 99.80%; 100 = 99.90%; 200 = 100%.
+f19.evaporator_water,Requires power and a volatile liquid. Each cycle moves up to 300 mL × max(0; 1 + performance bonus / 100) proportionally across volatile components. Recovery depends on quality / solvent-recovery modules and output capacity.
+f19.evaporator_residue,Requires power and a volatile liquid. This component stays in the source; up to 300 mL × max(0; 1 + performance bonus / 100) of volatile components leave proportionally per cycle. Recovery depends on quality / solvent-recovery modules and output capacity.

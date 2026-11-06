@@ -1,0 +1,20 @@
+visual.choose,Click to choose
+visual.stacks,item stacks
+visual.no_containers,Prepare an accessible storage area or container in the shop.
+visual.no_items,There are no eligible items here yet.
+visual.machine,This machine
+visual.installed,Installed now
+visual.source,Take from here
+visual.target,Put here
+visual.tools,Shop tools
+visual.open,Open
+f28.cash,Cash now {0}
+f28.kind,Type
+f28.income,Income
+f28.expense,Expense
+f36.priority_edit,Click items to set priority
+f36.take,Take selected items
+f36.leave,Leave here
+f27.order_summary,{0} items needed · {1} days remaining
+f27.ready,Reserved
+visual.attention,Needs attention
