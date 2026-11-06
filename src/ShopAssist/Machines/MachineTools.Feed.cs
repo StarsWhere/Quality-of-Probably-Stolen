@@ -105,11 +105,22 @@ namespace ShopAssist
         }
         private bool FeedContext() => feedEnabled.Value && ShopInventory.InStore && feedMachine != null &&
             feedRun == PlayerStore.Instance.runID && feedSlot == PlayerStore.Instance.saveSlotId &&
-            FocusedFurnace(out GameItem target) && ReferenceEquals(target, feedMachine);
+            CanOpenFeedFor(feedMachine);
 
         private void OpenFeed()
         {
             if (!feedEnabled.Value || !FocusedFurnace(out GameItem machine) || CustomUIManager.Instance == null) return;
+            OpenFeedFor(machine);
+        }
+
+        internal static void OpenFeedFor(GameItem machine)
+        {
+            if (!CanOpenFeedFor(machine) || CustomUIManager.Instance == null) return;
+            current.OpenFeedTarget(machine);
+        }
+
+        private void OpenFeedTarget(GameItem machine)
+        {
             CloseFeed(); feedMachine = machine; feedRun = PlayerStore.Instance.runID; feedSlot = PlayerStore.Instance.saveSlotId;
             feedLimit = 1; DrawFeed();
         }
@@ -150,9 +161,7 @@ namespace ShopAssist
         private void DrawFeed()
         {
             if (!FeedContext()) { CloseFeed(); return; }
-            var previous = feedWindow; feedWindow = null; previous?.Close();
-            var builder = CustomUIManager.Window(ModEntry.Id + ".f33", ShopSettings.Text("f33.open"), CustomUIManager.LAYER_META)
-                .SetSize(580, 520).SetDraggable(true).SetCloseOnEscape(true);
+            var builder = UiLayout.Rebuild(ref feedWindow, ModEntry.Id + ".f33", ShopSettings.Text("f33.open"), 580, 520);
             feedWindow = builder.GetWindow(); var own = feedWindow;
             builder.OnClose(() => { if (ReferenceEquals(feedWindow, own)) feedWindow = null; });
             builder.AddHeader(feedMachine.GetDisplayName(true));
@@ -209,6 +218,9 @@ namespace ShopAssist
                 !AllowedMaterial(feedMaterial) || !ShopInventory.TryRefresh(feedSource, out var source) ||
                 !ShopInventory.TryRefresh(feedDestination, out var destination) || !source.Ordinary || !destination.Ordinary)
             { ShopNotice.Show(ShopSettings.Text("f33.choose_all")); return; }
+            if (!source.Inventory.childItems.Any(item => item != null && item.parentInventory == source.Inventory &&
+                item.identifier == feedMaterial && item.unitCount > 0 && ShopInventory.Owned(item)))
+            { feedMaterial = null; ShopNotice.Show(ShopSettings.Text("inv.changed")); DrawFeed(); return; }
             int machineId = feedMachine.GetUniqueID();
             if (data.rules.Count >= 100 || data.rules.Any(rule => rule.machine == machineId))
             { ShopNotice.Show(ShopSettings.Text("f33.invalid")); return; }

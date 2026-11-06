@@ -5,6 +5,7 @@ using System.Reflection;
 using HarmonyLib;
 using Newtonsoft.Json;
 using UnityEngine;
+using UnityEngine.UI;
 
 namespace ShopAssist
 {
@@ -13,6 +14,9 @@ namespace ShopAssist
         private const string MaintenanceKey = "machineMaintenance";
         private ConfigEntry<bool> batteryEnabled, filterEnabled;
         private CustomUIWindow maintenanceWindow;
+        private RectTransform maintenanceScroll;
+        private string maintenanceRun;
+        private int maintenanceSlot, maintenanceRevision;
         private GameItem maintenanceHost;
         private ShopInventory.Location maintenanceSource;
         private int maintenanceKind, maintenanceThreshold = 20, maintenancePriority;
@@ -65,8 +69,8 @@ namespace ShopAssist
         internal static void OpenMaintenanceFor(GameItem host, int kind)
         {
             if (!CanOpenMaintenanceFor(host, kind)) return;
-            host.contentWindow?.ToFront();
-            current.OpenMaintenance(kind);
+            if (!current.MaintenanceHosts(kind).Contains(host)) { ShopNotice.Show(ShopSettings.Text("inv.changed")); return; }
+            current.OpenMaintenance(kind, host);
         }
 
         private void StartMaintenance() => UpdateMaintenanceHooks();
@@ -80,7 +84,7 @@ namespace ShopAssist
 
         private void TickMaintenance()
         {
-            if (maintenanceWindow != null && (!maintenanceWindow.IsAlive || !ShopInventory.InStore)) CloseMaintenance();
+            if (maintenanceWindow != null && (!maintenanceWindow.IsAlive || !SameMaintenanceSession())) CloseMaintenance();
             if (!filterEnabled.Value) { pendingFilters.Clear(); return; }
             if (pendingFilters.Count == 0 || !ShopInput.Ready() || UIDragHandler.isDraggingAnyUI ||
                 ItemMouseDragHandler.current?.IsDraggingItem == true || DialogUIManager.Instance?.currentDialog != null ||
@@ -371,13 +375,19 @@ namespace ShopAssist
 
         private static IEnumerable<GameItem> Ordered(GameGridInventory inventory) => inventory.childItems.Where(i => i?.modifiedShape != null)
             .OrderBy(i => i.modifiedShape.minY).ThenBy(i => i.modifiedShape.minX);
-        private void OpenMaintenance(int kind)
+        private void OpenMaintenance(int kind, GameItem host = null)
         {
             if (!ShopInventory.InStore || CustomUIManager.Instance == null || (kind == 31 ? !batteryEnabled.Value : !filterEnabled.Value) ||
                 !ReadMaintenance(out _)) return;
-            CloseMaintenance(); maintenanceKind = kind;
+            if (host != null && !MaintenanceHosts(kind).Contains(host)) { ShopNotice.Show(ShopSettings.Text("inv.changed")); return; }
+            CloseMaintenance(); maintenanceKind = kind; maintenanceHost = host;
+            maintenanceRun = PlayerStore.Instance.runID; maintenanceSlot = PlayerStore.Instance.saveSlotId;
             RenderMaintenance();
         }
+
+        private bool SameMaintenanceSession() => started && ShopInventory.InStore &&
+            PlayerStore.Instance.runID == maintenanceRun && PlayerStore.Instance.saveSlotId == maintenanceSlot &&
+            (maintenanceKind == 31 ? batteryEnabled.Value : maintenanceKind == 35 && filterEnabled.Value);
 
         private List<GameItem> MaintenanceHosts(int kind)
         {
@@ -402,9 +412,11 @@ namespace ShopAssist
 
         private void RenderMaintenance()
         {
-            if (!ShopInventory.InStore || !ReadMaintenance(out MaintenanceData data)) { CloseMaintenance(); return; }
+            if (!SameMaintenanceSession() || !ReadMaintenance(out MaintenanceData data)) { CloseMaintenance(); return; }
             var hosts = MaintenanceHosts(maintenanceKind);
-            if (maintenanceHost == null || !hosts.Contains(maintenanceHost)) maintenanceHost = hosts.OrderByDescending(h => h.contentWindow.focusStamp).FirstOrDefault();
+            if (maintenanceHost != null && !hosts.Contains(maintenanceHost))
+            { CloseMaintenance(); ShopNotice.Show(ShopSettings.Text("inv.changed")); return; }
+            if (maintenanceHost == null) maintenanceHost = hosts.OrderByDescending(h => h.contentWindow.focusStamp).FirstOrDefault();
             var sources = ShopInventory.OwnedLocations(false).Where(l => IsMaintenanceSource(l, maintenanceKind) && l.Owner != maintenanceHost).Take(100).ToList();
             var saved = maintenanceHost == null ? null : data.rules.Find(r => r.kind == maintenanceKind && r.host == maintenanceHost.uniqueId);
             if (maintenanceSource == null || !sources.Any(l => l.Inventory == maintenanceSource.Inventory))
@@ -435,8 +447,31 @@ namespace ShopAssist
                     if (!FilterCapability(maintenanceHost, currentFilter, FilterPath.Added).Allowed) windowHeight += 44f;
                 }
             }
-            var builder = CustomUIManager.Instance.CreateWindow(ModEntry.Id + ".maintenance", ShopSettings.Text(maintenanceKind == 31 ? "f31.open" : "f35.open"), CustomUIManager.LAYER_META)
-                .SetSize(620f, Mathf.Min(windowHeight, 560f)).SetDraggable(true).SetCloseOnEscape().OnClose(() => maintenanceWindow = null);
+            float scrollPosition = maintenanceScroll?.GetComponentInParent<ScrollRect>()?.verticalNormalizedPosition ?? 1f;
+            if (maintenanceWindow == null || !maintenanceWindow.IsAlive)
+            {
+                var shell = CustomUIManager.Instance.CreateWindow(ModEntry.Id + ".maintenance", ShopSettings.Text(maintenanceKind == 31 ? "f31.open" : "f35.open"), CustomUIManager.LAYER_META)
+                    .SetDraggable(true).SetCloseOnEscape();
+                maintenanceWindow = shell.GetWindow();
+                CustomUIWindow opened = maintenanceWindow;
+                shell.OnClose(() =>
+                {
+                    if (ReferenceEquals(maintenanceWindow, opened))
+                    { maintenanceWindow = null; maintenanceScroll = null; maintenanceRun = null; maintenanceRevision++; }
+                }).Center().Show();
+            }
+            CustomUIWindow own = maintenanceWindow;
+            int revision = ++maintenanceRevision;
+            bool CurrentView() => ReferenceEquals(maintenanceWindow, own) && own.IsAlive &&
+                maintenanceRevision == revision && SameMaintenanceSession();
+            Vector2 position = own.Rect.anchoredPosition;
+            UiLayout.Clear(own.ContentRoot, own);
+            var builder = new CustomUIBuilder(CustomUIManager.Instance, own, own.ContentRoot);
+            Vector2 size = UiLayout.Fit(620f, Mathf.Min(windowHeight, 560f));
+            builder.SetSize(size.x, size.y);
+            own.Rect.anchoredPosition = position;
+            builder.BeginScrollFlexible(120);
+            maintenanceScroll = builder.CurrentContainer;
             if (maintenanceKind == 35 && maintenanceHost?.identifier == "water_pitcher" &&
                 (AquaOwns(maintenanceHost, "water_filter") || AquaOwns(maintenanceHost, "kotton_fabric")))
                 builder.AddLabel(ShopSettings.Text("f35.aqua"));
@@ -464,20 +499,41 @@ namespace ShopAssist
                     Cards = true, Columns = 4, CardWidth = 135, CardHeight = 100,
                     OnClick = entry =>
                     {
-                        ItemMouseDoubleClickHandler.current.OpenContentAction(entry.Item, Input.mousePosition);
+                        if (!CurrentView() || !ShopInventory.Owned(entry.Item) ||
+                            !(maintenanceKind == 31 ? BatteryHost(entry.Item) : IsFilterHost(entry.Item)))
+                        { ShopNotice.Show(ShopSettings.Text("inv.changed")); return; }
+                        ItemMouseDoubleClickHandler.current?.OpenContentAction(entry.Item, Input.mousePosition);
+                        if (!CurrentView() || !MaintenanceHosts(maintenanceKind).Contains(entry.Item))
+                        { ShopNotice.Show(ShopSettings.Text("inv.changed")); return; }
                         maintenanceHost = entry.Item; maintenanceSource = null; RebuildMaintenance();
                     }
                 });
                 if (available.Count == 0) builder.AddLabel(ShopSettings.Text("maintenance.no_host"));
-                builder.Show(); return;
+                builder.End();
+                CustomUIBuilder.RebuildLayout(own.ContentRoot);
+                UiLayout.RestoreScroll(maintenanceScroll, scrollPosition);
+                return;
             }
             builder.BeginRow();
             VisualChoices.Location(builder, ShopSettings.Text("visual.source"), maintenanceSource, sources, source =>
-            { maintenanceSource = source; RebuildMaintenance(); }, "source");
+            {
+                if (!CurrentView() || !ShopInventory.TryRefresh(source, out ShopInventory.Location refreshed) ||
+                    !IsMaintenanceSource(refreshed, maintenanceKind) || refreshed.Owner == maintenanceHost)
+                { ShopNotice.Show(ShopSettings.Text("inv.changed")); return; }
+                maintenanceSource = refreshed; RebuildMaintenance();
+            }, "source");
             builder.AddLabel("→");
             VisualChoices.Slot(builder, ShopSettings.Text("visual.machine"), maintenanceHost, maintenanceHost.GetDisplayName(true),
-                () => VisualChoices.ChooseItem(ShopSettings.Text("visual.machine"), hosts, maintenanceHost, host =>
-                { maintenanceHost = host; maintenanceSource = null; RebuildMaintenance(); }), "host");
+                () =>
+                {
+                    if (!CurrentView()) return;
+                    VisualChoices.ChooseItem(ShopSettings.Text("visual.machine"), hosts, maintenanceHost, host =>
+                    {
+                        if (!CurrentView() || !MaintenanceHosts(maintenanceKind).Contains(host))
+                        { ShopNotice.Show(ShopSettings.Text("inv.changed")); return; }
+                        maintenanceHost = host; maintenanceSource = null; RebuildMaintenance();
+                    });
+                }, "host");
             GameItem installed = maintenanceKind == 31 ? MachineHelper.GetBatterySlot(maintenanceHost)?.childItem :
                 FilterSlots(maintenanceHost).FirstOrDefault()?.childItem;
             VisualChoices.Slot(builder, ShopSettings.Text("visual.installed"), installed, installed?.GetDisplayName(true), null, "installed");
@@ -488,11 +544,12 @@ namespace ShopAssist
                 builder.AddLabel(ShopSettings.Text("f31.threshold") + " " + maintenanceThreshold + "%", "threshold_label");
                 builder.AddSlider(0, 100, maintenanceThreshold, value =>
                 {
+                    if (!CurrentView()) return;
                     maintenanceThreshold = Mathf.Clamp(Mathf.RoundToInt(value), 0, 100);
                     maintenanceWindow?.Get("threshold_label")?.SetText(ShopSettings.Text("f31.threshold") + " " + maintenanceThreshold + "%");
                 }, true, "threshold");
                 builder.AddDropdown(new[] { ShopSettings.Text("f31.position"), ShopSettings.Text("f31.charge") }, maintenancePriority,
-                    value => maintenancePriority = value == 1 ? 1 : 0, "priority");
+                    value => { if (CurrentView()) maintenancePriority = value == 1 ? 1 : 0; }, "priority");
             }
             if (maintenanceKind == 35)
             {
@@ -503,20 +560,22 @@ namespace ShopAssist
                     builder.AddToggle(LocHelper.GetLocalizedItem("item_" + id + "_name"), (maintenanceMaterials & bit) != 0,
                         on =>
                         {
+                            if (!CurrentView()) return;
                             if (on) maintenanceMaterials |= bit; else maintenanceMaterials &= ~bit;
                             maintenanceWindow?.Get("enable")?.SetInteractable(CanSaveMaintenance());
                         }, "allow_" + id);
                 }
                 builder.End().AddDropdown(new[] { ShopSettings.Text("f35.same"), ShopSettings.Text("f35.equivalent"), ShopSettings.Text("f35.any") },
-                    maintenanceGrade, index => maintenanceGrade = Mathf.Clamp(index, 0, 2), "grade");
+                    maintenanceGrade, index => { if (CurrentView()) maintenanceGrade = Mathf.Clamp(index, 0, 2); }, "grade");
             }
             builder.BeginRow();
-            builder.AddButton(ShopSettings.Text("maintenance.enable"), SaveMaintenance, "enable");
+            builder.AddButton(ShopSettings.Text("maintenance.enable"), () => { if (CurrentView()) SaveMaintenance(); }, "enable");
             builder.Last.SetInteractable(CanSaveMaintenance());
-            builder.AddButton(ShopSettings.Text("maintenance.disable"), RemoveMaintenance, "disable");
+            builder.AddButton(ShopSettings.Text("maintenance.disable"), () => { if (CurrentView()) RemoveMaintenance(); }, "disable");
             builder.Last.SetInteractable(saved != null);
-            builder.End();
-            maintenanceWindow = builder.Center().Show();
+            builder.End().End();
+            CustomUIBuilder.RebuildLayout(own.ContentRoot);
+            UiLayout.RestoreScroll(maintenanceScroll, scrollPosition);
         }
 
         private bool CanSaveMaintenance() => maintenanceHost != null && maintenanceSource != null &&
@@ -524,7 +583,7 @@ namespace ShopAssist
 
         private void SaveMaintenance()
         {
-            if (!ShopInventory.InStore || maintenanceHost == null || !MaintenanceHosts(maintenanceKind).Contains(maintenanceHost) ||
+            if (!SameMaintenanceSession() || maintenanceHost == null || !MaintenanceHosts(maintenanceKind).Contains(maintenanceHost) ||
                 maintenanceSource == null || !ShopInventory.TryRefresh(maintenanceSource, out ShopInventory.Location source) ||
                 !IsMaintenanceSource(source, maintenanceKind) || source.Owner == maintenanceHost || !ReadMaintenance(out MaintenanceData data)) return;
             int hostId = maintenanceHost.GetUniqueID(), sourceId = source.Owner.GetUniqueID();
@@ -552,7 +611,7 @@ namespace ShopAssist
 
         private void RemoveMaintenance()
         {
-            if (!ShopInventory.InStore || maintenanceHost == null || maintenanceHost.uniqueId <= 0 || !ReadMaintenance(out MaintenanceData data)) return;
+            if (!SameMaintenanceSession() || maintenanceHost == null || !MaintenanceHosts(maintenanceKind).Contains(maintenanceHost) || maintenanceHost.uniqueId <= 0 || !ReadMaintenance(out MaintenanceData data)) return;
             data.rules.RemoveAll(r => r.kind == maintenanceKind && r.host == maintenanceHost.uniqueId);
             try { ModHelper.SetModData(ModEntry.Id, MaintenanceKey, ShopData.Encode(data)); ClearMaintenanceFailure(maintenanceKind, maintenanceHost.uniqueId);
                 CloseMaintenance(); AttentionBook.Changed(); machinesDirty = true; ShopNotice.Show(ShopSettings.Text("maintenance.removed")); }
@@ -614,8 +673,14 @@ namespace ShopAssist
             return nodes.Count == 1 ? nodes[0] as GameGridInventory : null;
         }
 
-        private void RebuildMaintenance() { maintenanceWindow?.Close(); maintenanceWindow = null; RenderMaintenance(); }
-        private void CloseMaintenance() { maintenanceWindow?.Close(); maintenanceWindow = null; maintenanceHost = null; maintenanceSource = null; }
+        private void RebuildMaintenance() { if (maintenanceWindow?.IsAlive == true) RenderMaintenance(); }
+        private void CloseMaintenance()
+        {
+            CustomUIWindow window = maintenanceWindow;
+            maintenanceWindow = null; maintenanceScroll = null; maintenanceRun = null; maintenanceRevision++;
+            maintenanceHost = null; maintenanceSource = null;
+            window?.Close();
+        }
         private void ResetMaintenance() { CloseMaintenance(); pendingFilters.Clear(); batteryAttemptDay.Clear(); maintenanceProblems.Clear(); maintenanceReadError = null; AttentionBook.Changed(); }
         private void StopMaintenance()
         {

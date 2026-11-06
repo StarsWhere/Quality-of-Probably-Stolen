@@ -18,6 +18,20 @@ namespace ShopAssist
         private static readonly MethodInfo TransferMethod = AccessTools.Method(typeof(WaterHelper), nameof(WaterHelper.TransferLiquid));
         private static readonly MethodInfo AddWaterMethod = AccessTools.Method(typeof(WaterHelper), nameof(WaterHelper.AddWater));
 
+        internal static bool SupportsContextAction(string actionKey, GameItem host)
+        {
+            if (host == null || !ShopInventory.Owned(host)) return false;
+            switch (actionKey)
+            {
+                case "f10.open": return FindWindowTarget(host.contentWindow, host, out _, out _);
+                case "f31.open": return BatteryHost(host);
+                case "f32.open": return host.identifier == "hydroponic" && host.IsTag("HYDROPONIC_MACHINE_TAG");
+                case "f33.open": return host.identifier == "furnace";
+                case "f35.open": return IsFilterHost(host);
+                default: return false;
+            }
+        }
+
         internal static ActionAvailability Availability(string actionKey, GameItem host = null)
         {
             var owner = current;

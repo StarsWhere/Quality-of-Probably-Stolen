@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using HarmonyLib;
 using UnityEngine;
+using UnityEngine.UI;
 
 namespace ShopAssist
 {
@@ -18,8 +19,9 @@ namespace ShopAssist
         private ConfigEntry<bool> overviewEnabled;
         private Func<KeyCode> overviewKey;
         private CustomUIWindow machinesWindow;
+        private RectTransform machinesScroll;
         private string machinesRun;
-        private int machinesSlot;
+        private int machinesSlot, machinesRevision;
         private bool machinesDirty, onlyAttention, machinesTruncated;
         private string filterPath;
         private GameItem selectedOverviewMachine;
@@ -75,21 +77,38 @@ namespace ShopAssist
             int gridRows = (shaped + 3) / 4;
             float scrollHeight = Mathf.Min(205, Mathf.Max(50, gridRows * 100 + (shown.Count - shaped) * 28 + 4));
             int height = Mathf.Clamp(Mathf.CeilToInt(240 + scrollHeight), 350, 480);
-            CustomUIWindow previous = machinesWindow;
-            machinesWindow = null;
-            previous?.Close();
-            var builder = CustomUIManager.Window(ModEntry.Id + ".f30", ShopSettings.Text("f30.open"), CustomUIManager.LAYER_META)
-                .SetSize(620, height).SetDraggable(true).SetCloseOnEscape(true);
-            machinesWindow = builder.GetWindow();
+            float scrollPosition = machinesScroll?.GetComponentInParent<ScrollRect>()?.verticalNormalizedPosition ?? 1f;
+            if (machinesWindow == null || !machinesWindow.IsAlive)
+            {
+                var shell = CustomUIManager.Window(ModEntry.Id + ".f30", ShopSettings.Text("f30.open"), CustomUIManager.LAYER_META)
+                    .SetDraggable(true).SetCloseOnEscape(true);
+                machinesWindow = shell.GetWindow();
+                CustomUIWindow opened = machinesWindow;
+                shell.OnClose(() =>
+                {
+                    if (ReferenceEquals(machinesWindow, opened))
+                    { machinesWindow = null; machinesScroll = null; machinesRun = null; machinesRevision++; }
+                }).Show();
+            }
             CustomUIWindow own = machinesWindow;
-            builder.OnClose(() => { if (ReferenceEquals(machinesWindow, own)) { machinesWindow = null; machinesRun = null; } });
+            int revision = ++machinesRevision;
+            bool CurrentView() => ReferenceEquals(machinesWindow, own) && own.IsAlive &&
+                machinesRevision == revision && SameMachineSession();
+            Vector2 position = own.Rect.anchoredPosition;
+            UiLayout.Clear(own.ContentRoot, own);
+            var builder = new CustomUIBuilder(CustomUIManager.Instance, own, own.ContentRoot);
+            Vector2 size = UiLayout.Fit(620, height);
+            builder.SetSize(size.x, size.y);
+            own.Rect.anchoredPosition = position;
             if (machinesTruncated) builder.AddWarning(ShopSettings.Text("machines.partial"));
-            builder.BeginRow().AddToggle(ShopSettings.Text("f30.attention"), onlyAttention, value => { onlyAttention = value; machinesDirty = true; });
+            builder.BeginRow().AddToggle(ShopSettings.Text("f30.attention"), onlyAttention, value => { if (CurrentView()) { onlyAttention = value; machinesDirty = true; } });
             builder.AddFlexibleSpace().AddDropdown(labels, selected, index =>
             {
+                if (!CurrentView()) return;
                 filterPath = index <= 0 || index > paths.Count ? null : paths[index - 1];
                 machinesDirty = true;
             }).End().BeginScroll(scrollHeight);
+            machinesScroll = builder.CurrentContainer;
             MachineRow selectedRow = shown.Find(row => ReferenceEquals(row.Item, selectedOverviewMachine) &&
                 row.Path == selectedOverviewPath && OverviewSlot(row) == selectedOverviewSlot);
             if (selectedRow == null && shown.Count > 0) selectedRow = shown[0];
@@ -102,8 +121,8 @@ namespace ShopAssist
                 GridShape shape = row.Item.modifiedShape;
                 if (shape == null || shape.globalWidth < 1 || shape.globalHeight < 1)
                 { withoutShape.Add(row); continue; }
-                var entry = new ItemGrid.Entry(row.Item) { Caption = row.Item.GetDisplayName(true), Badge = row.Status,
-                    Reason = ShopSettings.Text("vm.location") + " · " + row.Path,
+                var entry = new ItemGrid.Entry(row.Item) { Caption = row.Item.GetDisplayName(true), StatusLabel = row.Status,
+                    SourceLabel = row.Path,
                     Selected = ReferenceEquals(row, selectedRow) };
                 cards.Add(entry); cardRows[entry] = row;
             }
@@ -111,15 +130,16 @@ namespace ShopAssist
                 ItemGrid.Add(builder, cards, new ItemGrid.Options { Cards = true, Columns = 4, CardWidth = 140, CardHeight = 100,
                     OnClick = entry =>
                     {
-                        if (!SameMachineSession() || !cardRows.TryGetValue(entry, out MachineRow row) ||
-                            !ShopInventory.Owned(row.Item)) { machinesDirty = true; return; }
+                        if (!CurrentView()) return;
+                        if (!cardRows.TryGetValue(entry, out MachineRow row) || !ShopInventory.Owned(row.Item))
+                        { machinesDirty = true; return; }
                         SelectOverview(row); RenderMachines();
                     } });
             foreach (MachineRow row in withoutShape)
             {
                 builder.BeginRow().AddLabel(row.Item.GetDisplayName(true) + " · " + row.Path + " · " + row.Status);
                 if (builder.Last.text != null) builder.Last.text.richText = false;
-                if (VisibleParent(row.Item, out _)) builder.AddButton(ShopSettings.Text("f30.locate"), () => Locate(row.Item));
+                if (ShopInventory.Owned(row.Item)) builder.AddButton(ShopSettings.Text("f30.locate"), () => { if (CurrentView()) Locate(row.Item); });
                 builder.End();
             }
             if (shown.Count == 0) builder.AddLabel(ShopSettings.Text("f30.empty"));
@@ -128,12 +148,14 @@ namespace ShopAssist
             {
                 builder.BeginRow().AddLabel(ShopSettings.Text("vm.location") + " · " + selectedRow.Path);
                 if (builder.Last.text != null) builder.Last.text.richText = false;
-                if (VisibleParent(selectedRow.Item, out _))
-                    builder.AddButton(ShopSettings.Text("f30.locate"), () => Locate(selectedRow.Item), "locate");
+                if (ShopInventory.Owned(selectedRow.Item))
+                    builder.AddButton(ShopSettings.Text("f30.locate"), () => { if (CurrentView()) Locate(selectedRow.Item); }, "locate");
                 builder.End().AddLabel(selectedRow.Status);
                 if (builder.Last.text != null) builder.Last.text.richText = false;
             }
-            builder.AddButton(ShopSettings.Text("machines.refresh"), () => { if (SameMachineSession()) RenderMachines(); }).Show();
+            builder.AddButton(ShopSettings.Text("machines.refresh"), () => { if (CurrentView()) RenderMachines(); });
+            CustomUIBuilder.RebuildLayout(own.ContentRoot);
+            UiLayout.RestoreScroll(machinesScroll, scrollPosition);
         }
 
         private static string OverviewSlot(MachineRow row)
@@ -148,16 +170,10 @@ namespace ShopAssist
             selectedOverviewMachine = row?.Item; selectedOverviewPath = row?.Path; selectedOverviewSlot = OverviewSlot(row);
         }
 
-        private static bool VisibleParent(GameItem item, out PixelWindow window)
+        private static void Locate(GameItem item)
         {
-            window = null;
-            if (!ShopInventory.Owned(item) || !(item is GameItemElement element) || element.handler == null ||
-                !element.handler.gameObject.activeInHierarchy || WindowsHandler.current?.visibleWindows == null) return false;
-            window = element.handler.FindParentWindow();
-            return window != null && window.IsVisible() && WindowsHandler.current.visibleWindows.Contains(window);
+            if (!ItemLocator.TryLocate(item, out string reason)) ShopNotice.Show(ShopSettings.Text(reason));
         }
-
-        private static void Locate(GameItem item) { if (VisibleParent(item, out PixelWindow window)) window.ToFront(); }
 
         private List<MachineRow> MachineRows()
         {
@@ -303,7 +319,7 @@ namespace ShopAssist
         private void CloseMachines()
         {
             CustomUIWindow window = machinesWindow;
-            machinesWindow = null; machinesRun = null; machinesDirty = false; filterPath = null;
+            machinesWindow = null; machinesScroll = null; machinesRun = null; machinesDirty = false; filterPath = null; machinesRevision++;
             selectedOverviewMachine = null; selectedOverviewPath = selectedOverviewSlot = null;
             window?.Close();
         }

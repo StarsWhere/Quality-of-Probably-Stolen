@@ -92,7 +92,7 @@ namespace ShopAssist
             if (!layoutEnabled.Value || !SameModuleSession() || ModuleFamily(moduleTarget) == null) return false;
             return bay != null && !bay.IsInsertLocked() && !bay.IsRemoveLocked() &&
                 GeneralHelper.MayPlayerInsertInto(bay) && bay.inventoryShape != null &&
-                FindTarget(out GameItem focused, out GameInventory foundBay) &&
+                FindTarget(moduleTarget, out GameItem focused, out GameInventory foundBay) &&
                 ReferenceEquals(focused, moduleTarget) && ReferenceEquals(foundBay, bay);
         }
 

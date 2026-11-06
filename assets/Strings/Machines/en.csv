@@ -33,13 +33,36 @@ f12.changed,The machine or selected items changed. Preview again.
 f12.inspect,The move stopped. Check the machine and source inventory.
 f12.applied,Layout applied.
 f19.enabled,Enhance water and chemical scan results
-f19.tip,After scanning a sample in a water or chemical scanner, view its label, volume and component shares. Open a component's treatment card for filter, UV, tablet and machine conditions and limits.
-f19.size,Scan result base text size (pt)
-f19.size.tip,Scale labels, components, values and treatment cards in water and chemical scan results relative to a 14 pt base. Text may shrink to fit and scaling has upper and lower limits.
-f19.pinned,Pinned scan component
-f19.pinned.tip,After scanning, select the star beside a component or choose one from the current result in Shop Tools. You can also enter its name or identifier in the configuration. Water and chemical scans share one pin, shown first when present.
+f19.tip,View component shares in water and chemical scanners. Select a component for treatments or its star to pin it.
+f19.size,Component row text size (pt)
+f19.size.tip,Set the text size for component names and values.
+f19.pinned,Pinned components
+f19.pinned.tip,Use the stars in scan results to manage pinned components.
 f19.choose,Choose a component to pin in scan results
-f19.none,Do not pin
+f19.none,Clear pins
+f19.picker_pin,Pin - {0}
+f19.picker_pinned,Pinned - {0}
+f19.bars,Show component share bars
+f19.bars.tip,Show a share bar beneath each component.
+f19.colors,Show component color marks
+f19.colors.tip,Distinguish components with color marks.
+f19.sort,Sort scan results by share
+f19.sort.tip,Turn off to use the native component order. Pinned components remain first.
+f19.sort_share,Share↓
+f19.sort_native,Original
+f19.pin_invalid,Could not read pinned components. Reset them in the pin manager.
+f19.pin_reset,Reset pins
+f19.pin_limit,The pinned component limit has been reached.
+f19.pin_failed,Could not save pinned components. Try again.
+f19.sort_failed,Could not save scan sorting. Try again.
+f19.detail_failed,Could not open component details. Try again.
+f19.display,Display settings
+f19.display_short,Set
+f19.display_apply,Apply
+f19.display_failed,Could not save display settings. Try again.
+f19.more,Details
+f19.less,Hide details
+f19.applies,Applicable
 f30.enabled,View machine supplies, power and output
 f30.tip,Open Machine Status in the store to review input, power and output for hydroponic machines, collectors, evaporators, printers and furnaces. Filter for machines needing attention. Select a card to see its location and bring its already-open inventory window forward. Up to 100 entries are shown.
 f30.key,Open machine status overview
@@ -138,3 +161,9 @@ f19.tablet,Adds 15 mL chlorine. Each reaction consumes up to 15 mL and treats up
 f19.purifier,Requires water and power. Cycle budget = (0.3% of volume up to 10 L + 25 mL) × max(0; dirt multiplier + performance bonus / 100) × 1.25. Larger particles go first; minerals / chemicals / metals last. Successful removal uses power. Purity cap by quality: 0 = 99%; 15 = 99.15%; 25 = 99.35%; 50 = 99.65%; 75 = 99.80%; 100 = 99.90%; 200 = 100%.
 f19.evaporator_water,Requires power and a volatile liquid. Each cycle moves up to 300 mL × max(0; 1 + performance bonus / 100) proportionally across volatile components. Recovery depends on quality / solvent-recovery modules and output capacity.
 f19.evaporator_residue,Requires power and a volatile liquid. This component stays in the source; up to 300 mL × max(0; 1 + performance bonus / 100) of volatile components leave proportionally per cycle. Recovery depends on quality / solvent-recovery modules and output capacity.
+f19.filter.summary,Filters this component; pore size and remaining durability limit the result.
+f19.uv_direct.summary,Removes microbes directly from a container without consuming durability.
+f19.tablet.summary,Adds chlorine to treat microbes and chemical contamination over time.
+f19.purifier.summary,Uses power to remove this component from water; machine quality limits purity.
+f19.evaporator_water.summary,Uses power to move volatile components into the distillate.
+f19.evaporator_residue.summary,Uses power to remove volatile liquid while this component remains in the source.

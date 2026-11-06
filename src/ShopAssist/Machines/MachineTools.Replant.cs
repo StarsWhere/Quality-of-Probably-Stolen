@@ -70,7 +70,7 @@ namespace ShopAssist
 
         private bool ReplantContext() => replantEnabled.Value && ShopInventory.InStore && replantMachine != null &&
             replantRun == PlayerStore.Instance.runID && replantSlot == PlayerStore.Instance.saveSlotId &&
-            FocusedHydroponic(out GameItem target) && ReferenceEquals(target, replantMachine);
+            CanOpenReplantFor(replantMachine);
 
         private void TickReplant()
         {
@@ -124,6 +124,17 @@ namespace ShopAssist
         private void OpenReplant()
         {
             if (!replantEnabled.Value || !FocusedHydroponic(out GameItem target) || CustomUIManager.Instance == null) return;
+            OpenReplantFor(target);
+        }
+
+        internal static void OpenReplantFor(GameItem target)
+        {
+            if (!CanOpenReplantFor(target) || CustomUIManager.Instance == null) return;
+            current.OpenReplantTarget(target);
+        }
+
+        private void OpenReplantTarget(GameItem target)
+        {
             CloseReplant(); replantMachine = target; replantRun = PlayerStore.Instance.runID; replantSlot = PlayerStore.Instance.saveSlotId;
             replantNeedsScan = true;
             DrawReplant();
@@ -220,9 +231,7 @@ namespace ShopAssist
             float scrollHeight = count == 0 ? 36 : Mathf.Min(205, cardRows * 100 + 4);
             int statusHeight = rule != null && rule.state != (int)ReplantPhase.Idle ? 70 : 0;
             int height = Mathf.Clamp(Mathf.CeilToInt(195 + scrollHeight + (rule == null ? 0 : 34) + (selected == null ? 0 : 22) + statusHeight), 280, 560);
-            CustomUIWindow previous = replantWindow; replantWindow = null; previous?.Close();
-            var builder = CustomUIManager.Window(ModEntry.Id + ".f32", ShopSettings.Text("f32.open"), CustomUIManager.LAYER_META)
-                .SetSize(600, height).SetDraggable(true).SetCloseOnEscape(true);
+            var builder = UiLayout.Rebuild(ref replantWindow, ModEntry.Id + ".f32", ShopSettings.Text("f32.open"), 600, height);
             replantWindow = builder.GetWindow(); CustomUIWindow own = replantWindow;
             builder.OnClose(() => { if (ReferenceEquals(replantWindow, own)) replantWindow = null; });
             if (!validRules) { builder.AddWarning(ShopSettings.Text("f32.invalid")).Show(); return; }

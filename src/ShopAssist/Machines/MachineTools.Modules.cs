@@ -307,11 +307,6 @@ namespace ShopAssist
             if (modulesWindow != null)
             {
                 if (!modulesWindow.IsAlive || !SameModuleSession()) { CloseModules(); return; }
-                if (FindTarget(out GameItem focused, out GameInventory bay) && !ReferenceEquals(focused, moduleTarget))
-                {
-                    CloseLayout(); moduleTarget = focused; moduleBay = bay; selectedModules.Clear(); selectedInstalledModules.Clear();
-                    modulePage = 0; moduleDockRows = 0; moduleView = null; modulesDirty = true;
-                }
                 if ((modulesDirty || moduleSearchDirty) && !ItemGrid.DragActive) RenderModules(moduleSearchDirty && !modulesDirty);
             }
             KeyCode key = modulesKey();
@@ -870,7 +865,7 @@ namespace ShopAssist
             if (!SameModuleSession()) return;
             List<ShopInventory.Location> choices = ModuleStorageChoices();
             VisualChoices.ChooseLocation(ShopSettings.Text("f10.choose_storage"), choices, BoundModuleStorage(choices),
-                location => { BindModuleStorage(location); moduleMenu = false; });
+                location => { if (SameModuleSession()) { BindModuleStorage(location); moduleMenu = false; } }, owner: modulesWindow);
         }
 
         private void DrawModuleFooter(CustomUIBuilder builder, ShopInventory.Location storage, float width)
