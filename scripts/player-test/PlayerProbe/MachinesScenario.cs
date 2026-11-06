@@ -137,10 +137,14 @@ public sealed class MachinesScenario
             RoutingScenario.OpenOptionAction("f19.choose");
             var picker = CustomUIManager.Instance.GetWindow(Mod + ".f19.pin");
             Require(picker?.IsAlive == true, "Liquid picker did not open");
+            Button clear = picker.root.GetComponentsInChildren<Button>(true).FirstOrDefault(b =>
+                b.GetComponentInChildren<TMP_Text>(true)?.text == ModHelper.GetLocalized(Mod, "f19.none"));
+            Require(clear != null, "Liquid picker lacks clear-pins action"); clear.onClick.Invoke();
+            picker = CustomUIManager.Instance.GetWindow(Mod + ".f19.pin");
             Button button = picker.root.GetComponentsInChildren<Button>(true).FirstOrDefault(b =>
-                b.GetComponentInChildren<TMP_Text>(true)?.text == chosen);
+                b.GetComponentInChildren<TMP_Text>(true)?.text.EndsWith(" " + chosen, StringComparison.Ordinal) == true);
             Require(button != null, "Liquid picker omitted an observed component: " + chosen);
-            button.onClick.Invoke();
+            using (var input = new QaSyntheticInput()) { input.Mouse = new Vector3(-1000, -1000); button.onClick.Invoke(); }
             bars = ScannerRoot(scanner.panel);
             var pinnedRow = bars.GetComponentsInChildren<Transform>(true).FirstOrDefault(row => row.name == "Component_" + chosenId && row.gameObject.activeInHierarchy);
             var visibleRows = bars.GetComponentsInChildren<Transform>(true).Where(row => row.gameObject.activeInHierarchy && row.name.StartsWith("Component_", StringComparison.Ordinal)).ToList();

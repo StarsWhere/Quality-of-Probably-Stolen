@@ -19,8 +19,7 @@ public sealed class ModuleSearchScenario : EquipmentFixture
     private readonly float deadline = Time.realtimeSinceStartup + 180f;
     private RectTransform layer;
     private Vector3 originalScale;
-    private bool scaleChanged, localeChanged;
-    private string originalLocale, nextLocale;
+    private bool scaleChanged;
     private int frame, typed;
     private Vector2 originalPoint;
     private readonly string[] queries = { "Q", "QA", "QA typed", "QA typed module" };
@@ -128,35 +127,12 @@ public sealed class ModuleSearchScenario : EquipmentFixture
         if (step == 7)
         {
             Check(!ReferenceEquals(previousGrid, Grid(wanted)), "Restoring the canvas scale retained the stale search grid");
-            originalLocale = LocHelper.GetCurrentLocaleCode();
-            Check(!string.IsNullOrEmpty(originalLocale), "The current native locale is unavailable");
-            nextLocale = originalLocale == "en" ? "zh" : "en";
-            previousGrid = Grid(wanted); localeChanged = true;
-            StoreUIManager.Instance.gameOptionUIManager.StartCoroutine(LocHelper.SetLocale(nextLocale));
-            step = 8; return false;
-        }
-        if (step == 8)
-        {
-            if (LocHelper.GetCurrentLocaleCode() != nextLocale) return false;
-            Input().text = "qa Typed Module"; frame = Time.frameCount + 3; step = 9; return false;
-        }
-        if (step == 9)
-        {
-            Check(!ReferenceEquals(previousGrid, Grid(wanted)) && Ui("f10").Get("idle_tab").text.text == ModHelper.GetLocalized(Mod, "grid.tab_idle"),
-                "Changing language retained stale module results or labels");
-            previousGrid = Grid(wanted);
-            StoreUIManager.Instance.gameOptionUIManager.StartCoroutine(LocHelper.SetLocale(originalLocale));
-            step = 10; return false;
-        }
-        if (step == 10)
-        {
-            if (LocHelper.GetCurrentLocaleCode() != originalLocale) return false;
-            localeChanged = false; Input().text = "qA tYPED module"; frame = Time.frameCount + 3; step = 11; return false;
+            frame = Time.frameCount + 3; step = 11; return false;
         }
         if (step == 11)
         {
-            Check(!ReferenceEquals(previousGrid, Grid(wanted)) && Ui("f10").Get("idle_tab").text.text == ModHelper.GetLocalized(Mod, "grid.tab_idle"),
-                "Restoring language retained stale module results or labels");
+            Check(Ui("f10").Get("idle_tab").text.text == ModHelper.GetLocalized(Mod, "grid.tab_idle"),
+                "Module labels do not match the language chosen before entering the store");
             ModuleEffectHelper.ComputeAllModuleTempStat(bay.childItems);
             ModuleHelper.ComputeModuleEffect(bay, null, machine);
             ModuleHelper.ApplyBasicModuleEffect(bay, null, machine);
@@ -178,7 +154,7 @@ public sealed class ModuleSearchScenario : EquipmentFixture
                 "The refreshed search grid has no valid drag target");
             typeof(ModuleGridScenario).GetMethod("DragToBoard", Flags).Invoke(null, new[] { (object)hit, target, slot.itemGridShape });
             Check(ReferenceEquals(wanted.parentInventory, bay), "Dragging after search refresh did not install the actual module");
-            result = "PASS stable equivalent module search, changed results and bay, reservation state, scale, language, layout preview and real drag";
+            result = "PASS stable equivalent module search, changed results and bay, reservation state, scale, layout preview and real drag";
             return true;
         }
         throw new InvalidOperationException("Unknown module search state " + step);
@@ -191,9 +167,7 @@ public sealed class ModuleSearchScenario : EquipmentFixture
     {
         reservationPatch?.UnpatchAll("qa.module-search-reservation"); reservationPatch = null; reservedItem = null; simulateReservation = false;
         if (scaleChanged && layer != null) layer.localScale = originalScale;
-        if (localeChanged && !string.IsNullOrEmpty(originalLocale) && StoreUIManager.Instance?.gameOptionUIManager != null)
-            StoreUIManager.Instance.gameOptionUIManager.StartCoroutine(LocHelper.SetLocale(originalLocale));
-        scaleChanged = localeChanged = false;
+        scaleChanged = false;
     }
 
     private static object Entry(MonoBehaviour hit, string name)

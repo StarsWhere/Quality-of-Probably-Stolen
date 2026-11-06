@@ -46,13 +46,20 @@ internal static class MachineFeatureQa
     internal static void OpenMethod(string component)
     {
         var row = Node(Root(), "Component_" + component); Check(row != null, "Missing scanner component " + component);
-        var button = row.GetComponentsInChildren<Button>(true).FirstOrDefault(b => b.gameObject.activeInHierarchy &&
-            b.gameObject.name == "Button_" + ModHelper.GetLocalized(Mod, "f19.how"));
+        var button = row.GetComponent<Button>();
         Check(button != null, "Missing processing action for " + component); button.onClick.Invoke();
     }
+    internal static Transform Detail() => CustomUIManager.Instance.GetWindow(Mod + ".f19.detail.water")?.root?.transform;
     internal static void Card(string sprite, string expected)
     {
-        var cards = Root()?.GetComponentsInChildren<Transform>(true).Where(t => t.name == "Method_" + sprite && t.gameObject.activeInHierarchy).ToList();
+        var cards = Detail()?.GetComponentsInChildren<Transform>(true).Where(t => t.name == "Method_" + sprite && t.gameObject.activeInHierarchy).ToList();
+        if (cards != null && cards.All(card => !Text(card).Contains(expected)))
+        {
+            var expand = CustomUIManager.Instance.GetWindow(Mod + ".f19.detail.water")?.Get("method_more_" + sprite);
+            Check(expand?.button != null, "Missing method detail control for " + sprite);
+            expand.button.onClick.Invoke();
+            cards = Detail()?.GetComponentsInChildren<Transform>(true).Where(t => t.name == "Method_" + sprite && t.gameObject.activeInHierarchy).ToList();
+        }
         Check(cards != null && cards.Any(card => Text(card).Contains(expected)), "Missing or incorrect " + sprite + " method card");
     }
     internal static void Row(string id, int amount, int total)
@@ -114,7 +121,7 @@ public sealed class ScannerTreatmentScenario
         if (step == 5)
         {
             MachineFeatureQa.Card("uv", ModHelper.GetLocalized(MachineFeatureQa.Mod, "f19.uv_direct"));
-            uvTransferAdvertised = MachineFeatureQa.Root().GetComponentsInChildren<Transform>(true)
+            uvTransferAdvertised = MachineFeatureQa.Detail().GetComponentsInChildren<Transform>(true)
                 .Count(t => t.gameObject.activeInHierarchy && t.name == "Method_uv") > 1;
             WaterScannerUIManager.Instance.Close();
             var uv = MachineFeatureQa.Stock("uv_filter"); int durability = DurabilityHelper.GetRealDurability(uv);
