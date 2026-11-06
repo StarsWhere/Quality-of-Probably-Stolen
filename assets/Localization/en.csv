@@ -1,0 +1,40 @@
+f15.enabled,Show the two-week calendar on the shutter
+f15.tip,When the shutter is down, show dates and public events for this week and next week directly on it. Hover a date for event information, or select it to show that day's details on the door. The display moves away when the shutter opens.
+settings.find,Find features and settings
+settings.title,Shop Assist settings
+settings.query,Search name, purpose or feature ID
+settings.go,Find
+settings.any,All categories
+settings.only,Enabled features only
+settings.none,No matching settings.
+settings.page,Page {0}/{1} · {2} entries
+settings.kind.feature,Feature switch
+settings.kind.toggle,Extra option
+settings.kind.value,Numeric setting
+settings.kind.choice,Choice
+settings.kind.key,Shortcut
+settings.kind.action,Action
+section.category1,Items and storage
+section.category2,Trade and requests
+section.category3,Machines and production
+section.category4,Calendar and workspace
+settings.group7,Storage rules and routing
+settings.group10,Machine modules
+settings.open,Open settings
+availability.disabled,Feature is off
+availability.selection,Select items first
+availability.object,Open the required object first
+availability.resource,Required resources are unavailable
+availability.unsupported,Unsupported in this version
+availability.conflict,Conflicts with another feature
+availability.unknown,Unavailable right now
+availability.store,Enter the shop first
+availability.labeler,Use a labeler first
+availability.label_sample,Select a labeler sample first
+availability.label_equipped,Put down the equipped tool first
+availability.machine,Open an owned machine in the shop first
+availability.coordinator,Make a storage coordinator available in the shop
+availability.liquid,Open a machine with selectable liquids first
+availability.appraisal,Open an item in the appraisal service first
+availability.demand,No public demand is available
+availability.ground,Open the item window at the dumping ground first
