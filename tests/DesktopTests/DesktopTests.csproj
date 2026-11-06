@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../src/ShopAssist/UI/DesktopTools.LayoutData.cs" Link="DesktopTools.LayoutData.cs" />
+    <Compile Include="../../src/ShopAssist/UI/DesktopTools.BargainRules.cs" Link="DesktopTools.BargainRules.cs" />
+    <Compile Include="../../src/ShopAssist/UI/DesktopTools.InspectionRules.cs" Link="DesktopTools.InspectionRules.cs" />
+    <Compile Include="DesktopTests.cs" />
+  </ItemGroup>
+</Project>
