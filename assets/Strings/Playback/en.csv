@@ -1,0 +1,17 @@
+f42.enabled,Fast playback
+f42.tip,Use a shortcut to speed through dialogue and presentation such as shutters and transitions.
+f42.key,Fast playback shortcut
+f42.key.tip,Hold to fast-forward or press to toggle according to the selected mode.
+f42.mode,Shortcut behavior
+f42.mode.tip,Choose hold or toggle playback.
+f42.hold,Hold to fast-forward
+f42.toggle,Press to toggle
+f42.speed,Playback speed
+f42.speed.tip,Adjust fast playback speed.
+f42.speed2,2×
+f42.speed4,4×
+f42.speed8,8×
+f42.speed16,16×
+f42.playing,Fast playback ×{0}
+f42.paused,Fast playback paused
+f42.unavailable,Some content cannot be accelerated and will play normally.

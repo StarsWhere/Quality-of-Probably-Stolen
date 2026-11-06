@@ -12,9 +12,10 @@ internal static class FeatureCatalogTests
             [FeatureCategory.Items] = new[] { 2, 5, 6, 7, 8, 9, 20, 22, 25, 26, 36, 38, 39, 40, 41 },
             [FeatureCategory.Trade] = new[] { 1, 3, 4, 11, 16, 23, 24, 27, 28, 29, 34 },
             [FeatureCategory.Machines] = new[] { 10, 12, 19, 30, 31, 32, 33, 35, 37 },
-            [FeatureCategory.Calendar] = new[] { 13, 14, 15, 17, 18, 21 }
+            [FeatureCategory.Calendar] = new[] { 13, 14, 15, 17, 18, 21 },
+            [FeatureCategory.Playback] = new[] { 42 }
         };
-        Check(FeatureCatalog.All.Count == 41 && FeatureCatalog.All.Select(feature => feature.Id).Distinct().Count() == 41,
+        Check(FeatureCatalog.All.Count == 42 && FeatureCatalog.All.Select(feature => feature.Id).Distinct().Count() == 42,
             "Features must have one descriptor each");
         foreach (var pair in expected)
             Check(FeatureCatalog.All.Where(feature => feature.Category == pair.Key).Select(feature => feature.Id).SequenceEqual(pair.Value),
@@ -32,12 +33,14 @@ internal static class FeatureCatalogTests
             FeatureCatalog.Order("f08.enabled") < FeatureCatalog.Order("f09.enabled") &&
             FeatureCatalog.Order("f10.enabled") < FeatureCatalog.Order("f12.enabled") &&
             FeatureCatalog.Order("f12.enabled") < FeatureCatalog.Order("f19.enabled"), "Related features are not contiguous");
-        foreach (string invalid in new[] { "", "f00.enabled", "f42.enabled", "abc", "f1.enabled" })
+        Check(FeatureCatalog.For("f42.speed").Category == FeatureCategory.Playback &&
+            FeatureCatalog.RequiredSettings("f42.key").SequenceEqual(new[] { "f42.enabled" }), "Playback settings are not discoverable");
+        foreach (string invalid in new[] { "", "f00.enabled", "f43.enabled", "abc", "f1.enabled" })
         {
             bool rejected = false;
             try { FeatureCatalog.For(invalid); } catch (ArgumentException) { rejected = true; }
             Check(rejected, "Invalid key was accepted: " + invalid);
         }
-        Console.WriteLine("PASS 41 unique categories, related groups, independent controls and actual dependencies");
+        Console.WriteLine("PASS 42 unique categories, related groups, independent controls and actual dependencies");
     }
 }

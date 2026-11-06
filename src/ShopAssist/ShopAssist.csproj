@@ -4,7 +4,7 @@
     <LangVersion>latest</LangVersion>
     <AssemblyName>ShopAssist</AssemblyName>
     <RootNamespace>ShopAssist</RootNamespace>
-    <Version>0.7.1</Version>
+    <Version>0.9.0</Version>
     <GameDir Condition="'$(GameDir)' == ''">$(PROBABLY_STOLEN_GAME_DIR)</GameDir>
     <GameDir Condition="'$(GameDir)' == '' and Exists('D:\SteamLibrary\steamapps\common\Probably Stolen\Probably Stolen.exe')">D:\SteamLibrary\steamapps\common\Probably Stolen</GameDir>
     <ManagedDir>$(GameDir)\Probably Stolen_Data\Managed</ManagedDir>
@@ -12,7 +12,7 @@
     <NuGetAudit>false</NuGetAudit>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="Assembly-CSharp;UnityEngine.CoreModule;UnityEngine.UI;UnityEngine.UIModule;UnityEngine.AudioModule;UnityEngine.TextRenderingModule;Unity.TextMeshPro;UnityEngine.InputLegacyModule;UnityEngine.JSONSerializeModule;Newtonsoft.Json;0Harmony">
+    <Reference Include="Assembly-CSharp;UnityEngine;UnityEngine.CoreModule;UnityEngine.UI;UnityEngine.UIModule;UnityEngine.AudioModule;UnityEngine.TextRenderingModule;Unity.TextMeshPro;UnityEngine.InputLegacyModule;UnityEngine.JSONSerializeModule;Unity.Localization;Unity.ResourceManager;Newtonsoft.Json;0Harmony;DOTween;DOTweenPro">
       <HintPath>$(ManagedDir)\%(Identity).dll</HintPath>
       <Private>false</Private>
     </Reference>

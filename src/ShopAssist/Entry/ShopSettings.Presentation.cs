@@ -85,6 +85,14 @@ namespace ShopAssist
         {
             private static bool Prefix(CustomUIBuilder b, ModConfig config, ConfigEntry entry)
             {
+                if (config.ModId == ModEntry.Id && entry.Key == "f19.pinned")
+                {
+                    // Retain the native row registry, but edit/reset pins only in the scanner.
+                    // ReadWidget below protects live pin changes from an older settings draft.
+                    b.AddInput("", entry.BoxedValue as string ?? "", null, entry.Key);
+                    b.Last.SetVisible(false);
+                    return false;
+                }
                 if (config.ModId != ModEntry.Id || !OwnChoice(entry, out string[] labels)) return true;
                 string link = "modcfg:" + ModEntry.Id + ":" + entry.Key;
                 TMPIconHover.CustomLinks[link] = entry.Tooltip;
@@ -96,7 +104,7 @@ namespace ShopAssist
             }
             private static void Postfix(CustomUIBuilder b, ModConfig config, ConfigEntry entry)
             {
-                if (attached == null || config.ModId != ModEntry.Id) return;
+                if (attached == null || config.ModId != ModEntry.Id || entry.Key == "f19.pinned") return;
                 var window = b.GetWindow();
                 var control = window.Get(entry.Key);
                 if (entry.ValueType == typeof(int) && control?.slider != null)
@@ -120,6 +128,8 @@ namespace ShopAssist
         {
             private static bool Prefix(ConfigEntry entry, CustomUIElement element, ref object __result)
             {
+                if (attached != null && entry?.Key == "f19.pinned" && ReferenceEquals(attached.config.Get(entry.Key), entry))
+                { __result = entry.BoxedValue; return false; }
                 if (!OwnChoice(entry, out string[] labels) || element?.dropdown == null) return true;
                 int index = element.GetIndex();
                 __result = index >= 0 && index < labels.Length ? (object)index : null;
@@ -132,6 +142,7 @@ namespace ShopAssist
         {
             private static bool Prefix(ConfigEntry entry, CustomUIElement element, object value)
             {
+                if (attached != null && entry?.Key == "f19.pinned" && ReferenceEquals(attached.config.Get(entry.Key), entry)) return false;
                 if (!OwnChoice(entry, out string[] labels) || element?.dropdown == null) return true;
                 element.SetIndex(Mathf.Clamp((int)value, 0, labels.Length - 1), false);
                 return false;
@@ -154,7 +165,7 @@ namespace ShopAssist
                 for (int tier = 0; tier < GearSections.Length; tier++)
                 {
                     __result.Get("section_" + GearSections[tier])?.SetText(SectionLabel(tier));
-                    var rows = attached.config.Entries.Where(entry => entry.Section == GearSections[tier])
+                    var rows = attached.config.Entries.Where(entry => entry.Section == GearSections[tier] && entry.Key != "f19.pinned")
                         .Select(entry => new { entry.Key, Row = __result.Get("label_" + entry.Key)?.root?.transform.parent })
                         .Where(value => value.Row != null).ToArray();
                     int[] positions = rows.Select(value => value.Row.GetSiblingIndex()).OrderBy(index => index).ToArray();

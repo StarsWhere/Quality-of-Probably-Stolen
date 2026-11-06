@@ -1,0 +1,17 @@
+f42.enabled,快速播放
+f42.tip,使用快捷键加速对话、卷帘、进退场和转场等展示过程。
+f42.key,快速播放快捷键
+f42.key.tip,按设置的操作模式按住快进，或按一下切换快进。
+f42.mode,快捷键操作
+f42.mode.tip,选择按住快进或按一下切换。
+f42.hold,按住快进
+f42.toggle,按一下切换
+f42.speed,播放倍速
+f42.speed.tip,调整快速播放的速度。
+f42.speed2,2 倍
+f42.speed4,4 倍
+f42.speed8,8 倍
+f42.speed16,16 倍
+f42.playing,快进 ×{0}
+f42.paused,快进已暂停
+f42.unavailable,部分内容暂不能快进，已保留正常播放。

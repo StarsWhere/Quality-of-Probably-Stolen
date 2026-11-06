@@ -3,15 +3,16 @@ using System.Collections.Generic;
 using System.Linq;
 using HarmonyLib;
 using UnityEngine;
+using UnityEngine.UI;
 
 namespace ShopAssist
 {
     internal sealed partial class ShopSettings
     {
-        private static readonly string[] Sections = { "shopassist", "shopassist.batch", "shopassist.advanced", "shopassist.calendar" };
+        private static readonly string[] Sections = { "shopassist", "shopassist.batch", "shopassist.advanced", "shopassist.calendar", "shopassist.playback" };
         private static readonly string[] GearSections = {
             "物品与仓储 / Items and storage", "交易与委托 / Trade and requests",
-            "机器与生产 / Machines and production", "日历与工作台 / Calendar and workspace" };
+            "机器与生产 / Machines and production", "日历与工作台 / Calendar and workspace", "快速播放 / Fast playback" };
         private static ShopSettings attached;
         private readonly ModConfig config = ModHelper.GetConfig(ModEntry.Id);
         private readonly List<Action> optionRegistrations = new List<Action>();
@@ -23,7 +24,7 @@ namespace ShopAssist
             internal string Label;
             internal Action Run;
             internal Func<ActionAvailability> Available;
-            internal CustomUIElement Button, Reason, SettingButton;
+            internal CustomUIElement Button;
         }
 
         internal event Action Changed;
@@ -66,7 +67,7 @@ namespace ShopAssist
             return entry;
         }
 
-        internal Func<KeyCode> Key(string key, string tipKey)
+        internal Func<KeyCode> Key(string key, string tipKey, bool raw = false)
         {
             shortcutKeys.Add(key);
             shortcutDescriptions.Add(key, tipKey);
@@ -83,6 +84,8 @@ namespace ShopAssist
                 }, () => Text(tipKey)));
             return () =>
             {
+                // Held shortcuts validate conflicts when activating, rather than only on GetKeyDown.
+                if (raw) return value;
                 if (value == KeyCode.None || !Input.GetKeyDown(value)) return value;
                 if (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl) ||
                     Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt) ||
@@ -207,36 +210,46 @@ namespace ShopAssist
 
         private bool CanUse(Command command) => Evaluate(command.Label).Allowed;
 
-        internal static void UpdateAvailabilityControls(CustomUIElement button, CustomUIElement reason,
-            CustomUIElement setting, ActionAvailability availability)
+        internal static void UpdateActionButton(CustomUIElement button, ActionAvailability availability, string description = null)
         {
             if (button?.IsAlive != true) return;
             if (button.button != null && button.button.interactable != availability.Allowed)
                 button.SetInteractable(availability.Allowed);
-            if (reason?.root != null)
-            {
-                string message = availability.Message;
-                if (reason.GetText() != message) reason.SetText(message);
-                if (reason.root.activeSelf == availability.Allowed) reason.root.SetActive(!availability.Allowed);
-            }
-            if (setting?.root != null)
-            {
-                bool show = !availability.Allowed && availability.SettingKey != null;
-                if (setting.root.activeSelf != show) setting.root.SetActive(show);
-            }
+            if (button.text != null)
+                button.text.color = availability.Allowed ? new Color(.94f, .90f, .80f, 1f) : new Color(.67f, .65f, .62f, 1f);
+            button.SetTooltip(availability.Allowed ? description ?? "" : availability.Message);
         }
 
         internal void RefreshCommands()
         {
             if (toolsWindow?.IsAlive != true) return;
+            int shown = 0;
             foreach (var command in commands)
                 if (command.Button?.IsAlive == true)
-                    UpdateAvailabilityControls(command.Button, command.Reason, command.SettingButton, Evaluate(command.Label));
+                {
+                    bool visible = showDisabledTools || FeatureAvailability(command.Label).Allowed;
+                    if (command.Button.root.activeSelf != visible) command.Button.SetVisible(visible);
+                    if (!visible) continue;
+                    shown++;
+                    UpdateActionButton(command.Button, Evaluate(command.Label), Description(command.Label));
+                }
+            toolsEmpty?.SetVisible(shown == 0);
+            if (toolsAttention != null && Time.unscaledTime >= toolsAttentionAt)
+            {
+                toolsAttentionAt = Time.unscaledTime + 1f;
+                string label = Format("visual.attention_count", AttentionBook.Count);
+                if (toolsAttention.text?.text != label)
+                {
+                    toolsAttention.SetText(label);
+                    SizeToolHeader(toolsAttention, 180);
+                }
+            }
         }
 
         private void ClearCommandViews()
         {
-            foreach (var command in commands) command.Button = command.Reason = command.SettingButton = null;
+            foreach (var command in commands) command.Button = null;
+            toolsEmpty = null;
         }
 
         [HarmonyPatch(typeof(GameOptionUIManager), "BuildSection")]
@@ -264,66 +277,190 @@ namespace ShopAssist
             command.Run();
         }
         private CustomUIWindow toolsWindow;
+        private RectTransform toolsContent;
+        private readonly CustomUIElement[] toolCategories = new CustomUIElement[Sections.Length];
+        private readonly float[] toolScroll = Enumerable.Repeat(1f, Sections.Length).ToArray();
+        private static readonly string[] ToolSettings = { "f05.enabled", "f01.enabled", "f10.enabled", "f13.enabled", "f42.enabled" };
+        private CustomUIElement toolsAttention, toolsEmpty, toolsFilter;
+        private CustomUIElement toolsManage;
+        private float toolsAttentionAt;
+        private bool showDisabledTools;
+        private int toolsTier;
+        internal static CustomUIWindow OpenToolsWindow => attached?.toolsWindow;
+        internal bool ShowDisabledTools => showDisabledTools;
+        internal void ShowDisabledToolsChanged(bool value) { showDisabledTools = value; RefreshCommands(); }
+        internal void OpenToolSettings(int tier) => OpenSetting(ToolSettings[Mathf.Clamp(tier, 0, ToolSettings.Length - 1)]);
+
+        private const float ToolSidebarWidth = 145f;
+        private const float ToolRowHorizontalPadding = 20f;
+
+        private static void SizeToolHeader(CustomUIElement row, float minimumWidth)
+        {
+            if (row?.text == null) return;
+            row.text.enableAutoSizing = false;
+            row.text.fontSize = 21;
+            row.SetFlexible(0, 0).SetPreferredSize(minimumWidth, 44);
+            if (!row.text.isActiveAndEnabled) return;
+            float width = Mathf.Ceil(row.text.GetPreferredValues(row.text.text).x) + ToolRowHorizontalPadding + 6;
+            row.SetPreferredSize(Mathf.Max(minimumWidth, width), 44);
+        }
+
+        private static void SizeToolCategory(CustomUIElement row)
+        {
+            if (row?.text == null) return;
+            row.text.enableAutoSizing = false;
+            row.text.fontSize = 19;
+            row.text.enableWordWrapping = true;
+            if (!row.text.isActiveAndEnabled) return;
+            var style = row.text.fontStyle;
+            row.text.fontStyle = style | TMPro.FontStyles.Bold;
+            float height = Mathf.Max(52, Mathf.Ceil(row.text.GetPreferredValues(row.text.text,
+                ToolSidebarWidth - ToolRowHorizontalPadding, 0).y) + 10);
+            row.text.fontStyle = style;
+            row.SetPreferredSize(-1, height);
+            var layout = row.root.GetComponent<LayoutElement>();
+            if (layout != null) layout.minHeight = height;
+        }
+
+        private void SizeVisibleToolText()
+        {
+            if (toolsWindow?.root?.activeInHierarchy != true) return;
+            Canvas.ForceUpdateCanvases();
+            SizeToolHeader(toolsAttention, 180);
+            SizeToolHeader(toolsManage, 150);
+            foreach (CustomUIElement category in toolCategories) SizeToolCategory(category);
+            Canvas.ForceUpdateCanvases();
+        }
+
+        private sealed class ToolTextAfterShow : MonoBehaviour
+        {
+            internal ShopSettings Owner;
+            private int firstFrame = -1;
+            private void LateUpdate()
+            {
+                if (Owner?.toolsWindow?.root != gameObject) { Destroy(this); return; }
+                if (firstFrame < 0) { firstFrame = Time.frameCount; return; }
+                if (Time.frameCount <= firstFrame) return;
+                Owner.SizeVisibleToolText();
+                Destroy(this);
+            }
+        }
+
+        internal static void StyleToolRow(CustomUIElement row, float height = 44f)
+        {
+            if (row == null) return;
+            row.SetFlexible(1, 0).SetPreferredSize(-1, height);
+            var group = row.root?.GetComponent<HorizontalLayoutGroup>();
+            if (group != null)
+            {
+                group.childAlignment = TextAnchor.MiddleLeft;
+                group.childControlWidth = true; group.childForceExpandWidth = true;
+                group.padding = new RectOffset(12, 8, 0, 0);
+            }
+            if (row.text != null)
+            {
+                row.text.alignment = TMPro.TextAlignmentOptions.MidlineLeft;
+                row.text.margin = Vector4.zero;
+                row.text.enableWordWrapping = false;
+                row.text.enableAutoSizing = true;
+                row.text.fontSizeMin = 19;
+                row.text.fontSizeMax = 21;
+                row.text.color = new Color(.94f, .90f, .80f, 1f);
+                var labelLayout = row.text.gameObject.GetComponent<LayoutElement>() ?? row.text.gameObject.AddComponent<LayoutElement>();
+                labelLayout.minWidth = 0; labelLayout.preferredWidth = 0; labelLayout.flexibleWidth = 1;
+            }
+            if (row.button != null)
+            {
+                row.button.transition = Selectable.Transition.ColorTint;
+                ColorBlock colors = row.button.colors;
+                colors.normalColor = new Color(.20f, .18f, .25f, 1f);
+                colors.highlightedColor = new Color(.29f, .35f, .37f, 1f);
+                colors.pressedColor = new Color(.22f, .40f, .41f, 1f);
+                colors.selectedColor = colors.highlightedColor;
+                colors.disabledColor = new Color(.15f, .14f, .19f, 1f);
+                colors.colorMultiplier = 1f;
+                row.button.colors = colors;
+            }
+        }
         internal void OpenTools(int tier = 0)
         {
             if (CustomUIManager.Instance == null) return;
-            toolsWindow?.Close();
-            ClearCommandViews();
-            var builder = CustomUIManager.Window(ModEntry.Id + ".tools", Text("visual.tools"), CustomUIManager.LAYER_META)
-                .SetSize(650, 500).SetDraggable(true).SetCloseOnEscape(true);
-            toolsWindow = builder.GetWindow();
-            builder.BeginRow();
-            for (int n = 0; n < Sections.Length; n++)
+            OverlayHandler.current?.HideTooltip();
+            tier = Mathf.Clamp(tier, 0, Sections.Length - 1);
+            if (toolsWindow?.IsAlive == true && toolsContent != null)
             {
-                int category = n;
-                builder.AddButton(Text(FeatureCatalog.CategoryKey((FeatureCategory)n)), () => OpenTools(category), "category_" + n);
-                builder.Last.SetPreferredSize(145, 40);
-                if (builder.Last.text != null)
-                {
-                    builder.Last.text.enableWordWrapping = true;
-                    builder.Last.text.enableAutoSizing = true;
-                    builder.Last.text.fontSizeMin = 10;
-                    builder.Last.text.fontSizeMax = 16;
-                }
+                var scroll = toolsContent.GetComponentInParent<ScrollRect>();
+                if (scroll != null) toolScroll[toolsTier] = scroll.verticalNormalizedPosition;
             }
-            builder.End().AddButton(Text("visual.attention"), () => { toolsWindow?.Close(); toolsWindow = null; AttentionBook.Open(); }, "attention");
-            builder.BeginScrollFlexible(180).BeginGrid(3, 195, 135, 7);
+            else
+            {
+                Vector2 size = UiLayout.Fit(650, 500);
+                var shell = CustomUIManager.Window(ModEntry.Id + ".tools", Text("visual.tools"), CustomUIManager.LAYER_META)
+                    .SetSize(size.x, size.y).SetDraggable(true).SetCloseOnEscape(true);
+                toolsWindow = shell.GetWindow(); CustomUIWindow own = toolsWindow;
+                if (own.frame?.titleText != null) { own.frame.titleText.fontSize = 19; own.frame.titleText.enableAutoSizing = false; }
+                shell.OnClose(() => { if (toolsWindow == own) { toolsWindow = null; toolsContent = null; toolsAttention = toolsManage = toolsFilter = null; ClearCommandViews(); } });
+                shell.BeginRow(8);
+                shell.AddButton(Format("visual.attention_count", AttentionBook.Count), () => AttentionBook.Open(), "attention");
+                toolsAttention = shell.Last;
+                StyleToolRow(shell.Last); SizeToolHeader(shell.Last, 180);
+                shell.AddFlexibleSpace();
+                shell.AddButton(Text("visual.manage"), () => OpenToolSettings(toolsTier), "manage");
+                toolsManage = shell.Last;
+                StyleToolRow(shell.Last); SizeToolHeader(shell.Last, 150);
+                shell.End().BeginRow(10);
+                var bodyLayout = shell.CurrentContainer.gameObject.AddComponent<LayoutElement>();
+                bodyLayout.minHeight = 100; bodyLayout.flexibleHeight = 1; bodyLayout.flexibleWidth = 1;
+                shell.BeginColumn(4);
+                var sidebar = shell.CurrentContainer.gameObject.AddComponent<LayoutElement>();
+                sidebar.minWidth = sidebar.preferredWidth = ToolSidebarWidth; sidebar.flexibleWidth = 0; sidebar.flexibleHeight = 1;
+                for (int n = 0; n < Sections.Length; n++)
+                {
+                    int category = n;
+                    shell.AddButton(Text(FeatureCatalog.CategoryKey((FeatureCategory)n)), () => OpenTools(category), "category_" + n);
+                    toolCategories[n] = shell.Last;
+                    StyleToolRow(shell.Last, 52);
+                    SizeToolCategory(shell.Last);
+                }
+                shell.End().BeginColumn(4);
+                var main = shell.CurrentContainer.gameObject.AddComponent<LayoutElement>();
+                main.minWidth = 100; main.preferredWidth = 0; main.flexibleWidth = 1; main.flexibleHeight = 1;
+                shell.AddToggle(Text("visual.show_disabled"), showDisabledTools, ShowDisabledToolsChanged, "show_disabled");
+                toolsFilter = shell.Last;
+                shell.Last.SetPreferredSize(-1, 38);
+                if (shell.Last.text != null) { shell.Last.text.fontSize = 19; shell.Last.text.enableAutoSizing = false; }
+                shell.BeginScrollFlexible(150); toolsContent = shell.CurrentContainer;
+                shell.End().End().End().Show();
+                SizeVisibleToolText();
+                own.root.AddComponent<ToolTextAfterShow>().Owner = this;
+            }
+            toolsTier = tier;
+            toolsFilter?.SetVisible((FeatureCategory)tier != FeatureCategory.Playback);
+            for (int n = 0; n < toolCategories.Length; n++)
+            {
+                CustomUIElement category = toolCategories[n];
+                if (category?.button == null) continue;
+                ColorBlock colors = category.button.colors;
+                colors.disabledColor = new Color(.23f, .40f, .41f, 1f);
+                category.button.colors = colors;
+                category.SetInteractable(n != tier);
+                if (category.text != null) category.text.fontStyle = n == tier ? TMPro.FontStyles.Bold : TMPro.FontStyles.Normal;
+            }
+            ClearCommandViews();
+            UiLayout.Clear(toolsContent, toolsWindow);
+            var builder = new CustomUIBuilder(CustomUIManager.Instance, toolsWindow, toolsContent);
             foreach (var command in commands.OrderBy(value => OptionOrder(value.Label)))
             {
                 if (Level(command.Label) != tier) continue;
                 string label = command.Label;
-                builder.BeginPanel(195, 135, padding: 4);
-                builder.AddImage(tier == 2 ? MachineryStyle.IconPower : MachineryStyle.IconNote, 25, 25);
                 builder.AddButton(Text(label), () => Run(label), ModEntry.Id + ":" + label);
                 command.Button = builder.Last;
-                builder.Last.SetPreferredSize(185, 40);
-                if (builder.Last.text != null)
-                {
-                    builder.Last.text.enableWordWrapping = true;
-                    builder.Last.text.enableAutoSizing = true;
-                    builder.Last.text.fontSizeMin = 10;
-                    builder.Last.text.fontSizeMax = 18;
-                }
-                builder.AddLabel("", "reason_" + label);
-                command.Reason = builder.Last;
-                if (builder.Last.text != null)
-                {
-                    builder.Last.text.enableWordWrapping = true;
-                    builder.Last.text.enableAutoSizing = true;
-                    builder.Last.text.fontSizeMin = 9;
-                    builder.Last.text.fontSizeMax = 15;
-                }
-                builder.AddButton(Text("settings.open"), () =>
-                {
-                    var current = Evaluate(label);
-                    if (!current.Allowed && current.SettingKey != null) OpenSetting(current.SettingKey);
-                    else RefreshCommands();
-                }, "setting_" + label);
-                command.SettingButton = builder.Last;
-                builder.End();
+                StyleToolRow(builder.Last);
             }
-            builder.End().End().Show();
+            builder.AddLabel(Text((FeatureCategory)tier == FeatureCategory.Playback ? "visual.no_quick_actions" : "visual.no_actions"), "empty"); toolsEmpty = builder.Last;
             RefreshCommands();
+            CustomUIBuilder.RebuildLayout(toolsContent);
+            UiLayout.RestoreScroll(toolsContent, toolScroll[tier]);
         }
 
         internal void Attach()

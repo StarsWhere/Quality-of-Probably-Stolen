@@ -29,6 +29,8 @@ namespace ShopAssist
             settings = new ShopSettings();
             Action<string> warn = message => log.Warning(message);
             Add("Feedback", () => AttentionBook.Start(settings, warn), AttentionBook.Tick, AttentionBook.Dispose);
+            var playback = new FastPlayback(settings, warn);
+            Add("F42", playback.Start, playback.Tick, playback.Dispose);
             var enabled = settings.Toggle("f15.enabled", "f15.tip");
             MorningCalendar calendar = null;
             Add("F15", () =>
@@ -126,6 +128,9 @@ namespace ShopAssist
                 catch (Exception error) { Failed(module, error); }
             }
             ShopNotice.Tick();
+            ItemLocator.Tick();
+            TradeFeedback.Tick();
+            VisualChoices.Tick();
         }
 
         private void Failed(Module module, Exception error)
@@ -152,6 +157,8 @@ namespace ShopAssist
             {
                 VisualChoices.Close();
                 ShopNotice.Clear();
+                ItemLocator.Clear();
+                TradeFeedback.Clear();
                 Object.Destroy(host);
                 host = null;
             }

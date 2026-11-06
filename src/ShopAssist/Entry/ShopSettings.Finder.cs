@@ -77,7 +77,7 @@ namespace ShopAssist
                 CustomUIWindow own = finder;
                 b.OnClose(() => { if (ReferenceEquals(finder, own)) { finder = null; ClearFinderViews(); } });
                 b.AddInput(Text("settings.query"), search, ChangeSearch, "query", ChangeSearch);
-                b.BeginRow().AddDropdown(new List<string> { Text("settings.any"), Text("section.category1"), Text("section.category2"), Text("section.category3"), Text("section.category4") },
+                b.BeginRow().AddDropdown(new[] { Text("settings.any") }.Concat(Enumerable.Range(0, Sections.Length).Select(SectionLabel)).ToList(),
                     searchTier, i => { searchTier = i; searchPage = 0; RenderFinder(); }, "tier")
                     .AddToggle(Text("settings.only"), onlyEnabled, v => { onlyEnabled = v; searchPage = 0; RenderFinder(); }, "only").End();
                 b.BeginScrollFlexible(130);
@@ -108,7 +108,7 @@ namespace ShopAssist
                 finally { finderBuilding = false; }
             }
             var commandKeys = new HashSet<string>(commands.Select(command => command.Label));
-            var list = config.Entries.Select(e => e.Key).Concat(shortcutKeys).Concat(commands.Select(c => c.Label)).Distinct()
+            var list = config.Entries.Where(e => e.Key != "f19.pinned").Select(e => e.Key).Concat(shortcutKeys).Concat(commands.Select(c => c.Label)).Distinct()
                 .Where(key => key.Length > 3 && key[0] == 'f' && key[3] == '.' &&
                     (commandKeys.Contains(key) || options.Get(ModEntry.Id + ":" + key)?.root != null) &&
                     (searchTier == 0 || Level(key) == searchTier - 1) && (!onlyEnabled || EnabledInOptions(options, key)) &&

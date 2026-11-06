@@ -3,7 +3,7 @@ using System.Collections.Generic;
 
 namespace ShopAssist
 {
-    internal enum FeatureCategory { Items, Trade, Machines, Calendar }
+    internal enum FeatureCategory { Items, Trade, Machines, Calendar, Playback }
 
     internal sealed class FeatureDescriptor
     {
@@ -61,6 +61,7 @@ namespace ShopAssist
             new FeatureDescriptor(39, FeatureCategory.Items),
             new FeatureDescriptor(40, FeatureCategory.Items),
             new FeatureDescriptor(41, FeatureCategory.Items),
+            new FeatureDescriptor(42, FeatureCategory.Playback),
         };
 
         internal static IReadOnlyList<FeatureDescriptor> All => features;
