@@ -1,0 +1,42 @@
+f13.enabled,Close item windows and manage groups
+f13.tip,Close eligible item windows in the store with one action. Near an accessible storage coordinator, save window groups and their layouts, then reopen and restore them.
+f13.close.key,Close item windows
+f13.close.tip,Close the eligible item windows currently open.
+f13.groups.key,Open window groups
+f13.groups.tip,Open or close window groups in the store near an accessible storage coordinator.
+f13.close,Close item windows
+f13.groups,Window groups
+f13.title,Window groups
+f13.name,Group name
+f13.save,Save current windows
+f13.native,Manage groups
+f13.capture,Update layout
+f13.restore,Restore
+f13.invalid_name,Enter a name of at most 48 characters.
+f13.data_invalid,Group data could not be read and has been preserved.
+f13.limit,The group limit has been reached.
+f13.no_windows,There are no eligible windows or there are too many.
+f13.changed,Windows changed. Try again.
+f13.duplicate,A group with these members exists. Update its layout instead.
+f13.saved,Layout saved.
+f13.save_failed,The full layout could not be saved. Try again.
+f13.open_members,Open every window in the group first.
+f13.restored,Layout restored.
+f13.partial,Some windows were unavailable. The rest were restored.
+f14.enabled,Move and dock the bargain panel
+f14.tip,During bargaining, drag the panel by its title bar or close it with its close button. Choose which side of the trade window it docks to; dragged positions are saved with the current game.
+f14.side,Default bargain panel side
+f14.side.tip,Choose which side of the trade window the bargain panel starts on. Automatic chooses based on available screen space.
+f14.auto,Automatic
+f14.left,Left
+f14.right,Right
+f14.reset,Reset bargain panel position
+f18.enabled,Adjust the appraisal lens and image
+f18.tip,During appraisal, adjust image magnification and the opacity of the frame and tray. The lens position is remembered after dragging; the view can be reset.
+f18.zoom,Appraisal image magnification (%)
+f18.zoom.tip,The original image size is 100%; higher values enlarge it.
+f18.frame,Appraisal frame opacity (%)
+f18.frame.tip,Relative to the original opacity: 0 is transparent and 100 leaves it unchanged.
+f18.tray,Appraisal tray opacity (%)
+f18.tray.tip,Relative to the original opacity: 0 is transparent and 100 leaves it unchanged.
+f18.reset,Reset appraisal view

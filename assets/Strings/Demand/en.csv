@@ -1,0 +1,26 @@
+f03.enabled,Highlight goods the customer wants
+f03.tip,After the customer states a request, highlight owned goods in open areas when known information confirms a match. Highlights follow the current customer and request.
+f04.enabled,Highlight known risks during inspections
+f04.tip,When an inspector arrives, highlight known stolen goods, contraband and containers where they were previously seen. Choose risk categories or enable extra detection of undisclosed risks.
+f04.stolen,Mark stolen goods during inspections
+f04.stolen.tip,With inspection highlighting enabled, mark known stolen goods and containers where they were seen. Extra detection also includes undisclosed risks.
+f04.contraband,Mark contraband during inspections
+f04.contraband.tip,With inspection highlighting enabled, mark known contraband and containers where it was seen. Extra detection also includes undisclosed risks.
+f11.enabled,List goods matching the customer request
+f11.tip,After the customer states a request, open the customer goods list from negotiation to see known matches, sources and reservations. Locate a source or drag movable goods to the trade counter.
+f11.key,Open customer goods list
+f11.key.tip,Open or close the customer goods list after the customer states a request.
+f11.open,Customer goods list
+f11.count,{0} item instances
+f11.empty,No matches can be confirmed from public information.
+f11.in_use,In machine
+f11.reserved,Reserved
+f11.unavailable,Unavailable
+f11.available,{0} available
+f11.locate,Locate
+f11.more,Show more
+f11.changed,The item or its location changed. Check the list again.
+f11.open_first,Open the item's area first.
+f11.failed,Could not read or locate the item.
+f04.unseen,Detect hidden risks during inspections
+f04.unseen.tip,With inspection highlighting enabled, also check visible items and accessible closed ordinary containers for stolen goods and contraband even if not yet identified. Risk category switches still apply.

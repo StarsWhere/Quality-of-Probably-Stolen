@@ -1,0 +1,15 @@
+f23.enabled,Use an appraisal worksheet
+f23.tip,Open the worksheet beside the appraisal tools and enter observations and amounts yourself. Enable worksheet calculation to copy the total into the appraisal estimate field.
+f23.calculate,Calculate the appraisal worksheet total
+f23.calculate.tip,Add the base amount and checked adjustments in the appraisal worksheet. A valid total can be copied into the estimate field.
+f23.key,Open appraisal worksheet
+f23.key.tip,While appraising a customer's item, press the shortcut to open or close its worksheet.
+f23.open,Appraisal worksheet
+f23.title,Appraisal worksheet
+f23.base,Base amount
+f23.feature,Observed feature
+f23.amount,Adjustment
+f23.add,Add
+f23.total,Estimate: {0}
+f23.undo,Undo
+f23.apply,Use estimate

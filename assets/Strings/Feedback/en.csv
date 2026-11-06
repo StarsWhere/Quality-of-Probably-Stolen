@@ -1,0 +1,18 @@
+attention.open,Needs attention
+attention.empty,Nothing needs attention.
+attention.retry,Retry
+attention.resolve,Mark as checked
+attention.locate,Locate
+attention.refresh,Refresh
+attention.unreadable,Could not read this save's attention records. The original data was retained.
+attention.save_failed,Could not save the updated status. Please retry.
+attention.provider_failed,This feature's status could not be read. Refresh to retry.
+attention.action_failed,The action did not complete. Check its current state before retrying.
+attention.summary,{0} items need attention.
+operation.summary,{0}: {1} moved · {2} not moved
+operation.inspect,Some items need inspection
+operation.details,Operation result
+operation.item,{0} ×{1} · {2}
+operation.done,Completed
+operation.last,Last operation result
+operation.not_attempted,Not attempted after an earlier interruption
