@@ -1,0 +1,4 @@
+f40.enabled,Rotate selected items as a group
+f40.tip,In the store, select multiple items in one grid and drag them. Use the rotation keys or mouse wheel to rotate the group. To preserve the rotated formation in another container, enable precise group placement or hold Shift.
+f41.enabled,Place selected items precisely across containers
+f41.tip,When dragging items selected from one grid into another container, place them in the previewed formation. Green means the group fits; red means a collision or an out-of-bounds placement. When disabled, cross-container drops use automatic placement; holding Shift still allows precise placement.

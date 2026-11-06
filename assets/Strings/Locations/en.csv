@@ -1,0 +1,7 @@
+inv.stock,Main stock
+inv.counter,Back counter
+inv.showcase,Display case
+inv.front,Front counter
+inv.changed,The item or its permissions changed. Select it again.
+inv.noSpace,No empty placement fits the entire item.
+inv.inspect,Transfer stopped. Check both inventory locations.

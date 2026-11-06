@@ -1,0 +1,21 @@
+f38.enabled,Show revealed labels on items
+f38.tip,Show the game's revealed item attributes on visible items, such as counterfeit or laboratory grade. Hover to read the full text. Unrevealed information is not shown.
+f38.size,Item label text size
+f38.size.tip,Higher values make item label text larger.
+f39.enabled,Mark known stolen items and their containers
+f39.tip,Show badges on visible items to distinguish known stolen items, containers known to contain stolen items, and items that are both. Closed containers are not inspected for this feature.
+f39.corner,Preferred stolen badge corner
+f39.corner.tip,Choose the preferred corner for the stolen badge. It may move to another corner when space is limited.
+f39.top_left,Top left
+f39.top_right,Top right
+f39.bottom_left,Bottom left
+f39.bottom_right,Bottom right
+f39.size,Stolen badge size
+f39.size.tip,Higher values make the badge larger; it may shrink when space is limited.
+f39.style,Stolen badge style
+f39.style.tip,Choose a filled or outlined stolen badge.
+f39.filled,Filled
+f39.outline,Outline
+f39.direct,Stolen
+f39.inside,Known stolen item inside
+f39.both,Stolen item containing a known stolen item
