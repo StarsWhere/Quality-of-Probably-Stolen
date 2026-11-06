@@ -3,9 +3,9 @@
   <ID>starswhere.shopassist</ID>
   <Name>经营助手 / Shop Assist</Name>
   <Author>StarsWhere</Author>
-  <ModVersion>0.7.1</ModVersion>
+  <ModVersion>0.9.0</ModVersion>
   <Description>可单独配置的店铺操作辅助。 Configurable shopkeeping tools.</Description>
   <GameVersions><Version>0.46D</Version></GameVersions>
   <Assemblies><Assembly>ShopAssist.dll</Assembly></Assemblies>
-  <Capabilities><Capability>dynamic-code</Capability></Capabilities>
+  <Capabilities><Capability>dynamic-code</Capability><Capability>reflection-external</Capability></Capabilities>
 </Manifest>
