@@ -14,6 +14,7 @@ namespace ShopAssist
         private const string DataKey = "ledger";
         private const string WindowId = ModEntry.Id + ".ledger";
         private static ShopLedger active;
+        private static long nextReceipt;
         private readonly ConfigEntry<bool> receipts, ledger, showCash, showRep, sound;
         private readonly ConfigEntry<int> seconds, volume;
         private readonly ShopSettings settings;
@@ -37,6 +38,7 @@ namespace ShopAssist
 
         private sealed class Span
         {
+            internal long id;
             internal Kind kind;
             internal int cash;
             internal long childCash;
@@ -83,6 +85,7 @@ namespace ShopAssist
         private void NewRun(string _) => FinishLoad();
         private void Reset()
         {
+            TradeFeedback.Clear();
             if (window != null && window.IsAlive) window.Close();
             window = null;
             owner = null;
@@ -129,6 +132,7 @@ namespace ShopAssist
 
         private void SettingsChanged()
         {
+            if (!receipts.Value) TradeFeedback.Clear();
             if (!ledger.Value && window != null && window.IsAlive) window.Close();
             if (owner != null && wasRecording != ledger.Value)
             {
@@ -174,7 +178,7 @@ namespace ShopAssist
         {
             if (!Ensure()) return null;
             if (current == null) Reconcile();
-            var span = new Span { parent = current, kind = kind, cash = owner.playerCash };
+            var span = new Span { id = ++nextReceipt, parent = current, kind = kind, cash = owner.playerCash };
             if (sold != null && sold.IsTag("BOUGHT_PRICE_TAG"))
                 span.cost = sold.GetTagReadonly("BOUGHT_PRICE_TAG").GetInt();
             if (current == null && receipts.Value && showRep.Value && owner.currentClientInstance != null)
@@ -201,22 +205,9 @@ namespace ShopAssist
                 span.kind == Kind.Barter || span.kind == Kind.Appraisal;
             if (!failed && trade && receipts.Value)
             {
-                var parts = new List<string>(2);
-                if (showCash.Value && change != 0)
-                    parts.Add(ShopSettings.Format(change > 0 ? "f16.in" : "f16.out", Math.Abs(change)));
-                if (span.faction != null && showRep.Value)
-                {
-                    double delta = span.faction.GetReputationExact() - span.rep - span.reportedRep;
-                    if (Math.Abs(delta) > 0.000001)
-                        parts.Add(span.faction.factionDisplay + " " + delta.ToString("+0.##;-0.##", CultureInfo.CurrentCulture));
-                }
-                if (parts.Count > 0)
-                {
-                    ShopNotice.Show(string.Join("  ·  ", parts), seconds.Value);
-                    var source = sound.Value ? EmporiumAudioPlayer.Instance?.audioRegister : null;
-                    if (source != null && source.clip != null && volume.Value > 0)
-                        source.PlayOneShot(source.clip, volume.Value / 100f);
-                }
+                double delta = span.faction == null ? 0 : span.faction.GetReputationExact() - span.rep - span.reportedRep;
+                TradeFeedback.Show(span.id, change, span.faction, delta, showCash.Value, showRep.Value,
+                    seconds.Value, sound.Value, volume.Value);
             }
         }
 
@@ -333,14 +324,15 @@ namespace ShopAssist
         private void DrawHistory()
         {
             if (!Ensure() || !ledger.Value || CustomUIManager.Instance == null) return;
-            var b = CustomUIManager.Window(WindowId, ShopSettings.Text("f28.open"), CustomUIManager.LAYER_META)
-                .SetSize(620, 390).SetDraggable(true).SetCloseOnEscape(true);
-            window = b.GetWindow();
+            var b = UiLayout.Rebuild(ref window, WindowId, ShopSettings.Text("f28.open"), 620, 390);
             b.OnClose(() => window = null);
             if (history == null) { b.AddLabel(ShopSettings.Text("f28.invalid")).Show(); return; }
-            b.BeginRow().AddButton("‹", () => { if (viewedDay > 1) { viewedDay--; DrawHistory(); } })
-                .AddLabel(ShopSettings.Format("f28.day", viewedDay))
-                .AddButton("›", () => { if (viewedDay < StoreStation.GetDayCounter()) { viewedDay++; DrawHistory(); } }).End();
+            b.BeginRow().AddButton("‹", () => { if (viewedDay > 1) { viewedDay--; DrawHistory(); } });
+            b.Last.SetFixedWidth(34).SetInteractable(viewedDay > 1);
+            b.AddLabel(ShopSettings.Format("f28.day", viewedDay))
+                .AddButton("›", () => { if (viewedDay < StoreStation.GetDayCounter()) { viewedDay++; DrawHistory(); } });
+            b.Last.SetFixedWidth(34).SetInteractable(viewedDay < StoreStation.GetDayCounter());
+            b.End();
             var kinds = new List<string> { ShopSettings.Text("f28.all") };
             foreach (Kind kind in Enum.GetValues(typeof(Kind)))
                 kinds.Add(ShopSettings.Text("f28." + kind.ToString().ToLowerInvariant()));

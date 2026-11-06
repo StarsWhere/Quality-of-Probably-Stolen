@@ -101,10 +101,7 @@ namespace ShopAssist
         }
         private CustomUIBuilder Window()
         {
-            // Replacing this window for a redraw must not cancel the current selection.
-            window = null;
-            var b = CustomUIManager.Window(ModEntry.Id + ".water", ShopSettings.Text("f26.open"), CustomUIManager.LAYER_META)
-                .SetSize(575, 420).SetCloseOnEscape(true).SetDraggable(true);
+            var b = UiLayout.Rebuild(ref window, ModEntry.Id + ".water", ShopSettings.Text("f26.open"), 575, 420);
             window = b.GetWindow();
             CustomUIWindow own = window;
             b.OnClose(() =>

@@ -369,9 +369,7 @@ namespace ShopAssist
         {
             if (!tracking.Value || CustomUIManager.Instance == null) return;
             if (!Load()) { ShopNotice.Show(ShopSettings.Text("f27.unreadable")); return; }
-            var b = CustomUIManager.Window(WindowId, ShopSettings.Text("f27.open"), CustomUIManager.LAYER_META)
-                .SetSize(600, 470).SetDraggable(true).SetCloseOnEscape(true);
-            window = b.GetWindow();
+            var b = UiLayout.Rebuild(ref window, WindowId, ShopSettings.Text("f27.open"), 600, 470);
             b.OnClose(() => window = null);
             if (!ReferenceEquals(showing, request)) { selected.Clear(); page = 0; }
             showing = request;
@@ -463,10 +461,9 @@ namespace ShopAssist
             { Selected = selected.Contains(pair.it), Reason = pair.l.Name }),
                 new ItemGrid.Options { Cards = true, Columns = 4, CardWidth = 135, CardHeight = 95,
                     OnClick = entry => { if (!selected.Add(entry.Item)) selected.Remove(entry.Item); entry.Selected = selected.Contains(entry.Item); } });
-            b.End().BeginRow()
-                .AddButton("‹", () => { if (page > 0) { page--; Draw(request); } })
-                .AddButton("›", () => { if ((page + 1) * 20 < candidates.Count) { page++; Draw(request); } })
-                .AddButton(ShopSettings.Text("f27.prepare"), () => Prepare(request), "prepare")
+            b.End();
+            UiLayout.Pager(b, page, candidates.Count, 20, next => { page = next; Draw(request); });
+            b.BeginRow().AddButton(ShopSettings.Text("f27.prepare"), () => Prepare(request), "prepare")
                 .AddButton(ShopSettings.Text("f27.migrate"), () => PreviewMigration(request), "migrate")
                 .AddButton(ShopSettings.Text("f27.release"), () =>
                 {
@@ -575,9 +572,8 @@ namespace ShopAssist
                 if (item == null || item.parentInventory == target.Inventory || item.modifiedShape == null) continue;
                 moves.Add(new ReservedMove { Item = item, Source = from, Shape = item.modifiedShape.Clone(), Count = item.unitCount });
             }
-            var b = CustomUIManager.Window(WindowId, ShopSettings.Text("f27.migrate"), CustomUIManager.LAYER_META)
-                .SetSize(600, 470).SetDraggable(true).SetCloseOnEscape(true);
-            window = b.GetWindow(); b.OnClose(() => window = null);
+            var b = UiLayout.Rebuild(ref window, WindowId, ShopSettings.Text("f27.migrate"), 600, 470);
+            b.OnClose(() => window = null);
             b.AddLabel(target.Name);
             if (b.Last.text != null) b.Last.text.richText = false;
             b.BeginScrollFlexible(120);

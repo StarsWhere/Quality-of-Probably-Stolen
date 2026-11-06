@@ -90,8 +90,7 @@ namespace ShopAssist
 
         private CustomUIBuilder Window()
         {
-            var b = CustomUIManager.Window(Id, ShopSettings.Text("f29.open"), CustomUIManager.LAYER_META)
-                .SetSize(590, 420).SetDraggable(true).SetCloseOnEscape(true);
+            var b = UiLayout.Rebuild(ref window, Id, ShopSettings.Text("f29.open"), 590, 420);
             window = b.GetWindow(); b.OnClose(() => window = null);
             return b;
         }

@@ -1,5 +1,9 @@
 f03.enabled,Highlight goods the customer wants
-f03.tip,After the customer states a request, highlight owned goods in open areas when known information confirms a match. Highlights follow the current customer and request.
+f03.tip,Highlight goods matching the current customer. Green means ordinary goods, amber means stolen goods and red means contraband.
+f03.ignore_merchant,Do not highlight customers who buy everything
+f03.ignore_merchant.tip,Do not outline every sellable item for a customer who buys everything.
+f03.client_goods,Mark risks in customer goods
+f03.client_goods.tip,Outline stolen customer goods in amber and contraband in red.
 f04.enabled,Highlight known risks during inspections
 f04.tip,When an inspector arrives, highlight known stolen goods, contraband and containers where they were previously seen. Choose risk categories or enable extra detection of undisclosed risks.
 f04.stolen,Mark stolen goods during inspections
@@ -7,17 +11,20 @@ f04.stolen.tip,With inspection highlighting enabled, mark known stolen goods and
 f04.contraband,Mark contraband during inspections
 f04.contraband.tip,With inspection highlighting enabled, mark known contraband and containers where it was seen. Extra detection also includes undisclosed risks.
 f11.enabled,List goods matching the customer request
-f11.tip,After the customer states a request, open the customer goods list from negotiation to see known matches, sources and reservations. Locate a source or drag movable goods to the trade counter.
+f11.tip,Open the customer goods list from negotiation to see matching goods, sources, status and last quotes. Locate a source or drag movable goods to the trade counter.
 f11.key,Open customer goods list
-f11.key.tip,Open or close the customer goods list after the customer states a request.
+f11.key.tip,Open or close the goods list when a customer has a request.
 f11.open,Customer goods list
 f11.count,{0} item instances
-f11.empty,No matches can be confirmed from public information.
+f11.empty,No goods match the current customer.
+f11.quoted,Last quote {0}
+f11.unquoted,Not quoted
 f11.in_use,In machine
 f11.reserved,Reserved
 f11.unavailable,Unavailable
 f11.available,{0} available
 f11.locate,Locate
+f11.return,Return to customer goods
 f11.more,Show more
 f11.changed,The item or its location changed. Check the list again.
 f11.open_first,Open the item's area first.

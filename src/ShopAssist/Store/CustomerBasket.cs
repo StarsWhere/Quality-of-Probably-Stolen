@@ -22,6 +22,8 @@ namespace ShopAssist
         private readonly Queue<Offer> pending = new Queue<Offer>();
         private readonly HashSet<GameItem> plannedItems = new HashSet<GameItem>(), staged = new HashSet<GameItem>();
         private StoreClientInstance customer;
+        private string run;
+        private int saveSlot;
         private bool reading;
         private int? shownBudget;
         private int revision, expectedBudget, waitingAfter, page;
@@ -35,29 +37,42 @@ namespace ShopAssist
             this.settings = settings; this.clues = clues; this.inventory = inventory;
             enabled = settings.Toggle("f34.enabled", "f34.tip");
             allowMove = settings.Toggle("f34.move", "f34.move.tip");
-            settings.Action("f34.open", Draw, () => enabled.Value && clues.HasPublicDemand);
+            settings.Action("f34.open", Draw, () => enabled.Value && clues.HasBuyingDemand);
         }
         internal void Start()
         {
-            active = this; inventory.ExtraActions += AddAction; ModHook.OnGameLoadedInit += Reset;
+            active = this; inventory.ExtraActions += AddAction; inventory.QuoteLabel += QuoteLabel; ModHook.OnGameLoadedInit += Reset;
             ModHook.OnLeavingStoreEarly += Reset; settings.Changed += Changed;
         }
         private void AddAction(CustomUIBuilder builder)
         {
-            if (enabled.Value && clues.HasPublicDemand) builder.AddButton(ShopSettings.Text("f34.open"), Draw, "basket");
+            if (enabled.Value && clues.HasBuyingDemand) builder.AddButton(ShopSettings.Text("f34.open"), Draw, "basket");
         }
         private void Changed() { if (!enabled.Value) Reset(); else if (!allowMove.Value) StopPlace(); }
         private void StopPlace() { pending.Clear(); staged.Clear(); plannedItems.Clear(); waiting = null; }
         private void Reset()
         {
             if (window != null && window.IsAlive) window.Close();
-            window = null; StopPlace(); customer = null; quotes.Clear(); excluded.Clear(); typed = ""; shownBudget = null; reading = false; page = 0;
+            window = null; StopPlace(); customer = null; run = null; quotes.Clear(); excluded.Clear(); typed = ""; shownBudget = null;
+            reading = false; page = revision = 0;
+            inventory.QuotesChanged();
         }
-        private bool Context()
+        private bool CaptureContext()
         {
-            if (!enabled.Value || !ShopInventory.InStore || clues.Customer == null) return false;
-            if (customer != clues.Customer) { Reset(); customer = clues.Customer; }
+            if (!ShopInventory.InStore || !clues.HasBuyingDemand || clues.Customer == null) return false;
+            if (customer != clues.Customer || run != PlayerStore.Instance.runID || saveSlot != PlayerStore.Instance.saveSlotId)
+            {
+                Reset(); customer = clues.Customer; run = PlayerStore.Instance.runID; saveSlot = PlayerStore.Instance.saveSlotId;
+            }
             return true;
+        }
+        private bool Context() => enabled.Value && CaptureContext();
+        private string QuoteLabel(GameItem item)
+        {
+            if (!clues.HasBuyingDemand || customer != clues.Customer || run != PlayerStore.Instance.runID || saveSlot != PlayerStore.Instance.saveSlotId ||
+                item == null || !quotes.TryGetValue(item, out var quote) || quote.Count != item.unitCount ||
+                !clues.Matches(item)) return null;
+            return ShopSettings.Format("f11.quoted", quote.Price);
         }
         [HarmonyPatch(typeof(NegociationUIManager), "BuildBuying")]
         private static class Buying
@@ -65,7 +80,7 @@ namespace ShopAssist
             private static void Prefix(NegociationUIManager __instance, StoreClient storeClient)
             {
                 var a = active;
-                if (a == null || !a.Context() || a.customer.GetClientBlueprint() != storeClient || __instance.uiObject?.activeInHierarchy != true) return;
+                if (a == null || !a.CaptureContext() || a.customer.GetClientBlueprint() != storeClient || __instance.uiObject?.activeInHierarchy != true) return;
                 a.reading = true; a.revision++;
             }
             private static void Postfix(StoreClient storeClient)
@@ -84,12 +99,14 @@ namespace ShopAssist
             {
                 var a = active;
                 if (a == null || !a.reading || item == null) return;
-                if (!string.IsNullOrEmpty(refusal)) { a.quotes.Remove(item); return; }
+                if (!string.IsNullOrEmpty(refusal)) { if (a.quotes.Remove(item)) a.inventory.QuotesChanged(); return; }
                 string icon = GeneralHelper.CreditIcon();
                 if (string.IsNullOrEmpty(icon) || right == null || !right.EndsWith(icon, StringComparison.Ordinal) ||
                     !int.TryParse(right.Substring(0, right.Length - icon.Length), NumberStyles.Integer, CultureInfo.CurrentCulture, out int n) || n <= 0)
-                { a.quotes.Remove(item); return; }
+                { if (a.quotes.Remove(item)) a.inventory.QuotesChanged(); return; }
+                bool changed = !a.quotes.TryGetValue(item, out var old) || old.Price != n || old.Count != item.unitCount;
                 a.quotes[item] = new Quote { Price = n, Count = item.unitCount, Revision = a.revision };
+                if (changed) a.inventory.QuotesChanged();
             }
         }
         private bool Budget(out int limit)
@@ -101,8 +118,7 @@ namespace ShopAssist
         }
         private bool Eligible(GameItem item) => EligibleStock(item) && !RequestBook.Reserved(item);
         private bool EligibleStock(GameItem item) => ShopInventory.Movable(item) &&
-            !item.IsTag("IMPORTANT_TAG") && !item.IsTag("STOLEN_TAG") && !item.IsTag("CONTRABAND_ITEM_TAG") &&
-            clues.Match(item) == PublicMatch.Match;
+            !item.IsTag("IMPORTANT_TAG") && clues.Matches(item);
         private List<GameItem> Stock()
         {
             var locations = ShopInventory.OwnedLocations(false);
@@ -112,13 +128,12 @@ namespace ShopAssist
         }
         private CustomUIBuilder Window()
         {
-            var b = CustomUIManager.Window(ModEntry.Id + ".basket", ShopSettings.Text("f34.open"), CustomUIManager.LAYER_META)
-                .SetSize(600, 435).SetCloseOnEscape(true).SetDraggable(true);
-            window = b.GetWindow(); b.OnClose(() => { window = null; StopPlace(); }); return b;
+            var b = UiLayout.Rebuild(ref window, ModEntry.Id + ".basket", ShopSettings.Text("f34.open"), 600, 435);
+            b.OnClose(() => { window = null; StopPlace(); }); return b;
         }
         private void Draw()
         {
-            if (!Context() || !clues.HasPublicDemand) return;
+            if (!Context() || !clues.HasBuyingDemand) return;
             var stock = Stock();
             var b = Window();
             b.AddLabel(shownBudget.HasValue ? ShopSettings.Format("f34.budget", shownBudget) : ShopSettings.Text("f34.unshown"))
@@ -131,9 +146,9 @@ namespace ShopAssist
                 Badge = quotes.TryGetValue(item, out var price) && price.Count == item.unitCount ? price.Price.ToString() : ShopSettings.Text("f34.unpriced")
             }), new ItemGrid.Options { Cards = true, Columns = 4, CardWidth = 130, CardHeight = 100,
                 OnClick = entry => { if (!excluded.Add(entry.Item)) excluded.Remove(entry.Item); entry.Selected = !excluded.Contains(entry.Item); } });
-            b.End().BeginRow().AddButton("‹", () => { if (page > 0) { page--; Draw(); } })
-                .AddButton("›", () => { if ((page + 1) * 24 < stock.Count) { page++; Draw(); } })
-                .AddButton(ShopSettings.Text("f34.compare"), Compare, "compare").End().Show();
+            b.End();
+            UiLayout.Pager(b, page, stock.Count, 24, next => { page = next; Draw(); });
+            b.AddButton(ShopSettings.Text("f34.compare"), Compare, "compare").Show();
         }
         private void Compare()
         {
@@ -197,7 +212,8 @@ namespace ShopAssist
         }
         internal void Tick()
         {
-            if (customer != null && (!ShopInventory.InStore || customer != clues.Customer)) { Reset(); return; }
+            if (customer != null && (!ShopInventory.InStore || !clues.HasBuyingDemand || customer != clues.Customer ||
+                run != PlayerStore.Instance.runID || saveSlot != PlayerStore.Instance.saveSlotId)) { Reset(); return; }
             if (waiting == null && pending.Count == 0) return;
             var nego = NegociationUIManager.Instance;
             var desk = EmporiumEntry.Instance.backInvinvElement;
@@ -236,7 +252,7 @@ namespace ShopAssist
         public void Dispose()
         {
             if (active == this) active = null;
-            inventory.ExtraActions -= AddAction; ModHook.OnGameLoadedInit -= Reset; ModHook.OnLeavingStoreEarly -= Reset; settings.Changed -= Changed; Reset();
+            inventory.ExtraActions -= AddAction; inventory.QuoteLabel -= QuoteLabel; ModHook.OnGameLoadedInit -= Reset; ModHook.OnLeavingStoreEarly -= Reset; settings.Changed -= Changed; Reset();
         }
     }
 }
