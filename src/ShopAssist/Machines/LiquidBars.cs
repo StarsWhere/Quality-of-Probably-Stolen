@@ -5,361 +5,884 @@ using HarmonyLib;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
+using Object = UnityEngine.Object;
 
 namespace ShopAssist
 {
-    // The native scanner owns detection and its original text. This view is
-    // built only after the rendered result matches the current sample.
+    // The original scanner remains the authority for measurement and actions.
     internal sealed class LiquidBars : IDisposable
     {
+        private sealed class RowView
+        {
+            internal RectTransform Rect, Track, Fill, Mark, PinRect;
+            internal TextMeshProUGUI Name, Volume, Percent;
+            internal LiquidPinIcon Pin;
+        }
+
         private sealed class View
         {
             internal GameObject Panel, Root;
             internal GameItem Sample;
-            internal TextMeshProUGUI NativeText;
-            internal TextState Tested, Label, TotalText;
-            internal bool Chemical;
-            internal string Raw, Selected, MethodSignature;
-            internal bool NativeEnabled;
-            internal int Total;
-            internal float Width, Height, PanelWidth, PanelHeight, Scroll = 1;
-            internal readonly List<LiquidComposition.Row> Rows = new List<LiquidComposition.Row>();
-            internal readonly List<string> Order = new List<string>();
+            internal TextMeshProUGUI NativeText, Title, Total, TestedCopy, LabelCopy, TestedHeading, LabelHeading;
+            internal TextMeshProUGUI NameHeading, VolumeHeading;
+            internal TextState Tested, Label, TotalText, Product;
+            internal Button Match, Confront, Sort, Gear;
+            internal TextMeshProUGUI SortText;
+            internal RectTransform Content, Viewport, Summary, LayoutRoot, Header, ListHeader, SortRect, HeaderRule, SummaryRule;
+            internal RectTransform ScreenCenter, ScreenLeft, ScreenRight;
             internal ScrollRect Scroller;
+            internal Scrollbar Scrollbar;
+            internal bool Chemical, NativeEnabled, Hovered, MatchActive, ConfrontActive, ModeReady, Stacked, HasEffects, Pending;
+            internal string Raw, Selected, MethodSignature, ExpandedMethod, TestedRaw, LabelRaw, PendingDetail;
+            internal string Locale;
+            internal TMP_FontAsset Font;
+            internal int TotalAmount;
+            internal float PanelWidth, PanelHeight, RowHeight, ModeWidth, ModeFont;
+            internal readonly List<LiquidComposition.Row> NativeRows = new List<LiquidComposition.Row>();
+            internal readonly List<LiquidComposition.Row> Rows = new List<LiquidComposition.Row>();
+            internal readonly Dictionary<string, Liquid> Seen = new Dictionary<string, Liquid>(StringComparer.Ordinal);
+            internal readonly Dictionary<string, RowView> RowViews = new Dictionary<string, RowView>(StringComparer.Ordinal);
+            internal readonly LiquidDisplayRules Ordering = new LiquidDisplayRules();
+            internal CustomUIWindow Detail, DisplaySettings;
+            internal RectTransform DetailBody;
+            internal CustomUIElement DetailSummary;
         }
+
         private sealed class TextState
         {
-            internal TextMeshProUGUI Text;
-            internal Vector2 AnchorMin, AnchorMax, Pivot, Position, Size, AppliedPosition, AppliedSize;
-            internal float Font, FontMin, FontMax, AppliedFont, AppliedMin, AppliedMax;
-            internal bool Auto, Enabled, AppliedEnabled, Applied;
+            internal readonly TextMeshProUGUI Text;
+            private readonly bool enabled;
+            private bool applied;
 
             internal TextState(TextMeshProUGUI text)
             {
                 Text = text;
-                if (text == null) return;
-                var rect = text.rectTransform;
-                AnchorMin = rect.anchorMin; AnchorMax = rect.anchorMax; Pivot = rect.pivot;
-                Position = rect.anchoredPosition; Size = rect.sizeDelta;
-                Font = text.fontSize; FontMin = text.fontSizeMin; FontMax = text.fontSizeMax;
-                Auto = text.enableAutoSizing; Enabled = text.enabled;
+                if (text != null) enabled = text.enabled;
             }
-            internal void Place(Vector2 position, Vector2 size, float font, bool show = true)
+
+            internal void Hide()
             {
                 if (Text == null) return;
-                Applied = true;
-                var rect = Text.rectTransform;
-                rect.anchorMin = rect.anchorMax = rect.pivot = new Vector2(.5f, .5f);
-                rect.anchoredPosition = AppliedPosition = position;
-                rect.sizeDelta = AppliedSize = size;
-                Text.enableAutoSizing = true;
-                Text.fontSizeMin = AppliedMin = 8;
-                Text.fontSizeMax = AppliedMax = font;
-                Text.fontSize = AppliedFont = font;
-                Text.enabled = AppliedEnabled = show;
+                applied = true; Text.enabled = false;
             }
-            internal bool Owned()
-            {
-                if (Text == null || !Applied) return true;
-                var rect = Text.rectTransform;
-                return rect.anchorMin == new Vector2(.5f, .5f) && rect.anchorMax == new Vector2(.5f, .5f) &&
-                    rect.pivot == new Vector2(.5f, .5f) && rect.anchoredPosition == AppliedPosition && rect.sizeDelta == AppliedSize &&
-                    Text.enableAutoSizing && Mathf.Approximately(Text.fontSizeMin, AppliedMin) &&
-                    Mathf.Approximately(Text.fontSizeMax, AppliedMax) && Text.enabled == AppliedEnabled;
-            }
+
+            internal bool Owned() => Text == null || !applied || !Text.enabled;
+
             internal void Restore()
             {
-                if (Text == null || !Applied) return;
-                var rect = Text.rectTransform;
-                bool fontOwned = Text.enableAutoSizing && Mathf.Approximately(Text.fontSizeMin, AppliedMin) &&
-                    Mathf.Approximately(Text.fontSizeMax, AppliedMax);
-                // Restore only values still owned by this layout.
-                if (rect.anchorMin == new Vector2(.5f, .5f)) rect.anchorMin = AnchorMin;
-                if (rect.anchorMax == new Vector2(.5f, .5f)) rect.anchorMax = AnchorMax;
-                if (rect.pivot == new Vector2(.5f, .5f)) rect.pivot = Pivot;
-                if (rect.anchoredPosition == AppliedPosition) rect.anchoredPosition = Position;
-                if (rect.sizeDelta == AppliedSize) rect.sizeDelta = Size;
-                if (Text.enableAutoSizing) Text.enableAutoSizing = Auto;
-                if (Mathf.Approximately(Text.fontSizeMin, AppliedMin)) Text.fontSizeMin = FontMin;
-                if (Mathf.Approximately(Text.fontSizeMax, AppliedMax)) Text.fontSizeMax = FontMax;
-                if (fontOwned) Text.fontSize = Font;
-                if (Text.enabled == AppliedEnabled) Text.enabled = Enabled;
+                if (Text == null || !applied) return;
+                if (!Text.enabled) Text.enabled = enabled;
             }
         }
+
         private static LiquidBars active;
-        private readonly ConfigEntry<bool> enabled;
+        private readonly ConfigEntry<bool> enabled, showBars, showColors, sortByShare;
         private readonly ConfigEntry<int> fontSize;
-        private readonly ConfigEntry<string> pinned;
+        private readonly ConfigEntry<string> pinSetting;
+        private readonly ModConfig config;
         private readonly Action<string> log;
+        private readonly LiquidDisplayNames displayNames;
         private readonly View water = new View(), chem = new View();
+        private readonly List<string> pins = new List<string>();
         private CustomUIWindow picker;
-        private bool started;
-        private static readonly Color PanelColor = new Color(.055f, .095f, .105f, .96f);
-        private static readonly Color RowColor = new Color(.11f, .17f, .17f, .94f);
-        private static readonly Color Accent = new Color(.34f, .78f, .69f, 1f);
-        private static readonly Color TextColor = new Color(.94f, .96f, .89f, 1f);
+        private string lastPinValue, conflictingPeer;
+        private bool started, pinDataValid;
 
         internal LiquidBars(ShopSettings settings, Action<string> log)
         {
             this.log = log;
+            displayNames = new LiquidDisplayNames(log);
             enabled = settings.Toggle("f19.enabled", "f19.tip");
             fontSize = settings.Integer("f19.size", "f19.size.tip", 14, 8, 28);
-            pinned = ModHelper.GetConfig(ModEntry.Id).Define("f19.pinned", "", enabled.Section,
+            showBars = settings.Toggle("f19.bars", "f19.bars.tip", true);
+            showColors = settings.Toggle("f19.colors", "f19.colors.tip");
+            sortByShare = settings.Toggle("f19.sort", "f19.sort.tip", true);
+            config = ModHelper.GetConfig(ModEntry.Id);
+            pinSetting = config.Define("f19.pinned", "", enabled.Section,
                 () => ShopSettings.Text("f19.pinned"), tooltip: () => ShopSettings.Text("f19.pinned.tip"));
             settings.Action("f19.choose", OpenPicker, CanChoose);
         }
+
         internal void Start()
         {
             if (started) return;
             if (active != null && !ReferenceEquals(active, this)) throw new InvalidOperationException("Liquid scanner layout already active.");
             active = this; started = true;
+            LoadPins();
         }
+
+        private void LoadPins()
+        {
+            pins.Clear(); lastPinValue = pinSetting.Value ?? "";
+            pinDataValid = LiquidPins.TryReadOrMigrate(lastPinValue, out List<string> loaded, out bool migrated);
+            if (pinDataValid) pins.AddRange(loaded);
+            else log("F19 retained invalid pinned-component preferences; pin changes are disabled.");
+            if (pinDataValid && migrated) SavePins();
+        }
+
+        private bool SavePins()
+        {
+            try
+            {
+                string encoded = LiquidPins.Write(pins);
+                if (!LiquidPins.TryRead(encoded, out _)) throw new InvalidOperationException("Invalid liquid pin preferences.");
+                string original = pinSetting.Value ?? "";
+                try
+                {
+                    pinSetting.Set(encoded);
+                    config.Save();
+                    if (pinSetting.Value != encoded) throw new InvalidOperationException("Pin preferences were not retained.");
+                    lastPinValue = encoded;
+                }
+                catch
+                {
+                    try { pinSetting.Set(original); config.Save(); lastPinValue = original; }
+                    catch (Exception rollback) { log("F19 could not restore the previous pin setting: " + rollback); }
+                    throw;
+                }
+                return true;
+            }
+            catch (Exception error)
+            {
+                log("F19 could not save pinned components: " + error);
+                ShopNotice.Show(ShopSettings.Text("f19.pin_failed"));
+                return false;
+            }
+        }
+
+        private bool CommitPins(List<string> next)
+        {
+            var before = pins.ToArray();
+            pins.Clear(); pins.AddRange(next);
+            if (SavePins()) return true;
+            pins.Clear(); pins.AddRange(before);
+            return false;
+        }
+
+        private string ResolvePin(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return null;
+            string text = value.Trim();
+            Liquid exact = Liquid.Liquids?.FirstOrDefault(liquid => liquid != null && string.Equals(liquid.identifier, text, StringComparison.Ordinal));
+            if (exact != null) return exact.identifier;
+            var matches = Liquid.Liquids?.Where(liquid => liquid != null && (string.Equals(liquid.displayName, text, StringComparison.Ordinal) ||
+                string.Equals(displayNames.Get(liquid), text, StringComparison.Ordinal))).Take(2).ToArray();
+            return matches?.Length == 1 ? matches[0].identifier : text;
+        }
+
+        private void ResolvePins()
+        {
+            if (!pinDataValid) return;
+            var resolved = pins.Select(ResolvePin).Where(id => !string.IsNullOrEmpty(id)).Distinct(StringComparer.Ordinal).ToList();
+            if (resolved.SequenceEqual(pins)) return;
+            CommitPins(resolved);
+        }
+
+        private string ActiveScannerPeer()
+        {
+            foreach (LoadedMod mod in ModLoader.Mods)
+            {
+                if (mod == null || !mod.IsEnabled || mod.Instance == null || !string.IsNullOrEmpty(mod.LoadError)) continue;
+                string name = string.Join(" ", (mod.Manifest?.Name ?? "").Normalize().Split((char[])null, StringSplitOptions.RemoveEmptyEntries));
+                if (string.Equals(name, "Better Liquid Scanner", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(name, "更好的液体扫描仪", StringComparison.OrdinalIgnoreCase)) return mod.Manifest?.ID ?? name;
+            }
+            return null;
+        }
+
+        private bool PeerOwnsScanner()
+        {
+            string peer = ActiveScannerPeer();
+            if (peer != conflictingPeer)
+            {
+                conflictingPeer = peer;
+                if (peer != null) log("F19 yielded scanner presentation to active mod " + peer + ".");
+            }
+            return peer != null;
+        }
+
         internal void Tick()
         {
             if (!started) return;
             if (!enabled.Value) { Reset(); return; }
+            if (PeerOwnsScanner()) { Clear(water); Clear(chem); if (pinDataValid) ClosePicker(); return; }
             CheckSafely(water); CheckSafely(chem);
             if (picker != null && (!picker.IsAlive || !CanChoose())) ClosePicker();
         }
+
         private void CheckSafely(View view)
         {
             try { Check(view); }
             catch (Exception error) { Clear(view); log("F19 could not update scanner layout: " + error); }
         }
+
         private void Check(View view)
         {
-            if (view.Root == null) return;
-            // A later writer owns its new text. Do not draw stale results over it.
-            if (!StillOpen(view) || view.NativeText.text != view.Raw || view.NativeText.enabled) { Clear(view); return; }
-            if (view.Tested?.Owned() == false || view.Label?.Owned() == false || view.TotalText?.Owned() == false)
+            if (view.Panel == null) return;
+            if (!StillOpen(view)) { Clear(view); return; }
+            if (!displayNames.Ready()) { view.Pending = true; return; }
+            if (view.Root == null)
+            {
+                if (!view.NativeText.enabled || view.NativeText.text != view.Raw) { Clear(view); return; }
+                ResolvePins();
+                if (!Create(view)) { Clear(view); return; }
+                view.Pending = false; UpdateRows(view); UpdateDetail(view);
+                return;
+            }
+            if (view.NativeText.text != view.Raw || view.NativeText.enabled ||
+                view.Tested?.Owned() == false || view.Label?.Owned() == false || view.TotalText?.Owned() == false || view.Product?.Owned() == false)
             { Clear(view); return; }
-            Rect rect = ((RectTransform)view.Panel.transform).rect;
-            if (Mathf.Abs(view.PanelWidth - rect.width) > .5f || Mathf.Abs(view.PanelHeight - rect.height) > .5f)
-                Render(view);
+            Rect bounds = ((RectTransform)view.Panel.transform).rect;
+            if (Mathf.Abs(view.PanelWidth - bounds.width) > .5f || Mathf.Abs(view.PanelHeight - bounds.height) > .5f ||
+                view.HasEffects != HasChemicalEffects(view))
+            {
+                if (!Layout(view)) { Clear(view); return; }
+                UpdateRows(view);
+            }
+            bool hovered = PointerOver(view.Root);
+            if (view.Hovered && !hovered) { view.Hovered = false; UpdateRows(view); }
+            else view.Hovered = hovered;
+            if (view.Pending || view.TestedRaw != (view.Tested?.Text?.text ?? "") || view.LabelRaw != (view.Label?.Text?.text ?? "") ||
+                (view.Title?.text ?? "") != SampleTitle(view) || view.Locale != (LocHelper.GetCurrentLocaleCode() ?? "") ||
+                view.Font != view.NativeText.font)
+            { view.Pending = false; UpdateRows(view); UpdateDetail(view); }
+            string pendingDetail = view.PendingDetail;
+            if (pendingDetail != null) { view.PendingDetail = null; OpenDetail(view, pendingDetail); }
+            if (view.Detail != null && !view.Detail.IsAlive) { view.Detail = null; view.Selected = null; view.DetailBody = null; }
+            else if (view.Detail?.IsAlive == true && !UIDragHandler.isDraggingAnyUI)
+                PositionWindow(view, view.Detail, view.Detail.Rect.rect.size);
+            if (view.DisplaySettings?.IsAlive == true && !UIDragHandler.isDraggingAnyUI)
+                PositionWindow(view, view.DisplaySettings, view.DisplaySettings.Rect.rect.size);
         }
+
         internal void SettingsChanged()
         {
             if (!started) return;
+            if ((pinSetting.Value ?? "") != lastPinValue) LoadPins();
+            ResolvePins();
             if (!enabled.Value) { Reset(); return; }
+            if (PeerOwnsScanner()) { Clear(water); Clear(chem); if (pinDataValid) ClosePicker(); return; }
             ReapplySafely(water); ReapplySafely(chem);
         }
-        private static bool StillOpen(View view) => view.Panel != null && view.Panel.activeInHierarchy && view.Sample != null && view.NativeText != null;
-        private bool CanChoose() => enabled.Value && (StillOpen(chem) && chem.Rows.Count > 0 || StillOpen(water) && water.Rows.Count > 0);
+
+        private void ReapplySafely(View view)
+        {
+            try { Reapply(view); }
+            catch (Exception error) { Clear(view); log("F19 could not update scanner settings: " + error); }
+        }
+
+        private void Reapply(View view)
+        {
+            if (view.Root == null || !StillOpen(view) || view.NativeText.text != view.Raw) return;
+            if (!displayNames.Ready()) { view.Pending = true; return; }
+            if (!Layout(view)) { Clear(view); return; }
+            UpdateRows(view);
+            UpdateDetail(view);
+        }
+
+        private static bool StillOpen(View view)
+        {
+            if (view.Panel == null || !view.Panel.activeInHierarchy || view.Sample == null || view.NativeText == null) return false;
+            return view.Chemical ? ReferenceEquals(ChemScannerUIManager.Instance?.currentScannedItem, view.Sample) :
+                ReferenceEquals(WaterScannerUIManager.Instance?.currentWaterContainer, view.Sample);
+        }
+
+        private bool CanChoose() => enabled.Value && (!pinDataValid || !PeerOwnsScanner() &&
+            (StillOpen(chem) && chem.Rows.Count > 0 || StillOpen(water) && water.Rows.Count > 0));
+
         private void OpenPicker()
         {
             if (!CanChoose() || CustomUIManager.Instance == null) return;
             bool chooseChem = StillOpen(chem) && chem.Rows.Count > 0 &&
                 (!StillOpen(water) || water.Rows.Count == 0 || PaperPanelFocusStamp.GetStamp(chem.Panel) >= PaperPanelFocusStamp.GetStamp(water.Panel));
             View source = chooseChem ? chem : water;
-            picker?.Close();
+            ClosePicker();
+            Vector2 size = UiLayout.Fit(360, 340);
             var builder = CustomUIManager.Window(ModEntry.Id + ".f19.pin", ShopSettings.Text("f19.choose"), CustomUIManager.LAYER_META)
-                .SetSize(360, 340).SetDraggable(true).SetCloseOnEscape(true);
+                .SetSize(size.x, size.y).SetDraggable(true).SetCloseOnEscape(true);
             picker = builder.GetWindow(); CustomUIWindow own = picker;
             builder.OnClose(() => { if (ReferenceEquals(picker, own)) picker = null; });
             builder.BeginScrollFlexible();
-            builder.AddButton(ShopSettings.Text("f19.none"), () => SetPin(""));
-            foreach (LiquidComposition.Row row in source.Rows)
+            if (!pinDataValid) builder.AddWarning(ShopSettings.Text("f19.pin_invalid"));
+            builder.AddButton(ShopSettings.Text(pinDataValid ? "f19.none" : "f19.pin_reset"), () => { ClearPins(); OpenPicker(); });
+            foreach (LiquidComposition.Row row in pinDataValid ? source.Rows.ToArray() : Array.Empty<LiquidComposition.Row>())
             {
                 string id = row.Liquid.identifier;
-                builder.AddButton(row.Liquid.displayName, () => SetPin(id));
-                if (builder.Last.text != null) builder.Last.text.richText = false;
+                string caption = ShopSettings.Format(pins.Contains(id) ? "f19.picker_pinned" : "f19.picker_pin", displayNames.Get(row.Liquid));
+                builder.AddButton(caption, () => { TogglePin(id); OpenPicker(); });
+                if (builder.Last.text != null) { builder.Last.text.richText = false; SetReadableFont(builder.Last.text, source, builder.Last.text.fontSize, caption); }
             }
             builder.End().Show();
         }
-        private void SetPin(string id)
+
+        private void ClearPins()
         {
-            pinned.Set(id); ClosePicker(); ReapplySafely(water); ReapplySafely(chem);
+            if (CommitPins(new List<string>())) { pinDataValid = true; ReapplySafely(water); ReapplySafely(chem); }
         }
-        private void ClosePicker() { picker?.Close(); picker = null; }
-        private void Capture(View view, GameObject panel, GameItem sample, TextMeshProUGUI text,
-            TextMeshProUGUI tested, TextMeshProUGUI label, TextMeshProUGUI totalText, bool chemical)
+
+        private void TogglePin(string id)
         {
-            if (!started || !enabled.Value || panel == null || !panel.activeInHierarchy || sample == null || text == null)
+            if (!pinDataValid || string.IsNullOrWhiteSpace(id) || id.Length > 128)
+            { ShopNotice.Show(ShopSettings.Text("f19.pin_invalid")); return; }
+            var changed = pins.ToList();
+            if (!changed.Remove(id))
+            {
+                if (changed.Count >= 128) { ShopNotice.Show(ShopSettings.Text("f19.pin_limit")); return; }
+                changed.Add(id);
+            }
+            if (CommitPins(changed)) { ReapplySafely(water); ReapplySafely(chem); }
+        }
+
+        private void ToggleSort()
+        {
+            bool before = sortByShare.Value;
+            try { sortByShare.Set(!before); config.Save(); }
+            catch (Exception error)
+            {
+                try { sortByShare.Set(before); config.Save(); }
+                catch (Exception rollback) { log("F19 could not restore the previous sort setting: " + rollback); }
+                log("F19 could not save scan sorting: " + error);
+                ShopNotice.Show(ShopSettings.Text("f19.sort_failed"));
+                return;
+            }
+            ReapplySafely(water); ReapplySafely(chem);
+        }
+
+        private void ClosePicker() { CustomUIWindow previous = picker; picker = null; previous?.Close(); }
+
+        private void Capture(View view, GameObject panel, GameItem sample, TextMeshProUGUI text,
+            TextMeshProUGUI tested, TextMeshProUGUI label, TextMeshProUGUI totalText, TextMeshProUGUI product,
+            Button match, Button confront, bool chemical)
+        {
+            if (!started || !enabled.Value || PeerOwnsScanner() || panel == null || !panel.activeInHierarchy || sample == null || text == null)
             { Clear(view); return; }
             try
             {
                 string raw = text.text ?? "";
-                if (!LiquidComposition.TryRead(sample, raw, out List<LiquidComposition.Row> rows, out int total))
-                { Clear(view); return; }
                 bool same = ReferenceEquals(view.Sample, sample) && view.NativeText == text && view.Panel == panel;
-                bool changed = !same || view.Raw != raw;
+                if (!LiquidComposition.TryRead(sample, raw, out List<LiquidComposition.Row> rows, out int total) ||
+                    !same && (!text.enabled || rows.Count == 0))
+                { Clear(view); return; }
                 if (!same)
                 {
                     Clear(view); view.Panel = panel; view.Sample = sample; view.NativeText = text; view.NativeEnabled = text.enabled;
                     view.Tested = new TextState(tested); view.Label = new TextState(label);
-                    view.TotalText = totalText == null ? null : new TextState(totalText); view.Chemical = chemical;
+                    view.TotalText = totalText == null ? null : new TextState(totalText);
+                    view.Product = product == null ? null : new TextState(product);
+                    view.Match = match; view.Confront = confront; view.Chemical = chemical;
                 }
-                view.Raw = raw; view.Total = total;
-                if (changed || view.Root == null)
-                {
-                    bool hover = PointerOver(view.Root);
-                    if (!hover) view.Order.Clear();
-                    view.Order.RemoveAll(id => !rows.Any(row => row.Liquid.identifier == id));
-                    if (!hover)
-                    {
-                        LiquidComposition.Row pin = rows.Find(row => row.Liquid.identifier == pinned.Value || row.Liquid.displayName == pinned.Value);
-                        if (pin != null) view.Order.Add(pin.Liquid.identifier);
-                    }
-                    foreach (var row in rows) if (!view.Order.Contains(row.Liquid.identifier)) view.Order.Add(row.Liquid.identifier);
-                    view.Rows.Clear();
-                    foreach (string id in view.Order) view.Rows.Add(rows.Find(row => row.Liquid.identifier == id));
-                    if (view.Selected != null && !view.Rows.Any(row => row.Liquid.identifier == view.Selected)) view.Selected = null;
-                    Render(view);
-                }
-                else if (view.Selected != null)
-                {
-                    var selected = view.Rows.Find(row => row.Liquid.identifier == view.Selected);
-                    if (selected != null)
-                    {
-                        List<LiquidKnowledge.Method> methods = LiquidKnowledge.For(selected.Liquid, sample);
-                        if (MethodSignature(methods) != view.MethodSignature) Render(view, methods);
-                    }
-                }
+                view.Raw = raw; view.TotalAmount = total;
+                view.NativeRows.Clear(); view.NativeRows.AddRange(rows);
+                foreach (LiquidComposition.Row row in rows) view.Seen[row.Liquid.identifier] = row.Liquid;
+                if (!displayNames.Ready()) { view.Pending = true; return; }
+                ResolvePins();
+                if (view.Root == null && !Create(view)) { Clear(view); return; }
+                if ((view.Match?.gameObject.activeInHierarchy == true) != view.MatchActive ||
+                    (view.Confront?.gameObject.activeInHierarchy == true) != view.ConfrontActive ||
+                    view.HasEffects != HasChemicalEffects(view))
+                    if (!Layout(view)) { Clear(view); return; }
+                UpdateRows(view);
+                UpdateDetail(view);
             }
             catch (Exception error) { Clear(view); log("F19 could not display scanner output: " + error); }
         }
-        private void Reapply(View view)
+
+        private bool Create(View view)
         {
-            if (!StillOpen(view) || view.Raw == null || view.NativeText.text != view.Raw) return;
-            view.Order.Clear();
-            LiquidComposition.Row pin = view.Rows.Find(row => row.Liquid.identifier == pinned.Value || row.Liquid.displayName == pinned.Value);
-            if (pin != null) view.Order.Add(pin.Liquid.identifier);
-            foreach (var row in view.Rows) if (!view.Order.Contains(row.Liquid.identifier)) view.Order.Add(row.Liquid.identifier);
-            var sorted = view.Order.Select(id => view.Rows.Find(row => row.Liquid.identifier == id)).ToArray();
-            view.Rows.Clear(); view.Rows.AddRange(sorted);
-            Render(view);
-        }
-        private void ReapplySafely(View view)
-        {
-            try { Reapply(view); }
-            catch (Exception error) { Clear(view); log("F19 could not update scanner settings: " + error); }
-        }
-        private static bool PointerOver(GameObject go)
-        {
-            if (go == null || !go.activeInHierarchy || !(go.transform is RectTransform rect)) return false;
-            Canvas canvas = go.GetComponentInParent<Canvas>();
-            Camera camera = canvas != null && canvas.renderMode != RenderMode.ScreenSpaceOverlay ? canvas.worldCamera : null;
-            return RectTransformUtility.RectangleContainsScreenPoint(rect, Input.mousePosition, camera);
+            RectTransform source = view.NativeText.rectTransform;
+            if (!(view.Panel.transform is RectTransform panel) || source.parent != panel) return false;
+            view.Root = new GameObject("ShopAssist_LiquidBars", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            RectTransform root = (RectTransform)view.Root.transform;
+            root.SetParent(panel, false); root.anchorMin = root.anchorMax = root.pivot = new Vector2(.5f, .5f);
+            root.localScale = Vector3.one; root.localRotation = Quaternion.identity; root.SetAsLastSibling();
+            Image rootImage = view.Root.GetComponent<Image>(); rootImage.color = Color.clear; rootImage.raycastTarget = false;
+            Color screen = new Color32(41, 34, 52, 255);
+            view.ScreenCenter = Box(root, "ScreenCenter", screen, 0, 0, 1, 1, 12, 0, -12, 0);
+            view.ScreenLeft = Box(root, "ScreenLeft", screen, 0, 0, 0, 1, 0, 12, 12, -12);
+            view.ScreenRight = Box(root, "ScreenRight", screen, 1, 0, 1, 1, -12, 12, 0, -12);
+            view.LayoutRoot = Box(root, "InteriorContent", Color.clear, 0, 0, 1, 1, 12, 10, -12, -10);
+            view.Header = Box(view.LayoutRoot, "Header", Color.clear, 0, 1, 1, 1, 0, -43, 0, 0);
+            view.Title = Text(view.Header, view, "", TextAlignmentOptions.MidlineLeft, 0, 21, -30, 0);
+            view.Title.gameObject.name = "SampleTitle";
+            view.Title.raycastTarget = true; view.Title.gameObject.AddComponent<CustomUITooltipTrigger>();
+            view.Total = Text(view.Header, view, "", TextAlignmentOptions.MidlineLeft, 0, 1, -30, -21);
+            view.Total.gameObject.name = "Total";
+            view.HeaderRule = Box(view.Header, "HeaderRule", Color.white, 0, 0, 1, 0, 0, 0, 0, 1);
+            RectTransform gear = Box(view.Header, "DisplaySettings", Color.clear, 1, .5f, 1, .5f, -26, -13, 0, 13);
+            Image gearImage = gear.GetComponent<Image>(); gearImage.raycastTarget = true;
+            gearImage.sprite = CustomUIManager.Instance.spriteSetting; gearImage.preserveAspect = true;
+            if (gearImage.sprite != null) gearImage.color = Color.white;
+            view.Gear = gear.gameObject.AddComponent<Button>(); view.Gear.targetGraphic = gearImage;
+            view.Gear.onClick.AddListener(() => OpenDisplaySettings(view));
+            gear.gameObject.AddComponent<CustomUITooltipTrigger>().tooltipText = ShopSettings.Text("f19.display");
+            if (gearImage.sprite == null)
+            {
+                TextMeshProUGUI gearText = Text(gear, view, ShopSettings.Text("f19.display_short"), TextAlignmentOptions.Center, 0, 0, 0, 0);
+                SetFont(gearText, view, 11);
+            }
+            view.Summary = Box(view.LayoutRoot, "NativeSummary", Color.clear, 0, 1, 1, 1, 0, -100, 0, -47);
+            view.TestedHeading = Text(view.Summary, view, "", TextAlignmentOptions.TopLeft, 0, 0, -5, 0, 0, .5f);
+            view.LabelHeading = Text(view.Summary, view, "", TextAlignmentOptions.TopLeft, 5, 0, 0, 0, .5f, 1);
+            view.TestedCopy = Text(view.Summary, view, "", TextAlignmentOptions.TopLeft, 0, 0, -5, -17, 0, .5f);
+            view.TestedCopy.gameObject.name = "Tested";
+            view.LabelCopy = Text(view.Summary, view, "", TextAlignmentOptions.TopLeft, 5, 0, 0, -17, .5f, 1);
+            view.LabelCopy.gameObject.name = "Labeled";
+            view.SummaryRule = Box(view.Summary, "SummaryRule", Color.white, 0, 0, 1, 0, 0, 0, 0, 1);
+            view.ListHeader = Box(view.LayoutRoot, "ListHeader", Color.clear, 0, 1, 1, 1, 0, -122, 0, -104);
+            view.NameHeading = Text(view.ListHeader, view, ShopSettings.Text("f19.component"), TextAlignmentOptions.MidlineLeft, 20, 0, -100, 0);
+            view.VolumeHeading = Text(view.ListHeader, view, ShopSettings.Text("f19.volume"), TextAlignmentOptions.MidlineRight, 0, 0, -50, 0);
+            RectTransform sort = Box(view.ListHeader, "Sort", Color.clear, 1, 0, 1, 1, -60, 0, 0, 0);
+            view.SortRect = sort;
+            sort.GetComponent<Image>().raycastTarget = true;
+            view.Sort = sort.gameObject.AddComponent<Button>();
+            view.Sort.targetGraphic = sort.GetComponent<Image>();
+            view.Sort.onClick.AddListener(ToggleSort);
+            sort.gameObject.AddComponent<CustomUITooltipTrigger>();
+            view.SortText = Text(sort, view, "", TextAlignmentOptions.MidlineRight, 0, 0, 0, 0);
+            RectTransform viewport = Box(view.LayoutRoot, "Viewport", Color.clear, 0, 0, 1, 1, 0, 0, -7, -122);
+            viewport.GetComponent<Image>().raycastTarget = true; viewport.gameObject.AddComponent<RectMask2D>();
+            view.Viewport = viewport;
+            view.Content = Box(viewport, "Content", Color.clear, 0, 1, 1, 1, 0, 0, 0, 0);
+            view.Content.pivot = new Vector2(.5f, 1); view.Content.anchoredPosition = Vector2.zero;
+            view.Scroller = viewport.gameObject.AddComponent<ScrollRect>();
+            view.Scroller.viewport = viewport; view.Scroller.content = view.Content; view.Scroller.horizontal = false;
+            view.Scroller.vertical = true; view.Scroller.movementType = ScrollRect.MovementType.Clamped;
+            view.Scroller.verticalScrollbarVisibility = ScrollRect.ScrollbarVisibility.AutoHide;
+            RectTransform track = Box(view.LayoutRoot, "Scrollbar", new Color(1, 1, 1, .10f), 1, 0, 1, 1, -4, 0, 0, -122);
+            track.GetComponent<Image>().raycastTarget = true;
+            RectTransform handle = Box(track, "Handle", new Color(1, 1, 1, .55f), 0, 0, 1, 1, 0, 0, 0, 0);
+            view.Scrollbar = track.gameObject.AddComponent<Scrollbar>();
+            view.Scrollbar.handleRect = handle; view.Scrollbar.targetGraphic = handle.GetComponent<Image>();
+            view.Scrollbar.direction = Scrollbar.Direction.BottomToTop;
+            view.Scroller.verticalScrollbar = view.Scrollbar;
+            view.NativeText.enabled = false;
+            view.Tested?.Hide(); view.Label?.Hide(); view.TotalText?.Hide(); view.Product?.Hide();
+            return Layout(view);
         }
 
-        private void Render(View view, List<LiquidKnowledge.Method> methods = null)
+        private static bool HasChemicalEffects(View view)
         {
-            if (!StillOpen(view) || view.NativeText.text != view.Raw || view.NativeText.rectTransform.parent == null) return;
-            if (view.Scroller != null) view.Scroll = view.Scroller.verticalNormalizedPosition;
-            if (view.Root != null) { view.Root.SetActive(false); UnityEngine.Object.Destroy(view.Root); }
-            RectTransform source = view.NativeText.rectTransform;
-            view.Root = new GameObject("ShopAssist_LiquidBars", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
-            var root = (RectTransform)view.Root.transform;
-            root.SetParent(source.parent, false);
-            var panel = view.Panel.transform as RectTransform;
-            if (panel == null || source.parent != panel) { Clear(view); return; }
+            if (!view.Chemical || view.Panel == null) return false;
+            Transform group = view.Panel.transform.Find("chemPropertyGroup");
+            if (group == null) return true;
+            for (int i = 0; i < group.childCount; i++)
+                if (group.GetChild(i).gameObject.activeInHierarchy) return true;
+            return false;
+        }
+
+        private static string SampleTitle(View view) => view.Product?.Text != null
+            ? view.Product.Text.text ?? "" : view.Sample?.GetDisplayName(true) ?? "";
+
+        private bool Layout(View view)
+        {
+            if (!StillOpen(view) || view.Root == null) return false;
+            RectTransform panel = (RectTransform)view.Panel.transform;
             Rect bounds = panel.rect; view.PanelWidth = bounds.width; view.PanelHeight = bounds.height;
-            root.anchorMin = root.anchorMax = root.pivot = new Vector2(.5f, .5f);
-            root.anchoredPosition = new Vector2(0, bounds.height * (view.Chemical ? -.049f : -.111f));
-            root.sizeDelta = new Vector2(bounds.width * .70f, bounds.height * (view.Chemical ? .228f : .325f));
-            root.localScale = source.localScale; root.localRotation = source.localRotation;
-            root.SetAsLastSibling();
-            Image bg = view.Root.GetComponent<Image>(); bg.sprite = null; bg.color = PanelColor; bg.raycastTarget = true;
-            view.Width = root.rect.width; view.Height = root.rect.height;
-            view.NativeText.enabled = false;
-            float scale = Mathf.Clamp(fontSize.Value / 14f, .72f, 1.75f);
-            float width = bounds.width * .68f;
-            view.Tested?.Place(new Vector2(0, bounds.height * .171f), new Vector2(width, bounds.height * .113f), Mathf.Min(22, 17 * scale));
-            view.Label?.Place(new Vector2(0, bounds.height * .087f), new Vector2(width, bounds.height * .060f), Mathf.Min(18, 14 * scale));
-            if (view.TotalText != null) view.TotalText.Place(view.TotalText.Position, view.TotalText.Size, view.TotalText.Font, false);
-            float header = Mathf.Max(26f, 27f * scale);
-            RectTransform top = Box(root, "Header", new Color(.09f, .22f, .21f, 1f), 0, 1, 1, 1, 0, -header, 0, 0);
-            if (view.Selected == null)
+            Image nativePanel = view.Panel.GetComponent<Image>();
+            string expectedSprite = view.Chemical ? "chem_scan" : "aqua_scan";
+            if (nativePanel == null || nativePanel.sprite == null || nativePanel.sprite.name != expectedSprite ||
+                bounds.width <= 0 || bounds.height <= 0) return false;
+            view.MatchActive = view.Match?.gameObject.activeInHierarchy == true;
+            view.ConfrontActive = view.Confront?.gameObject.activeInHierarchy == true;
+            view.HasEffects = HasChemicalEffects(view);
+            // The native scanner sprites contain their dividers. Replace their inner screens while
+            // retaining the device frame and any active chemical-effect controls.
+            float sx = bounds.width / 422f, sy = bounds.height / 614f;
+            float left = -144f * sx, right = 144f * sx;
+            float top = (view.Chemical ? 191f : 129f) * sy;
+            float bottom = (view.Chemical ? view.HasEffects ? -95f : -183f : -152f) * sy;
+            foreach (Button button in new[] { view.Match, view.Confront })
             {
-                Text(top, view, ShopSettings.Format("f19.total", WaterScannerUIManager.FormatAmount(view.Total)),
-                    TextAlignmentOptions.MidlineLeft, Mathf.Max(11, 13 * scale), 4, 0, -4, 0);
+                if (button == null || !button.gameObject.activeInHierarchy || !(button.transform is RectTransform control)) continue;
+                Vector3[] corners = new Vector3[4]; control.GetWorldCorners(corners);
+                float controlTop = corners.Max(point => panel.InverseTransformPoint(point).y) - bounds.center.y;
+                float controlBottom = corners.Min(point => panel.InverseTransformPoint(point).y) - bounds.center.y;
+                float controlLeft = corners.Min(point => panel.InverseTransformPoint(point).x) - bounds.center.x;
+                float controlRight = corners.Max(point => panel.InverseTransformPoint(point).x) - bounds.center.x;
+                if (controlLeft < right && controlRight > left &&
+                    controlBottom < top && controlTop > bottom) bottom = Mathf.Max(bottom, controlTop + 4);
             }
-            else
-            {
-                LiquidComposition.Row selected = view.Rows.Find(row => row.Liquid.identifier == view.Selected);
-                if (selected == null) { view.Selected = null; Render(view); return; }
-                Text(top, view, ShopSettings.Format("f19.methods", selected.Liquid.displayName),
-                    TextAlignmentOptions.MidlineLeft, Mathf.Max(10, 12 * scale), 4, 0, -56, 0);
-                MakeButton(top, view, ShopSettings.Text("f19.back"), () => { view.Selected = null; view.Scroll = 1; Render(view); },
-                    1, 0, 1, 1, -54, 2, -2, -2, 10 * scale);
-            }
-            float columns = view.Selected == null ? Mathf.Max(13f, 15f * scale) : 0;
-            if (columns > 0)
-            {
-                RectTransform headings = Box(root, "Columns", PanelColor, 0, 1, 1, 1, 2, -header - columns, -2, -header);
-                Text(headings, view, ShopSettings.Text("f19.component"), TextAlignmentOptions.MidlineLeft, 9 * scale, 4, 0, 0, 0, 0, .38f, fit: true);
-                Text(headings, view, ShopSettings.Text("f19.volume"), TextAlignmentOptions.MidlineRight, 9 * scale, 0, 0, -3, 0, .38f, .63f, fit: true);
-                Text(headings, view, ShopSettings.Text("f19.share"), TextAlignmentOptions.MidlineRight, 9 * scale, 0, 0, -3, 0, .63f, .79f, fit: true);
-            }
-            RectTransform viewport = Box(root, "Viewport", Color.clear, 0, 0, 1, 1, 2, 2, -2, -header - columns - 2);
-            viewport.GetComponent<Image>().raycastTarget = true;
-            viewport.gameObject.AddComponent<RectMask2D>();
-            RectTransform content = Box(viewport, "Content", Color.clear, 0, 1, 1, 1, 0, 0, 0, 0);
-            content.pivot = new Vector2(.5f, 1f); content.anchoredPosition = Vector2.zero;
-            var scroll = viewport.gameObject.AddComponent<ScrollRect>();
-            scroll.viewport = viewport; scroll.content = content; scroll.horizontal = false; scroll.vertical = true;
-            scroll.movementType = ScrollRect.MovementType.Clamped; scroll.scrollSensitivity = Mathf.Max(15, 22 * scale);
-            view.Scroller = scroll;
-            if (view.Selected == null) DrawRows(view, content, scale);
-            else DrawMethods(view, content, scale, methods);
-            Canvas.ForceUpdateCanvases();
-            scroll.verticalNormalizedPosition = Mathf.Clamp01(view.Scroll);
+            RectTransform root = (RectTransform)view.Root.transform;
+            root.anchoredPosition = new Vector2((left + right) * .5f, (top + bottom) * .5f);
+            root.sizeDelta = new Vector2(right - left, top - bottom);
+            float cornerX = 12 * sx, cornerY = 12 * sy;
+            view.ScreenCenter.offsetMin = new Vector2(cornerX, 0); view.ScreenCenter.offsetMax = new Vector2(-cornerX, 0);
+            view.ScreenLeft.offsetMin = new Vector2(0, cornerY); view.ScreenLeft.offsetMax = new Vector2(cornerX, -cornerY);
+            view.ScreenRight.offsetMin = new Vector2(-cornerX, cornerY); view.ScreenRight.offsetMax = new Vector2(0, -cornerY);
+            float padX = 12 * sx, padY = 10 * sy;
+            view.LayoutRoot.offsetMin = new Vector2(padX, padY); view.LayoutRoot.offsetMax = new Vector2(-padX, -padY);
+            view.Locale = LocHelper.GetCurrentLocaleCode() ?? ""; view.Font = view.NativeText.font;
+            view.Title.text = SampleTitle(view);
+            SetReadableFont(view.Title, view, 16, view.Title.text); SetFont(view.Total, view, 13);
+            SetFont(view.NameHeading, view, 11); SetFont(view.VolumeHeading, view, 11); SetFont(view.SortText, view, 11);
+            view.Title.GetComponent<CustomUITooltipTrigger>().tooltipText = view.Title.text;
+            view.Total.text = ShopSettings.Format("f19.total", WaterScannerUIManager.FormatAmount(view.TotalAmount));
+            char arrow = sortByShare.Value ? '↓' : '↕';
+            string indicator = view.SortText.font != null && view.SortText.font.HasCharacter(arrow, true, false)
+                ? arrow.ToString() : sortByShare.Value ? "v" : "-";
+            view.SortText.text = ShopSettings.Text("f19.share") + " " + indicator;
+            view.SortRect.GetComponent<CustomUITooltipTrigger>().tooltipText = ShopSettings.Text(sortByShare.Value ? "f19.sort_share" : "f19.sort_native");
+            float contentWidth = Mathf.Max(1, root.rect.width - 2 * padX);
+            float summaryHeight = UpdateSummary(view, contentWidth);
+            float titleLine = Mathf.Max(16 * 1.35f, view.Title.GetPreferredValues("Mg", 10000, 0).y) + 4;
+            float totalLine = Mathf.Max(13 * 1.35f, view.Total.GetPreferredValues("Mg", 10000, 0).y) + 4;
+            float header = titleLine + totalLine + 4;
+            const float headerGap = 6, listHeader = 20;
+            float listTop = header + headerGap + summaryHeight + 4;
+            float viewportTop = listTop + listHeader;
+            if (top - bottom - 2 * padY < viewportTop + 18) return false;
+            view.Header.offsetMin = new Vector2(0, -header); view.Header.offsetMax = Vector2.zero;
+            PlaceText(view.Title, 0, 1, 1, 1, 0, -titleLine, -30, 0);
+            PlaceText(view.Total, 0, 1, 1, 1, 0, -titleLine - totalLine - 1, -30, -titleLine - 1);
+            view.Summary.offsetMin = new Vector2(0, -(header + headerGap + summaryHeight));
+            view.Summary.offsetMax = new Vector2(0, -(header + headerGap));
+            view.ListHeader.offsetMin = new Vector2(0, -viewportTop); view.ListHeader.offsetMax = new Vector2(-7, -listTop);
+            view.Viewport.offsetMax = new Vector2(-7, -viewportTop);
+            ((RectTransform)view.Scrollbar.transform).offsetMax = new Vector2(0, -viewportTop);
+            Color rule = view.Tested?.Text != null ? view.Tested.Text.color : view.NativeText.color;
+            rule.a *= .38f; view.HeaderRule.GetComponent<Image>().color = rule; view.SummaryRule.GetComponent<Image>().color = rule;
+            view.Scroller.scrollSensitivity = Mathf.Max(16, view.RowHeight);
+            return true;
         }
-        private void DrawRows(View view, RectTransform content, float scale)
+
+        private void UpdateRows(View view)
         {
-            float rowHeight = Mathf.Max(28, 31 * scale), top = 0;
-            foreach (LiquidComposition.Row row in view.Rows)
+            if (view.Root == null || view.Content == null) return;
+            if (!displayNames.Ready()) { view.Pending = true; return; }
+            if (!Layout(view)) { Clear(view); return; }
+            bool hover = PointerOver(view.Root);
+            view.Hovered = hover;
+            var measured = view.NativeRows.Select(row => new LiquidDisplayRules.Part
             {
-                var entry = Box(content, "Component_" + row.Liquid.identifier, RowColor, 0, 1, 1, 1, 0, -top - rowHeight, 0, -top - 1);
-                string id = row.Liquid.identifier;
-                bool isPin = pinned.Value == id || pinned.Value == row.Liquid.displayName;
-                Text(entry, view, row.Liquid.displayName, TextAlignmentOptions.MidlineLeft, 11.5f * scale, 4, 5, -4, -2, 0, .38f, wrap: true, fit: true);
-                Text(entry, view, row.Volume, TextAlignmentOptions.MidlineRight, 10.5f * scale, 0, 5, -3, -2, .38f, .63f, fit: true);
-                Text(entry, view, row.Percent, TextAlignmentOptions.MidlineRight, 10.5f * scale, 0, 5, -3, -2, .63f, .79f, fit: true);
-                MakeButton(entry, view, ShopSettings.Text("f19.how"), () => { view.Selected = id; view.Scroll = 1; Render(view); },
-                    .79f, 0, .92f, 1, 1, 5, -1, -3, 10 * scale);
-                MakeButton(entry, view, isPin ? "★" : "☆", () => SetPin(isPin ? "" : id),
-                    .92f, 0, 1, 1, 1, 5, -2, -3, 11 * scale);
-                RectTransform track = Box(entry, "Track", new Color(.12f, .30f, .29f, 1), 0, 0, .79f, 0, 4, 1, -3, 4);
-                float usable = Mathf.Max(0, view.Width * .79f - 8f);
-                float fraction = usable <= 0 ? 0 : Mathf.Max(2f / usable, (float)row.Fraction);
-                Box(track, "LiquidBar", Accent, 0, 0, Mathf.Clamp01(fraction), 1, 0, 0, 0, 0);
-                top += rowHeight;
+                Id = row.Liquid.identifier, Amount = row.Amount, NativeIndex = Liquid.Liquids.IndexOf(row.Liquid)
+            }).ToList();
+            List<LiquidDisplayRules.Part> ordered = view.Ordering.Update(view.Sample, measured, pins, sortByShare.Value, hover);
+            var activeIds = new HashSet<string>(ordered.Select(part => part.Id), StringComparer.Ordinal);
+            foreach (string id in view.RowViews.Keys.Where(id => !activeIds.Contains(id)).ToArray())
+            {
+                RowView old = view.RowViews[id]; view.RowViews.Remove(id);
+                old.Rect.gameObject.SetActive(false); old.Rect.SetParent(null, false); Object.Destroy(old.Rect.gameObject);
             }
-            content.sizeDelta = new Vector2(0, top);
+            float scroll = view.Content.anchoredPosition.y;
+            float font = Mathf.Clamp(fontSize.Value, 8, 28);
+            float available = Mathf.Max(1, view.Viewport.rect.width);
+            SetFont(view.Total, view, font);
+            float volumeWidth = 0, percentWidth = 0;
+            foreach (LiquidDisplayRules.Part part in ordered)
+            {
+                if (!view.Seen.TryGetValue(part.Id, out Liquid liquid)) continue;
+                var measuredRow = new LiquidComposition.Row { Liquid = liquid, Amount = part.Amount,
+                    Fraction = view.TotalAmount > 0 ? (double)part.Amount / view.TotalAmount : 0 };
+                volumeWidth = Mathf.Max(volumeWidth, view.Total.GetPreferredValues(measuredRow.Volume).x);
+                percentWidth = Mathf.Max(percentWidth, view.Total.GetPreferredValues(measuredRow.Percent).x);
+            }
+            float lineHeight = Mathf.Max(font * 1.25f, view.Total.GetPreferredValues("Mg", 10000, 0).y) + 3;
+            SetFont(view.Total, view, 13);
+            const float pinWidth = 20;
+            volumeWidth = Mathf.Max(42, volumeWidth + 7);
+            percentWidth = Mathf.Max(42, percentWidth + 7);
+            bool stacked = pinWidth + Mathf.Max(42, font * 3) + volumeWidth + percentWidth > available;
+            if (hover && view.ModeReady && Mathf.Abs(view.ModeWidth - available) < .5f && Mathf.Approximately(view.ModeFont, font))
+                stacked = view.Stacked;
+            else { view.ModeReady = true; view.Stacked = stacked; view.ModeWidth = available; view.ModeFont = font; }
+            bool separateNumbers = stacked && volumeWidth + percentWidth > available - pinWidth;
+            int lines = separateNumbers ? 3 : stacked ? 2 : 1;
+            float barSpace = showBars.Value ? 5 : 0;
+            view.RowHeight = lineHeight * lines + barSpace + 2;
+            view.Scroller.scrollSensitivity = Mathf.Max(16, view.RowHeight);
+            float headingShare = Mathf.Clamp(percentWidth, 48, Mathf.Max(48, available * .3f));
+            float headingVolume = Mathf.Clamp(volumeWidth, 56, Mathf.Max(56, available * .36f));
+            PlaceText(view.NameHeading, 0, 0, 1, 1, pinWidth, 0, -(headingVolume + headingShare), 0);
+            PlaceText(view.VolumeHeading, 1, 0, 1, 1, -(headingVolume + headingShare), 0, -headingShare, 0);
+            view.SortRect.anchorMin = new Vector2(1, 0); view.SortRect.anchorMax = Vector2.one;
+            view.SortRect.offsetMin = new Vector2(-headingShare, 0); view.SortRect.offsetMax = Vector2.zero;
+            view.Rows.Clear();
+            for (int i = 0; i < ordered.Count; i++)
+            {
+                LiquidDisplayRules.Part part = ordered[i];
+                if (!view.Seen.TryGetValue(part.Id, out Liquid liquid)) continue;
+                var row = new LiquidComposition.Row { Liquid = liquid, Amount = part.Amount,
+                    Fraction = view.TotalAmount > 0 ? (double)part.Amount / view.TotalAmount : 0 };
+                view.Rows.Add(row);
+                if (!view.RowViews.TryGetValue(part.Id, out RowView visual))
+                { visual = CreateRow(view, part.Id); view.RowViews.Add(part.Id, visual); }
+                visual.Rect.SetSiblingIndex(i);
+                visual.Rect.offsetMin = new Vector2(0, -(i + 1) * view.RowHeight);
+                visual.Rect.offsetMax = new Vector2(0, -i * view.RowHeight);
+                string displayName = displayNames.Get(liquid);
+                SetReadableFont(visual.Name, view, font, displayName); SetFont(visual.Volume, view, font);
+                SetFont(visual.Percent, view, font);
+                visual.Name.text = displayName; visual.Volume.text = row.Volume; visual.Percent.text = row.Percent;
+                visual.Rect.GetComponent<CustomUITooltipTrigger>().tooltipText = displayName;
+                visual.Pin.Pinned = pins.Contains(part.Id); visual.Pin.color = view.NativeText.color;
+                visual.PinRect.gameObject.name = visual.Pin.Pinned ? "Button_★" : "Button_☆";
+                RectTransform pinRect = visual.PinRect;
+                pinRect.anchorMin = new Vector2(0, 1); pinRect.anchorMax = new Vector2(0, 1);
+                pinRect.offsetMin = new Vector2(0, -lineHeight); pinRect.offsetMax = new Vector2(pinWidth, 0);
+                visual.Track.anchorMin = new Vector2(0, 0); visual.Track.anchorMax = new Vector2(1, 0);
+                visual.Track.offsetMin = new Vector2(pinWidth, 1); visual.Track.offsetMax = new Vector2(0, 4);
+                if (stacked)
+                {
+                    float topLine = (barSpace + lineHeight * (lines - 1)) / view.RowHeight;
+                    float numberTop = (barSpace + lineHeight * (lines - 1)) / view.RowHeight;
+                    float numberBottom = (barSpace + lineHeight * (lines - 2)) / view.RowHeight;
+                    PlaceText(visual.Name, 0, topLine, 1, 1, pinWidth + (showColors.Value ? 6 : 0), 0, 0, 0);
+                    PlaceText(visual.Volume, 0, numberBottom, 1, numberTop, pinWidth, 0, separateNumbers ? 0 : -percentWidth, 0);
+                    PlaceText(visual.Percent, 1, separateNumbers ? barSpace / view.RowHeight : numberBottom,
+                        1, separateNumbers ? (barSpace + lineHeight) / view.RowHeight : numberTop,
+                        -percentWidth, 0, 0, 0);
+                    visual.Volume.alignment = TextAlignmentOptions.MidlineRight;
+                }
+                else
+                {
+                    PlaceText(visual.Name, 0, 0, 1, 1, pinWidth + (showColors.Value ? 6 : 0), barSpace, -(volumeWidth + percentWidth), 0);
+                    PlaceText(visual.Volume, 1, 0, 1, 1, -(volumeWidth + percentWidth), barSpace, -percentWidth, 0);
+                    PlaceText(visual.Percent, 1, 0, 1, 1, -percentWidth, barSpace, 0, 0);
+                    visual.Volume.alignment = TextAlignmentOptions.MidlineRight;
+                }
+                visual.Track.gameObject.SetActive(showBars.Value);
+                visual.Mark.gameObject.SetActive(showColors.Value);
+                visual.Mark.anchorMin = new Vector2(0, 1); visual.Mark.anchorMax = new Vector2(0, 1);
+                visual.Mark.offsetMin = new Vector2(pinWidth, -lineHeight + 5); visual.Mark.offsetMax = new Vector2(pinWidth + 3, -4);
+                Color tint = ComponentColor(liquid);
+                tint.a = .78f; visual.Fill.GetComponent<Image>().color = tint;
+                visual.Mark.GetComponent<Image>().color = tint;
+                float usable = Mathf.Max(1, view.Viewport.rect.width - 4);
+                float fraction = row.Fraction <= 0 ? 0 : Mathf.Max(2 / usable, (float)row.Fraction);
+                visual.Fill.anchorMax = new Vector2(Mathf.Clamp01(fraction), 1);
+            }
+            view.Content.sizeDelta = new Vector2(0, ordered.Count * view.RowHeight);
+            float maxScroll = Mathf.Max(0, view.Content.rect.height - view.Viewport.rect.height);
+            view.Content.anchoredPosition = new Vector2(0, Mathf.Clamp(scroll, 0, maxScroll));
+            if (view.Selected != null && !activeIds.Contains(view.Selected)) CloseDetail(view);
         }
-        private void DrawMethods(View view, RectTransform content, float scale, List<LiquidKnowledge.Method> methods = null)
+
+        private static void PlaceText(TextMeshProUGUI text, float x0, float y0, float x1, float y1,
+            float left, float bottom, float right, float top)
         {
-            LiquidComposition.Row row = view.Rows.Find(value => value.Liquid.identifier == view.Selected);
-            if (row == null) return;
-            methods = methods ?? LiquidKnowledge.For(row.Liquid, view.Sample);
-            view.MethodSignature = MethodSignature(methods);
-            float top = 0;
-            if (methods.Count == 0)
+            RectTransform rect = text.rectTransform;
+            rect.anchorMin = new Vector2(x0, y0); rect.anchorMax = new Vector2(x1, y1);
+            rect.offsetMin = new Vector2(left, bottom); rect.offsetMax = new Vector2(right, top);
+        }
+
+        private static float UpdateSummary(View view, float width)
+        {
+            view.TestedRaw = view.Tested?.Text?.text ?? "";
+            view.LabelRaw = view.Label?.Text?.text ?? "";
+            SummaryText(view.TestedRaw, out string testedHeading, out string testedValue);
+            SummaryText(view.LabelRaw, out string labeledHeading, out string labeledValue);
+            CopySummary(view.TestedHeading, view.Tested?.Text, testedHeading, 11, false);
+            CopySummary(view.LabelHeading, view.Label?.Text, labeledHeading, 11, false);
+            CopySummary(view.TestedCopy, view.Tested?.Text, testedValue, 14, true);
+            CopySummary(view.LabelCopy, view.Label?.Text, labeledValue, 14, true);
+            float columnWidth = Mathf.Max(1, width * .5f - 6);
+            float tested = view.TestedCopy.GetPreferredValues(view.TestedCopy.text, columnWidth, 0).y;
+            float labeled = view.LabelCopy.GetPreferredValues(view.LabelCopy.text, columnWidth, 0).y;
+            return 17 + Mathf.Clamp(Mathf.Max(tested, labeled), 17, 36) + 8;
+        }
+
+        private static void SummaryText(string raw, out string heading, out string value)
+        {
+            string[] lines = raw.Replace("\r", "").Split('\n');
+            heading = lines.Length > 0 ? lines[0] : "";
+            value = lines.Length > 1 ? string.Join(" ", lines.Skip(1)) : "";
+        }
+
+        private static void CopySummary(TextMeshProUGUI target, TextMeshProUGUI source, string value, float font, bool wrap)
+        {
+            target.text = value;
+            if (source == null) return;
+            target.font = source.font; target.fontSharedMaterial = source.fontSharedMaterial;
+            target.color = source.color; target.richText = source.richText; target.fontStyle = source.fontStyle;
+            target.alignment = TextAlignmentOptions.TopLeft; target.lineSpacing = source.lineSpacing;
+            target.fontSize = font; target.enableAutoSizing = false; target.enableWordWrapping = wrap;
+            target.overflowMode = TextOverflowModes.Ellipsis;
+        }
+
+        private RowView CreateRow(View view, string id)
+        {
+            RectTransform entry = Box(view.Content, "Component_" + id, Color.clear, 0, 1, 1, 1, 0, 0, 0, 0);
+            entry.GetComponent<Image>().raycastTarget = true;
+            entry.gameObject.AddComponent<CustomUITooltipTrigger>();
+            Button select = entry.gameObject.AddComponent<Button>(); select.targetGraphic = entry.GetComponent<Image>();
+            select.onClick.AddListener(() =>
             {
-                var entry = Box(content, "Unavailable", RowColor, 0, 1, 1, 1, 0, -48 * scale, 0, 0);
-                Text(entry, view, ShopSettings.Text("f19.unknown"), TextAlignmentOptions.TopLeft, 11 * scale, 5, 3, -5, -4, wrap: true);
-                top = 48 * scale;
-            }
+                try { OpenDetail(view, id); }
+                catch (Exception error) { CloseDetail(view); log("F19 could not open component details: " + error); ShopNotice.Show(ShopSettings.Text("f19.detail_failed")); }
+            });
+            var row = new RowView { Rect = entry };
+            row.Mark = Box(entry, "ColorMark", Color.clear, 0, 0, 0, 1, 1, 6, 5, -3);
+            row.Name = Text(entry, view, "", TextAlignmentOptions.MidlineLeft, 2, 5, -3, 0, 0, .43f);
+            row.Name.gameObject.name = "Name";
+            row.Volume = Text(entry, view, "", TextAlignmentOptions.MidlineRight, 0, 5, -3, 0, .43f, .70f);
+            row.Volume.gameObject.name = "Volume";
+            row.Percent = Text(entry, view, "", TextAlignmentOptions.MidlineRight, 0, 5, -3, 0, .70f, .91f);
+            row.Percent.gameObject.name = "Share";
+            RectTransform pin = Box(entry, "Button_☆", Color.clear, 0, 0, 0, 1, 0, 0, 20, 0);
+            pin.GetComponent<Image>().raycastTarget = true;
+            Button button = pin.gameObject.AddComponent<Button>(); button.targetGraphic = pin.GetComponent<Image>();
+            button.onClick.AddListener(() => TogglePin(id));
+            row.PinRect = pin;
+            var pinIcon = new GameObject("PinIcon", typeof(RectTransform), typeof(CanvasRenderer), typeof(LiquidPinIcon));
+            RectTransform pinIconRect = (RectTransform)pinIcon.transform; pinIconRect.SetParent(pin, false);
+            pinIconRect.anchorMin = Vector2.zero; pinIconRect.anchorMax = Vector2.one;
+            pinIconRect.offsetMin = pinIconRect.offsetMax = Vector2.zero;
+            row.Pin = pinIcon.GetComponent<LiquidPinIcon>(); row.Pin.raycastTarget = false; row.Pin.color = view.NativeText.color;
+            row.Track = Box(entry, "Track", new Color(1, 1, 1, .16f), 0, 0, .91f, 0, 2, 1, -3, 4);
+            row.Fill = Box(row.Track, "LiquidBar", Color.white, 0, 0, 0, 1, 0, 0, 0, 0);
+            return row;
+        }
+
+        private static Color ComponentColor(Liquid liquid)
+        {
+            string value = liquid?.color;
+            if (!string.IsNullOrWhiteSpace(value) && ColorUtility.TryParseHtmlString(value.StartsWith("#", StringComparison.Ordinal) ? value : "#" + value, out Color native))
+                return Color.Lerp(native, new Color(.88f, .88f, .84f), .3f);
+            return new Color(.48f, .78f, .75f);
+        }
+
+        private void OpenDisplaySettings(View view)
+        {
+            if (!StillOpen(view) || CustomUIManager.Instance == null) return;
+            if (view.DisplaySettings?.IsAlive == true) { CloseDisplaySettings(view); return; }
+            CloseDetail(view);
+            int draftSize = fontSize.Value; bool draftBars = showBars.Value, draftColors = showColors.Value;
+            Vector2 size = UiLayout.Fit(320, 270);
+            var builder = CustomUIManager.Instance.CreateWindow(ModEntry.Id + (view.Chemical ? ".f19.display.chem" : ".f19.display.water"),
+                ShopSettings.Text("f19.display"), CustomUIManager.LAYER_META, null, CustomUIManager.Style.Machinery)
+                .SetSize(size.x, size.y).SetDraggable(false).SetCloseOnEscape(true);
+            view.DisplaySettings = builder.GetWindow(); CustomUIWindow own = view.DisplaySettings;
+            builder.OnClose(() => { if (ReferenceEquals(view.DisplaySettings, own)) view.DisplaySettings = null; });
+            builder.AddLabel(ShopSettings.Text("f19.size") + "  " + draftSize, "size_label");
+            builder.AddSlider(8, 28, draftSize, value =>
+            {
+                draftSize = Mathf.RoundToInt(value);
+                own.Get("size_label")?.SetText(ShopSettings.Text("f19.size") + "  " + draftSize);
+            }, wholeNumbers: true, id: "size");
+            builder.AddToggle(ShopSettings.Text("f19.bars"), draftBars, value => draftBars = value, "bars");
+            builder.AddToggle(ShopSettings.Text("f19.colors"), draftColors, value => draftColors = value, "colors");
+            builder.AddButton(ShopSettings.Text("f19.display_apply"), () =>
+            {
+                if (!StillOpen(view) || !ReferenceEquals(view.DisplaySettings, own)) return;
+                int oldSize = fontSize.Value; bool oldBars = showBars.Value, oldColors = showColors.Value;
+                try
+                {
+                    fontSize.Set(draftSize); showBars.Set(draftBars); showColors.Set(draftColors); config.Save();
+                    ReapplySafely(water); ReapplySafely(chem); CloseDisplaySettings(view);
+                }
+                catch (Exception error)
+                {
+                    try { fontSize.Set(oldSize); showBars.Set(oldBars); showColors.Set(oldColors); config.Save(); }
+                    catch (Exception rollback) { log("F19 could not restore display settings: " + rollback); }
+                    log("F19 could not save display settings: " + error);
+                    ShopNotice.Show(ShopSettings.Text("f19.display_failed"));
+                }
+            }, "apply").Show();
+            PositionWindow(view, own, size);
+        }
+
+        private void CloseDisplaySettings(View view)
+        {
+            CustomUIWindow previous = view.DisplaySettings; view.DisplaySettings = null; previous?.Close();
+        }
+
+        private void OpenDetail(View view, string id)
+        {
+            LiquidComposition.Row row = view.Rows.Find(part => part.Liquid.identifier == id);
+            if (row == null || !StillOpen(view) || CustomUIManager.Instance == null) return;
+            if (!displayNames.Ready()) { view.Pending = true; view.PendingDetail = id; return; }
+            CloseDisplaySettings(view);
+            CloseDetail(view); view.Selected = id;
+            Vector2 size = UiLayout.Fit(380, 420);
+            var builder = CustomUIManager.Instance.CreateWindow(ModEntry.Id + (view.Chemical ? ".f19.detail.chem" : ".f19.detail.water"),
+                ShopSettings.Format("f19.methods", displayNames.Get(row.Liquid)), CustomUIManager.LAYER_META, null, CustomUIManager.Style.Machinery)
+                .SetSize(size.x, size.y).SetDraggable(false).SetCloseOnEscape(true);
+            view.Detail = builder.GetWindow(); CustomUIWindow own = view.Detail;
+            builder.OnClose(() => { if (ReferenceEquals(view.Detail, own)) { view.Detail = null; view.DetailBody = null; view.DetailSummary = null; view.Selected = null; } });
+            builder.AddLabel("", "summary"); view.DetailSummary = builder.Last;
+            builder.BeginScrollFlexible(120); view.DetailBody = builder.CurrentContainer; builder.End().Show();
+            PositionWindow(view, view.Detail, size);
+            view.MethodSignature = null;
+            UpdateDetail(view);
+        }
+
+        private void UpdateDetail(View view)
+        {
+            if (view.Detail?.IsAlive != true || view.Selected == null || view.DetailBody == null) return;
+            if (!displayNames.Ready()) { view.Pending = true; return; }
+            LiquidComposition.Row row = view.Rows.Find(part => part.Liquid.identifier == view.Selected);
+            if (row == null || !StillOpen(view)) { CloseDetail(view); return; }
+            view.Detail.SetTitle(ShopSettings.Format("f19.methods", displayNames.Get(row.Liquid)));
+            view.DetailSummary?.SetText(row.Volume + " · " + row.Percent);
+            List<LiquidKnowledge.Method> methods = LiquidKnowledge.For(row.Liquid, view.Sample);
+            string signature = string.Join("\n", methods.Select(method => method.Name + "\u001f" + method.Summary + "\u001f" + method.Description + "\u001f" + method.Atlas + "\u001f" + method.Sprite));
+            if (signature == view.MethodSignature) return;
+            bool firstDisplay = view.MethodSignature == null;
+            view.MethodSignature = signature;
+            ScrollRect scroll = view.DetailBody.GetComponentInParent<ScrollRect>();
+            float position = !firstDisplay && scroll != null ? scroll.verticalNormalizedPosition : 1;
+            UiLayout.Clear(view.DetailBody, view.Detail);
+            var builder = new CustomUIBuilder(CustomUIManager.Instance, view.Detail, view.DetailBody);
+            if (methods.Count == 0) builder.AddLabel(ShopSettings.Text("f19.unknown"));
             foreach (LiquidKnowledge.Method method in methods)
             {
-                float available = Mathf.Max(90f, view.Width - 42f);
-                var probe = Text(content, view, method.Description, TextAlignmentOptions.TopLeft, 10.5f * scale, 0, 0, 0, 0, wrap: true);
-                float descHeight = Mathf.Max(28, probe.GetPreferredValues(method.Description, available, 0).y + 4);
-                UnityEngine.Object.Destroy(probe.gameObject);
-                float height = Mathf.Max(55 * scale, descHeight + 23 * scale);
-                var card = Box(content, "Method_" + method.Sprite, RowColor, 0, 1, 1, 1, 0, -top - height, 0, -top - 2);
-                var icon = Box(card, "Icon", Color.clear, 0, 1, 0, 1, 4, -35 * scale, 34 * scale, -5);
-                Image image = icon.GetComponent<Image>(); image.sprite = RenderHandler.LoadFromAtlas(method.Atlas, method.Sprite);
-                image.color = Color.white; image.preserveAspect = true; image.raycastTarget = false;
-                Text(card, view, method.Name, TextAlignmentOptions.TopLeft, 11.5f * scale, 38 * scale, -20 * scale, -4, -3, bold: true);
-                Text(card, view, method.Description, TextAlignmentOptions.TopLeft, 10.5f * scale, 38 * scale, 3, -4, -22 * scale, wrap: true);
-                top += height;
+                builder.BeginPanel(0, 0, spacing: 4, padding: 8); builder.CurrentContainer.name = "Method_" + method.Sprite;
+                Sprite icon = RenderHandler.LoadFromAtlas(method.Atlas, method.Sprite);
+                builder.BeginRow(6); if (icon != null) builder.AddImage(icon, 28, 28);
+                builder.AddLabel(method.Name); builder.Last.SetFlexible(1, 0);
+                builder.AddLabel(ShopSettings.Text("f19.applies")); builder.Last.SetFixedWidth(76); builder.End();
+                DetailParagraph(builder, method.Summary, view.Detail.Rect.rect.width - 66);
+                bool expanded = view.ExpandedMethod == method.Sprite;
+                builder.BeginRow().AddFlexibleSpace();
+                builder.AddButton(ShopSettings.Text(expanded ? "f19.less" : "f19.more"), () =>
+                {
+                    if (view.Detail?.IsAlive != true) return;
+                    view.ExpandedMethod = expanded ? null : method.Sprite;
+                    view.MethodSignature = "";
+                    UpdateDetail(view);
+                }, "method_more_" + method.Sprite);
+                builder.Last.SetFixedWidth(110); builder.End();
+                if (expanded) DetailParagraph(builder, method.Description, view.Detail.Rect.rect.width - 66);
+                builder.End();
             }
-            content.sizeDelta = new Vector2(0, top);
+            CustomUIBuilder.RebuildLayout(view.DetailBody);
+            UiLayout.RestoreScroll(view.DetailBody, position);
         }
-        private static string MethodSignature(List<LiquidKnowledge.Method> methods) => string.Join("\n", methods.Select(method =>
-            method.Name + "\u001f" + method.Description + "\u001f" + method.Atlas + "\u001f" + method.Sprite));
+
+        private static void DetailParagraph(CustomUIBuilder builder, string value, float width)
+        {
+            builder.AddLabel(value);
+            if (builder.Last.text == null) return;
+            builder.Last.text.richText = false; builder.Last.text.enableWordWrapping = true;
+            float height = builder.Last.text.GetPreferredValues(value, Mathf.Max(100, width), 0).y + 8;
+            builder.Last.SetPreferredSize(-1, Mathf.Max(28, height));
+        }
+
+        private static void PositionWindow(View view, CustomUIWindow window, Vector2 size)
+        {
+            if (!(window?.root?.transform is RectTransform rect) || !(rect.parent is RectTransform parent) ||
+                !(view.Panel.transform is RectTransform scanner)) return;
+            Canvas canvas = parent.GetComponentInParent<Canvas>();
+            Camera camera = canvas != null && canvas.renderMode != RenderMode.ScreenSpaceOverlay ? canvas.worldCamera : null;
+            Canvas sourceCanvas = scanner.GetComponentInParent<Canvas>();
+            Camera sourceCamera = sourceCanvas != null && sourceCanvas.renderMode != RenderMode.ScreenSpaceOverlay ? sourceCanvas.worldCamera : null;
+            Vector3[] corners = new Vector3[4]; scanner.GetWorldCorners(corners);
+            Vector2 left = RectTransformUtility.WorldToScreenPoint(sourceCamera, corners[1]);
+            Vector2 right = RectTransformUtility.WorldToScreenPoint(sourceCamera, corners[2]);
+            float scale = canvas != null && canvas.scaleFactor > 0 ? canvas.scaleFactor : 1;
+            float width = size.x * scale;
+            float areaLeft = LetterboxManager.GameAreaWidth > 0 ? LetterboxManager.GameAreaX : 0;
+            float areaBottom = LetterboxManager.GameAreaHeight > 0 ? LetterboxManager.GameAreaY : 0;
+            float areaRight = LetterboxManager.GameAreaWidth > 0 ? areaLeft + LetterboxManager.GameAreaWidth : Screen.width;
+            float areaTop = LetterboxManager.GameAreaHeight > 0 ? areaBottom + LetterboxManager.GameAreaHeight : Screen.height;
+            bool onRight = areaRight - right.x >= width + 6 || left.x - areaLeft < width + 6 && areaRight - right.x >= left.x - areaLeft;
+            Vector2 point = onRight ? right + new Vector2(4, 0) : left + new Vector2(-width - 4, 0);
+            point.x = Mathf.Clamp(point.x, areaLeft + 2, Mathf.Max(areaLeft + 2, areaRight - width - 2));
+            point.y = Mathf.Clamp(point.y, Mathf.Min(areaTop - 2, areaBottom + size.y * scale + 2), areaTop - 2);
+            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(parent, point, camera, out Vector2 local)) return;
+            rect.anchorMin = rect.anchorMax = parent.pivot; rect.pivot = new Vector2(0, 1); rect.anchoredPosition = local;
+        }
+
         private static RectTransform Box(RectTransform parent, string name, Color color, float ax0, float ay0, float ax1, float ay1,
             float left, float bottom, float right, float top)
         {
@@ -370,65 +893,90 @@ namespace ShopAssist
             Image image = go.GetComponent<Image>(); image.sprite = null; image.color = color; image.raycastTarget = false;
             return rect;
         }
-        private static TextMeshProUGUI Text(RectTransform parent, View view, string value, TextAlignmentOptions align, float size,
-            float left, float bottom, float right, float top, float ax0 = 0, float ax1 = 1, bool wrap = false, bool bold = false, bool fit = false)
+
+        private static TextMeshProUGUI Text(RectTransform parent, View view, string value, TextAlignmentOptions alignment,
+            float left, float bottom, float right, float top, float ax0 = 0, float ax1 = 1)
         {
             var go = new GameObject("Text", typeof(RectTransform), typeof(CanvasRenderer), typeof(TextMeshProUGUI));
-            var text = go.GetComponent<TextMeshProUGUI>(); var rect = text.rectTransform; rect.SetParent(parent, false);
+            var text = go.GetComponent<TextMeshProUGUI>(); RectTransform rect = text.rectTransform; rect.SetParent(parent, false);
             rect.anchorMin = new Vector2(ax0, 0); rect.anchorMax = new Vector2(ax1, 1);
             rect.offsetMin = new Vector2(left, bottom); rect.offsetMax = new Vector2(right, top);
-            text.font = view.NativeText.font; text.fontSharedMaterial = view.NativeText.fontSharedMaterial;
-            text.fontSize = size; text.color = TextColor; text.richText = false; text.raycastTarget = false;
-            text.enableWordWrapping = wrap; text.overflowMode = wrap && !fit ? TextOverflowModes.Overflow : TextOverflowModes.Ellipsis;
-            if (fit) { text.enableAutoSizing = true; text.fontSizeMin = Mathf.Min(7, size); text.fontSizeMax = size; }
-            text.alignment = align; if (bold) text.fontStyle = FontStyles.Bold; text.text = value ?? "";
+            text.text = value; text.richText = false; text.raycastTarget = false; text.alignment = alignment;
+            text.enableAutoSizing = false; text.enableWordWrapping = false; text.overflowMode = TextOverflowModes.Ellipsis;
+            SetFont(text, view, 14);
             return text;
         }
-        private void MakeButton(RectTransform parent, View view, string value, Action action,
-            float ax0, float ay0, float ax1, float ay1, float left, float bottom, float right, float top, float size)
+
+        private static void SetFont(TextMeshProUGUI text, View view, float size)
         {
-            var rect = Box(parent, "Button_" + value, new Color(.17f, .35f, .32f, 1), ax0, ay0, ax1, ay1, left, bottom, right, top);
-            Image image = rect.GetComponent<Image>(); image.raycastTarget = true;
-            var button = rect.gameObject.AddComponent<Button>(); button.targetGraphic = image;
-            button.onClick.AddListener(() =>
-            {
-                try { action(); }
-                catch (Exception error) { Clear(view); log("F19 scanner action failed: " + error); }
-            });
-            Text(rect, view, value, TextAlignmentOptions.Center, size, 0, 0, 0, 0, bold: true, fit: true);
+            if (text == null || view.NativeText == null) return;
+            text.font = view.NativeText.font; text.fontSharedMaterial = view.NativeText.fontSharedMaterial;
+            text.color = view.NativeText.color; text.enableAutoSizing = false; text.fontSize = size;
         }
-        private static void Clear(View view)
+
+        private static void SetReadableFont(TextMeshProUGUI text, View view, float size, string value)
         {
+            SetFont(text, view, size);
+            if (text == null || text.font == null || string.IsNullOrEmpty(value) ||
+                text.font.HasCharacters(value, out _, true, true)) return;
+            FontLoader fonts = FontLoader.Instance;
+            if (fonts == null) return;
+            foreach (TMP_FontAsset candidate in new[] { fonts.simplifiedChineseFont, fonts.japaneseFont, fonts.koreanFont })
+                if (candidate != null && candidate.HasCharacters(value, out _, true, true))
+                { text.font = candidate; text.fontSharedMaterial = candidate.material; return; }
+        }
+
+        private static bool PointerOver(GameObject go)
+        {
+            if (go == null || !go.activeInHierarchy || !(go.transform is RectTransform rect)) return false;
+            Canvas canvas = go.GetComponentInParent<Canvas>();
+            Camera camera = canvas != null && canvas.renderMode != RenderMode.ScreenSpaceOverlay ? canvas.worldCamera : null;
+            return RectTransformUtility.RectangleContainsScreenPoint(rect, Input.mousePosition, camera);
+        }
+
+        private void CloseDetail(View view)
+        {
+            CustomUIWindow previous = view.Detail; view.Detail = null; view.DetailBody = null; view.DetailSummary = null;
+            view.Selected = null; view.MethodSignature = null; view.ExpandedMethod = null; previous?.Close();
+        }
+
+        private void Clear(View view)
+        {
+            CloseDetail(view);
+            CloseDisplaySettings(view);
             if (view.NativeText != null && view.Root != null && !view.NativeText.enabled) view.NativeText.enabled = view.NativeEnabled;
-            view.Tested?.Restore(); view.Label?.Restore(); view.TotalText?.Restore();
-            if (view.Root != null) { view.Root.SetActive(false); UnityEngine.Object.Destroy(view.Root); }
-            view.Root = null; view.Scroller = null; view.Panel = null; view.Sample = null; view.NativeText = null;
-            view.Raw = null; view.Selected = null; view.MethodSignature = null; view.Total = 0; view.Scroll = 1; view.Rows.Clear(); view.Order.Clear();
-            view.Tested = view.Label = view.TotalText = null;
+            view.Tested?.Restore(); view.Label?.Restore(); view.TotalText?.Restore(); view.Product?.Restore();
+            if (view.Root != null) { view.Root.SetActive(false); Object.Destroy(view.Root); }
+            view.Root = view.Panel = null; view.Sample = null; view.NativeText = view.Title = view.Total = view.SortText = null;
+            view.TestedCopy = view.LabelCopy = view.TestedHeading = view.LabelHeading = view.NameHeading = view.VolumeHeading = null;
+            view.Scroller = null; view.Scrollbar = null;
+            view.Summary = view.Content = view.Viewport = view.LayoutRoot = view.Header = view.ListHeader = view.SortRect = view.HeaderRule = view.SummaryRule = null;
+            view.ScreenCenter = view.ScreenLeft = view.ScreenRight = null;
+            view.Match = view.Confront = view.Sort = view.Gear = null; view.Raw = view.TestedRaw = view.LabelRaw = null;
+            view.Locale = view.PendingDetail = null; view.Font = null; view.Pending = false;
+            view.TotalAmount = 0; view.Hovered = view.ModeReady = false;
+            view.Rows.Clear(); view.NativeRows.Clear(); view.RowViews.Clear(); view.Seen.Clear(); view.Ordering.Reset();
+            view.Tested = view.Label = view.TotalText = view.Product = null;
         }
+
         internal void Reset() { ClosePicker(); Clear(water); Clear(chem); }
-        public void Dispose() { Reset(); if (ReferenceEquals(active, this)) active = null; started = false; }
+        public void Dispose() { Reset(); displayNames.Reset(); if (ReferenceEquals(active, this)) active = null; started = false; }
+
         [HarmonyPatch(typeof(WaterScannerUIManager), nameof(WaterScannerUIManager.RefreshUI))]
         private static class WaterRefresh
         {
             private static void Postfix(WaterScannerUIManager __instance) => active?.Capture(active.water, __instance.panel, __instance.currentWaterContainer,
-                __instance.contaminantTMP, __instance.testedTMP, __instance.labelTMP, null, false);
+                __instance.contaminantTMP, __instance.testedTMP, __instance.labelTMP, null, null, __instance.matchButton, __instance.confrontButton, false);
         }
         [HarmonyPatch(typeof(ChemScannerUIManager), nameof(ChemScannerUIManager.RefreshUI))]
         private static class ChemRefresh
         {
             private static void Postfix(ChemScannerUIManager __instance) => active?.Capture(active.chem, __instance.panel, __instance.currentScannedItem,
-                __instance.contaminantTMP, __instance.testedTMP, __instance.labelTMP, __instance.totalVolumeTMP, true);
+                __instance.contaminantTMP, __instance.testedTMP, __instance.labelTMP, __instance.totalVolumeTMP, __instance.productNameTMP, __instance.matchButton, __instance.confrontButton, true);
         }
         [HarmonyPatch(typeof(WaterScannerUIManager), nameof(WaterScannerUIManager.Close))]
-        private static class WaterClose
-        {
-            private static void Postfix() { if (active != null) Clear(active.water); }
-        }
+        private static class WaterClose { private static void Postfix() { if (active != null) active.Clear(active.water); } }
         [HarmonyPatch(typeof(ChemScannerUIManager), nameof(ChemScannerUIManager.Close))]
-        private static class ChemClose
-        {
-            private static void Postfix() { if (active != null) Clear(active.chem); }
-        }
+        private static class ChemClose { private static void Postfix() { if (active != null) active.Clear(active.chem); } }
     }
 }

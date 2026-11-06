@@ -13,7 +13,7 @@ namespace ShopAssist
     {
         internal sealed class Method
         {
-            internal string Name, Description, Atlas, Sprite;
+            internal string Name, Summary, Description, Atlas, Sprite;
         }
         private static readonly Guid Build = new Guid("83045710-adce-4e78-8ff1-b43a9399ec0d");
         private static readonly Dictionary<string, (int particle, double floor, int wear, int removed)> FilterData =
@@ -68,7 +68,8 @@ namespace ShopAssist
             return true;
         }
         private static Method Card(string nameKey, string textKey, string atlas, string sprite, params object[] args) =>
-            new Method { Name = LocHelper.GetLocalizedItem(nameKey), Description = args.Length == 0 ? ShopSettings.Text(textKey) : ShopSettings.Format(textKey, args), Atlas = atlas, Sprite = sprite };
+            new Method { Name = LocHelper.GetLocalizedItem(nameKey), Summary = ShopSettings.Text(textKey + ".summary"),
+                Description = args.Length == 0 ? ShopSettings.Text(textKey) : ShopSettings.Format(textKey, args), Atlas = atlas, Sprite = sprite };
 
         internal static List<Method> For(Liquid liquid, GameItem sample)
         {

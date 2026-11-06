@@ -15,7 +15,7 @@ namespace ShopAssist
             internal int Amount;
             internal double Fraction;
             internal string Volume => WaterScannerUIManager.FormatAmount(Amount);
-            internal string Percent => Fraction > 0 && Fraction * 100 < .01 ? "<0.01%" :
+            internal string Percent => Fraction > 0 && Fraction * 100 < .01 ? "<" + .01.ToString("F2", CultureInfo.CurrentCulture) + "%" :
                 (Fraction * 100).ToString("F2", CultureInfo.CurrentCulture) + "%";
         }
         internal static bool TryRead(GameItem sample, string displayed, out List<Row> rows, out int total)
@@ -23,16 +23,17 @@ namespace ShopAssist
             rows = new List<Row>(); total = 0;
             if (sample == null || Liquid.Liquids == null || Liquid.Liquids.Count == 0 || Liquid.Liquids.Count > 128) return false;
             long sum = 0;
+            var identifiers = new HashSet<string>(StringComparer.Ordinal);
             foreach (Liquid liquid in Liquid.Liquids)
             {
-                if (liquid == null || string.IsNullOrEmpty(liquid.currentPart) || string.IsNullOrEmpty(liquid.displayName)) return false;
+                if (liquid == null || string.IsNullOrEmpty(liquid.identifier) || !identifiers.Add(liquid.identifier) ||
+                    string.IsNullOrEmpty(liquid.currentPart) || string.IsNullOrEmpty(liquid.displayName)) return false;
                 int amount = sample.GetTagReadonly(liquid.currentPart).GetInt();
                 if (amount < 0) return false;
                 sum += amount;
                 if (sum > int.MaxValue) return false;
                 if (amount > 0) rows.Add(new Row { Liquid = liquid, Amount = amount });
             }
-            if (sum == 0 || rows.Count == 0) return false;
             total = (int)sum;
             var expected = new StringBuilder();
             foreach (Row row in rows)
