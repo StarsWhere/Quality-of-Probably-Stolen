@@ -213,6 +213,7 @@ public sealed class BatchAScenario
         open.onClick.Invoke();
         var tools = CustomUIManager.Instance.GetWindow(ModId + ".tools");
         Require(tools?.IsAlive == true, "Shop tools panel did not open");
+        tools.Get("show_disabled").SetBool(true, true);
         for (int category = 0; category < 4; category++)
         {
             tools.Get("category_" + category).button.onClick.Invoke();

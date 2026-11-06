@@ -153,7 +153,7 @@ public sealed class OrganizerScenario
         var press = type.GetMethod("OnEventPress", Fields); var trigger = type.GetMethod("TriggerButton", Fields);
         Require(itemField != null && menu != null && press != null && trigger != null, "Native item context handler changed");
         itemField.SetValue(handler, held); menu.Show(); press.Invoke(handler, new object[] { new HashSet<KeyCode>() });
-        var node = menu.handler.transform.Find("ShopAssist_HoldMenu");
+        var node = menu.handler.GetComponentsInChildren<Transform>(true).FirstOrDefault(value => value.name == "ShopAssist_HoldMenu" && value.gameObject.activeInHierarchy);
         var button = node != null ? node.GetComponent<TreeNodeRender>()?.element as RichTextElement : null;
         Require(button != null && node.gameObject.activeInHierarchy, "Temporary hold context item was not attached"); trigger.Invoke(handler, new object[] { button });
     }
@@ -174,7 +174,7 @@ public sealed class OrganizerScenario
             found = ReferenceEquals(RenderHandler.RaycastElement<GameGridInventory>(point), inner);
         }
         Require(found && (bool)open.Invoke(handler, new object[] { point }), "Could not open the native grid context menu");
-        var node = menu.handler.transform.Find("ShopAssist_SortMenu");
+        var node = menu.handler.GetComponentsInChildren<Transform>(true).FirstOrDefault(value => value.name == "ShopAssist_f05_preserve" && value.gameObject.activeInHierarchy);
         var button = node != null ? node.GetComponent<TreeNodeRender>()?.element as RichTextElement : null;
         Require(button != null && node.gameObject.activeInHierarchy, "Direct sort context item was not attached"); trigger.Invoke(handler, new object[] { button });
     }

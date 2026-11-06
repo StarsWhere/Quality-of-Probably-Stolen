@@ -178,6 +178,9 @@ public abstract class PackingRecoveryFixture
                 thirdGrid.childItems.Contains(first) && !expectedTarget.childItems.Contains(first) && first.unitCount == firstCount &&
                 Same(first.modifiedShape, thirdPose), "Recovery took an item back from the third-party inventory");
 
+        var details = Window("packing")?.Get("last_result")?.button;
+        Need(HasResult() && details != null && details.interactable, "Field packing has no reachable operation details");
+        details.onClick.Invoke();
         var notice = Window("operation");
         Need(HasResult() && notice?.IsAlive == true && Text(notice).Contains(firstName) && Text(notice).Contains(secondName) &&
             Text(notice).Contains(ModHelper.GetLocalized(Mod, "operation.not_attempted")), "The visible result omitted the failure or unattempted item");

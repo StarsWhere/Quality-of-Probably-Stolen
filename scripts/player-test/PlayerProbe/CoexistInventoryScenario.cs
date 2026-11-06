@@ -116,7 +116,7 @@ public sealed class CoexistInventoryScenario
             menuView = OpenItemMenu(water, MousePosition());
             var scan = menuView.handler.GetComponentsInChildren<TreeNodeRender>(true)
                 .FirstOrDefault(node => node.gameObject.name == "nodeButtonItemDetailsScan" && node.gameObject.activeInHierarchy);
-            var hold = menuView.handler.transform.Find("ShopAssist_HoldMenu");
+            var hold = QaItemUi.Descendant(menuView.handler.transform, "ShopAssist_HoldMenu");
             Need(scan != null && hold != null && hold.gameObject.activeInHierarchy, "The scan and temporary-hold menu entries did not coexist");
             scanButton = scan.element as RichTextElement;
             holdButton = hold.GetComponent<TreeNodeRender>()?.element as RichTextElement;
@@ -142,7 +142,7 @@ public sealed class CoexistInventoryScenario
             Need(Raycast(scanButton), "The native peer scan entry is not reachable by the native menu raycast");
             Need(Raycast(holdButton), "The temporary-hold entry is not reachable by the native menu raycast");
             menuView = OpenItemMenu(water, new Vector2(Screen.width / 2f, 1f));
-            var hold = menuView.handler.transform.Find("ShopAssist_HoldMenu");
+            var hold = QaItemUi.Descendant(menuView.handler.transform, "ShopAssist_HoldMenu");
             holdButton = hold?.GetComponent<TreeNodeRender>()?.element as RichTextElement;
             var scan = menuView.handler.GetComponentsInChildren<TreeNodeRender>(true)
                 .FirstOrDefault(node => node.gameObject.name == "nodeButtonItemDetailsScan" && node.gameObject.activeInHierarchy);
@@ -170,6 +170,15 @@ public sealed class CoexistInventoryScenario
             nativeMenuWidth = menuView.widthPixels;
             fittedMenuPosition = menuView.handler.rectTransform.anchoredPosition;
             RefreshItemMenu();
+            // Refresh rebuilds the helper's appended rows. Reacquire live nodes
+            // instead of retaining Unity objects scheduled for destruction.
+            var refreshedHold = QaItemUi.Descendant(menuView.handler.transform, "ShopAssist_HoldMenu");
+            holdButton = refreshedHold?.GetComponent<TreeNodeRender>()?.element as RichTextElement;
+            var refreshedScan = menuView.handler.GetComponentsInChildren<TreeNodeRender>(true)
+                .FirstOrDefault(node => node.gameObject.name == "nodeButtonItemDetailsScan" && node.gameObject.activeInHierarchy);
+            scanButton = refreshedScan?.element as RichTextElement;
+            Need(holdButton?.handler != null && scanButton?.handler != null && !ReferenceEquals(holdButton, scanButton),
+                "Refreshing the menu lost one of the independent item actions");
             Need(menuView.heightPixels == nativeMenuHeight && menuView.widthPixels == nativeMenuWidth &&
                 Vector2.Distance(menuView.handler.rectTransform.anchoredPosition, fittedMenuPosition) < 0.01f,
                 "Refreshing the menu repeatedly changed its native size or position");
@@ -471,7 +480,7 @@ public sealed class CoexistInventoryScenario
     {
         var hit = QaItemUi.Hit(window.root, item);
         object entry = hit?.GetType().GetField("entry", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(hit);
-        return entry?.GetType().GetField("Badge", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(entry) as string;
+        return entry?.GetType().GetField("StatusLabel", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(entry) as string;
     }
     private static Button Button(CustomUIWindow window, string key) => window.root.GetComponentsInChildren<Button>(true)
         .FirstOrDefault(button => button.gameObject.activeInHierarchy && button.GetComponentInChildren<TMP_Text>(true)?.text == ModHelper.GetLocalized(Mod, key));
@@ -524,10 +533,15 @@ public sealed class CoexistInventoryScenario
         bool opened = (bool)type.GetMethod("TryOpenSortMenu", flags).Invoke(ItemContextHandler.current, new object[] { point });
         Need(opened, "Native sort menu did not open on the backpack grid");
         menuView = (PixelWindow)type.GetField("sortWindow", flags).GetValue(ItemContextHandler.current);
-        helperSort = menuView.handler.transform.Find("ShopAssist_SortMenu")?.GetComponent<TreeNodeRender>()?.element as RichTextElement;
-        routeButton = menuView.handler.transform.Find("ShopAssist_RouteMenu")?.GetComponent<TreeNodeRender>()?.element as RichTextElement;
+        helperSort = QaItemUi.Descendant(menuView.handler.transform, "ShopAssist_SortMenu")?.GetComponent<TreeNodeRender>()?.element as RichTextElement;
+        routeButton = QaItemUi.Descendant(menuView.handler.transform, "ShopAssist_RouteMenu")?.GetComponent<TreeNodeRender>()?.element as RichTextElement;
         var peerType = AppDomain.CurrentDomain.GetAssemblies().Select(assembly => assembly.GetType("SmartInventoryArrange.NativeSmartMenu", false)).FirstOrDefault(value => value != null);
         peerSort = peerType?.GetField("Button", BindingFlags.Static | BindingFlags.NonPublic)?.GetValue(null) as RichTextElement;
+        var peerGrid = peerType?.GetField("_grid", BindingFlags.Static | BindingFlags.NonPublic)?.GetValue(null) as GridPixelElement;
+        var isCurrent = peerType?.GetMethod("IsCurrent", BindingFlags.Static | BindingFlags.NonPublic);
+        Need(peerGrid != null && ReferenceEquals(menuView.childElement, peerGrid) && isCurrent != null &&
+            (bool)isCurrent.Invoke(null, new object[] { ItemContextHandler.current }),
+            "The peer no longer owns the native sort window grid");
         Need((helperSort == null || !helperSort.handler.gameObject.activeInHierarchy) && peerSort != null && routeButton != null &&
             routeButton.handler.gameObject.activeInHierarchy, "Shared menu did not retain the peer sort and independent routing without duplicate sort");
         KeepMenuForNextFrame();
@@ -623,8 +637,12 @@ public sealed class CoexistInventoryScenario
             })));
         return false;
     }
-    private static Image ButtonBackground(RichTextElement button) => button?.handler?.GetComponentsInChildren<Image>(true)
-        .FirstOrDefault(image => image.isActiveAndEnabled && image.raycastTarget &&
+    private static Image ButtonBackground(RichTextElement button)
+    {
+        TreeNodeRender handler = button?.handler;
+        if (handler == null) return null; // Unity's destroyed-object check is not performed by ?.
+        return handler.GetComponentsInChildren<Image>(true).FirstOrDefault(image => image.isActiveAndEnabled && image.raycastTarget &&
             ReferenceEquals(image.GetComponent<TreeNodeRender>()?.parent?.element, button));
+    }
     private static void Need(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
 }
