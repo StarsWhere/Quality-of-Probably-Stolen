@@ -49,7 +49,7 @@ public sealed class ModuleGridScenario
             Put(bagGrid, stored);
             ModHelper.SetModData(Mod, "module_storage", MissingVersionBinding);
             machine.contentWindow.ToFront();
-            RoutingScenario.OpenOptionAction("f10.open");
+            RoutingScenario.RunFeatureAction("f10.open");
             step++; return false;
         }
         if (step == 2)

@@ -89,8 +89,10 @@ namespace ShopAssist
         private bool LayoutContext(out GameGridInventory bay)
         {
             bay = moduleBay as GameGridInventory;
-            if (!layoutEnabled.Value || !SameModuleSession() || ModuleFamily(moduleTarget) == null) return false;
+            if (!layoutEnabled.Value || !SameModuleSession() || ModuleFamily(moduleTarget) == null ||
+                AttentionBook.HasInspection("f12.open", moduleTarget.uniqueId)) return false;
             return bay != null && !bay.IsInsertLocked() && !bay.IsRemoveLocked() &&
+                !bay.childItems.Any(item => item != null && AttentionBook.HasInspection("f12.open", item.uniqueId)) &&
                 GeneralHelper.MayPlayerInsertInto(bay) && bay.inventoryShape != null &&
                 FindTarget(moduleTarget, out GameItem focused, out GameInventory foundBay) &&
                 ReferenceEquals(focused, moduleTarget) && ReferenceEquals(foundBay, bay);
@@ -99,7 +101,7 @@ namespace ShopAssist
         private bool SnapshotLayout(out List<ModuleLayout.Part> parts, out GameGridInventory bay)
         {
             parts = new List<ModuleLayout.Part>();
-            if (!LayoutContext(out bay) || selectedModules.Count == 0 || selectedModules.Count > 5) return false;
+            if (!LayoutContext(out bay) || selectedModules.Count > 5) return false;
             foreach (GameItem item in bay.childItems)
             {
                 bool fixedPosition = FixedInLayout(item);
@@ -115,7 +117,7 @@ namespace ShopAssist
                 if (part == null) return false;
                 parts.Add(part);
             }
-            return parts.Count <= 12;
+            return parts.Count > 0 && parts.Count <= 12;
         }
 
         private bool FixedInLayout(GameItem item) => moduleTarget.identifier == "evaporator" ||
@@ -125,7 +127,8 @@ namespace ShopAssist
         {
             return item != null && item.unitCount > 0 && ShopInventory.Movable(item) && item.MaxNumRemove() >= item.unitCount &&
                 !RequestBook.Reserved(item) && !ShopInventory.WouldContainSelf(item, bay) && ModuleCompatibility(moduleTarget, item) > 0 &&
-                locations.Any(location => location.Ordinary && ReferenceEquals(location.Inventory, item.parentInventory));
+                !AttentionBook.HasInspection("f10.open", item.uniqueId) && !AttentionBook.HasInspection("f12.open", item.uniqueId) &&
+                locations.Any(location => ShopInventory.SearchableGoods(location) && ReferenceEquals(location.Inventory, item.parentInventory));
         }
 
         private void BuildLayout()
@@ -180,6 +183,21 @@ namespace ShopAssist
             if (!(moduleBay is GameGridInventory bay) || !LayoutStillValid(plan, bay))
             { layoutPlan = null; layoutStatus = "f12.changed"; DrawLayout(); return; }
             var added = new List<ModuleLayout.Part>();
+            OperationResult.ItemIdentity machineIdentity;
+            var identities = new List<(OperationResult.ItemIdentity Item, string Source)>();
+            try
+            {
+                machineIdentity = OperationResult.Capture(moduleTarget);
+                var locations = ModuleLocations();
+                foreach (ModuleLayout.Part part in plan.Parts)
+                    identities.Add((OperationResult.Capture(part.Item),
+                        locations.Find(location => ReferenceEquals(location.Inventory, part.Source))?.Name ?? ""));
+            }
+            catch (Exception error)
+            {
+                log("F12 could not capture the layout before applying it: " + error);
+                layoutPlan = null; layoutStatus = "f12.changed"; DrawLayout(); return;
+            }
             try
             {
                 SetExistingShapes(plan, usePlanned: true);
@@ -225,6 +243,14 @@ namespace ShopAssist
                 }
                 try { RecomputeModules(bay); }
                 catch (Exception recoveryError) { allReturned = false; log("F12 could not refresh module totals: " + recoveryError); }
+                if (!allReturned)
+                {
+                    var result = new OperationResult("f12.open");
+                    result.SkipMissing(machineIdentity.Name, 1, "f12.inspect", machineIdentity.Name, machineIdentity.ItemId, true);
+                    foreach (var identity in identities)
+                        result.SkipMissing(identity.Item.Name, 1, "f12.inspect", identity.Source + " → " + machineIdentity.Name, identity.Item.ItemId, true);
+                    ShopNotice.Report(result);
+                }
                 layoutPlan = null; layoutStatus = allReturned ? "f12.changed" : "f12.inspect"; modulesDirty = true;
                 log("F12 stopped while applying the layout: " + error);
             }

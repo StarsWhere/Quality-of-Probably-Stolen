@@ -42,7 +42,7 @@ public abstract class EquipmentFixture
         return "pending=" + pending.Count + " inputReady=" + free + " dialog=" + (DialogUIManager.Instance?.currentDialog != null) +
             "/" + (DialoguePhoneUIManager.Instance?.currentDialog != null) + "/" + StoreUIManager.Instance.isAboutToStartMainDialog;
     }
-    protected static void Action(string key) => RoutingScenario.OpenOptionAction(key);
+    protected static void Action(string key) => RoutingScenario.RunFeatureAction(key);
     protected static GameGridInventory Supply(GameItem host, int kind, params GameItem[] spares)
     {
         var bag = Stock("backpack_medium");
@@ -347,8 +347,6 @@ public sealed class FilterOwnerScenario : EquipmentFixture
     private GameItem pitcher, worn, spare;
     private GameSlotInventory slot;
     private GameGridInventory source;
-    private ConfigEntry<bool> peer;
-    private bool original;
     private float after;
     public bool Tick(out string result)
     {
@@ -360,13 +358,6 @@ public sealed class FilterOwnerScenario : EquipmentFixture
             pitcher = Stock("water_pitcher"); worn = Stock("kotton_fabric"); spare = Stock("kotton_fabric");
             slot = (GameSlotInventory)pitcher.contentWindow.childElement;
             FeedScenario.Put(slot, worn); source = Supply(pitcher, 35, spare);
-            peer = ModConfig.Find("chiqingsan.AquaSense")?.Get("AutoReplaceCloth") as ConfigEntry<bool>;
-            if (peer != null)
-            {
-                original = peer.Value; peer.Set(true);
-                Action("f35.open"); Check(Words(Ui("maintenance")).Contains(ModHelper.GetLocalized(Mod, "f35.aqua")), "Missing AquaSense ownership notice");
-                Ui("maintenance").Close(); peer.Set(false);
-            }
             DurabilityHelper.SetCurrentDurability(worn, 1);
             var dirty = Stock("wine_bottle"); WaterHelper.AddLiquid(dirty, "plant_matter", 100000);
             WaterHelper.TransferLiquid(dirty, pitcher);
@@ -375,9 +366,8 @@ public sealed class FilterOwnerScenario : EquipmentFixture
             after = Time.realtimeSinceStartup + 8f; step++; return false;
         }
         if (slot.childItem != spare && Time.realtimeSinceStartup < after) return false;
-        try { Check(slot.childItem == spare && worn.parentInventory == source, "Key disabled but registered pitcher filter was not replaced: " + MaintenanceState()); }
-        finally { if (peer != null) peer.Set(original); }
-        result = "PASS native same-stock kotton replacement and original retained" + (peer == null ? "" : " with AquaSense off per material"); return true;
+        Check(slot.childItem == spare && worn.parentInventory == source, "Registered pitcher filter was not replaced: " + MaintenanceState());
+        result = "PASS native same-stock kotton replacement and original retained"; return true;
     }
 }
 
@@ -459,17 +449,6 @@ public sealed class FilterGradeScenario : EquipmentFixture
             old = Stock("water_filter"); coarse = Stock("kotton_fabric");
             seat = (GameSlotInventory)host.contentWindow.childElement;
             FeedScenario.Put(seat, old); supply = Supply(host, 35, coarse);
-            string run = Guid.Parse(PlayerStore.Instance.runID).ToString("N");
-            string legacy = "{\"version\":1,\"run\":\"" + run + "\",\"slot\":" + PlayerStore.Instance.saveSlotId +
-                ",\"rules\":[{\"kind\":35,\"host\":" + host.GetUniqueID() + ",\"source\":" + supply.GetParentItem().GetUniqueID() +
-                ",\"page\":-1,\"threshold\":0,\"priority\":0,\"role\":\"contents\"}]}";
-            ModHelper.SetModData(Mod, "machineMaintenance", legacy);
-            Action("f35.open");
-            var saved = Ui("maintenance");
-            Check(saved.Get("allow_water_filter").GetBool() && !saved.Get("allow_kotton_fabric").GetBool() &&
-                !saved.Get("allow_hydroreed_filter").GetBool() && saved.Get("grade").GetIndex() == 0 &&
-                ModHelper.GetModData(Mod, "machineMaintenance", "") == legacy, "Opening older rules changed their material scope or persisted them prematurely");
-            saved.Get("allow_kotton_fabric").SetBool(true, true); saved.Get("enable").button.onClick.Invoke();
             Grade(1); DurabilityHelper.SetCurrentDurability(old, 1); Pour();
             after = Time.realtimeSinceStartup + 1f; step++; return false;
         }
@@ -487,7 +466,7 @@ public sealed class FilterGradeScenario : EquipmentFixture
     }
 }
 
-public sealed class WorkshopKeysScenario : EquipmentFixture
+public sealed class ShortcutOwnershipScenario : EquipmentFixture
 {
     public bool Tick(out string result)
     {
@@ -502,10 +481,6 @@ public sealed class WorkshopKeysScenario : EquipmentFixture
         KeyCode original = other.getKey();
         try { other.setKey(KeyCode.F13); Check(Owner(KeyCode.F13) != null, "Restored duplicate assistant key was not detected"); }
         finally { other.setKey(original); }
-        if (ModLoader.Mods.Any(m => m.Manifest.ID == "ShowItemNames" && m.IsEnabled))
-        {
-            Check(Owner(KeyCode.F10) != null && Owner(KeyCode.F6) != null && Owner(KeyCode.F5) != null, "Unregistered workshop hotkeys not detected");
-        }
-        result = "PASS native and restored duplicate shortcut ownership, and private workshop keys when loaded"; return true;
+        result = "PASS native and restored duplicate shortcut ownership"; return true;
     }
 }

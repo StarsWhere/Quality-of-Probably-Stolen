@@ -94,7 +94,7 @@ public sealed class ModuleSearchScenario : EquipmentFixture
         if (step == 3)
         {
             var hit = QaItemUi.Hit(Ui("f10").root, wanted);
-            Check(!ReferenceEquals(previousGrid, Grid(wanted)) && !(bool)Entry(hit, "Enabled") &&
+            Check(!ReferenceEquals(previousGrid, Grid(wanted)) && !(bool)Entry(hit, "Draggable") &&
                 (string)Entry(hit, "Marker") == ModHelper.GetLocalized(Mod, "grid.mark_reserved"),
                 "A newly reserved item retained stale search controls");
             simulateReservation = false; previousGrid = Grid(wanted);
@@ -103,7 +103,7 @@ public sealed class ModuleSearchScenario : EquipmentFixture
         if (step == 4)
         {
             var hit = QaItemUi.Hit(Ui("f10").root, wanted);
-            Check(!ReferenceEquals(previousGrid, Grid(wanted)) && (bool)Entry(hit, "Enabled"),
+            Check(!ReferenceEquals(previousGrid, Grid(wanted)) && (bool)Entry(hit, "Draggable"),
                 "Releasing a reservation retained stale search controls");
             reservationPatch.UnpatchAll("qa.module-search-reservation"); reservationPatch = null; reservedItem = null;
             QaItemUi.Click(Ui("f10"), wanted);

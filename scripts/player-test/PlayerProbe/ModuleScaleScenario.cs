@@ -5,15 +5,19 @@ using System.Linq;
 using System.Reflection;
 using TMPro;
 using UnityEngine;
+using UnityEngine.Localization.Settings;
+using UnityEngine.ResourceManagement.AsyncOperations;
+using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 
-// Exercises both native display sizes and two canvas scales in the isolated QA player.
-public sealed class ModuleScaleScenario : EquipmentFixture
+// Exercises both native display sizes and two canvas scales in one locale per process.
+public class ModuleScaleScenario : EquipmentFixture
 {
     private readonly int[] widths = { 1280, 1280, 1920, 1920 };
     private readonly int[] heights = { 720, 720, 1080, 1080 };
     private readonly int[] resolutions = { 3, 3, 0, 0 };
     private readonly float[] scales = { 1f, 1.25f, 1f, 1.25f };
+    private readonly string language;
     private GameItem machine, candidate;
     private GameGridInventory bay;
     private Canvas canvas;
@@ -23,8 +27,13 @@ public sealed class ModuleScaleScenario : EquipmentFixture
     private Vector2 originalReference;
     private float originalMatch, originalScaleFactor, normalScale, stableAfter;
     private int originalMode, originalResolution, originalDivisor, pass, frame;
-    private bool restore, addedScaler;
-    private readonly float deadline = Time.realtimeSinceStartup + 150;
+    private bool restore, addedScaler, localeReady;
+    private float localeStableAfter;
+    private int localeFrame;
+    private readonly float deadline = Time.realtimeSinceStartup + 210;
+
+    public ModuleScaleScenario() : this("zh") { }
+    protected ModuleScaleScenario(string language) { this.language = language; }
 
     public bool Tick(out string result)
     {
@@ -41,6 +50,7 @@ public sealed class ModuleScaleScenario : EquipmentFixture
     {
         result = null;
         Check(Time.realtimeSinceStartup < deadline, "Module scale QA timed out at step " + step + " pass " + pass);
+        if (!localeReady && !VerifyStartupLocale()) return false;
         if (!Ready() || EmporiumOption.Instance == null) return false;
         if (step == 0)
         {
@@ -75,6 +85,7 @@ public sealed class ModuleScaleScenario : EquipmentFixture
         if (step == 1)
         {
             if (Screen.width != widths[pass] || Screen.height != heights[pass] ||
+                LocHelper.GetCurrentLocaleCode() != language ||
                 Time.realtimeSinceStartup < stableAfter || Time.frameCount < frame) return false;
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
             scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.MatchWidthOrHeight;
@@ -89,13 +100,21 @@ public sealed class ModuleScaleScenario : EquipmentFixture
             else Check(canvas.scaleFactor > normalScale * 1.15f, "Canvas scale did not actually increase");
             Open(machine); machine.contentWindow.ToFront(); Action("f10.open");
             var browser = Ui("f10"); Check(browser != null, "Module workbench did not open");
+            frame = Time.frameCount + 3; step = 20; return false;
+        }
+        if (Time.frameCount < frame) return false;
+        if (step == 20)
+        {
+            var browser = Ui("f10");
+            Check(browser != null, "Module workbench closed before direct actions were checked");
+            Canvas.ForceUpdateCanvases();
+            CheckDirectActions(browser);
             browser.Get("idle_tab").button.onClick.Invoke(); browser = Ui("f10");
             LayoutScenario.Select(browser, candidate);
             browser.Get("layout").button.onClick.Invoke();
             Ui("f10").Get("preview").button.onClick.Invoke();
             frame = Time.frameCount + 3; step = 3; return false;
         }
-        if (Time.frameCount < frame) return false;
         if (step == 3)
         {
             var browser = Ui("f10"); Check(browser?.Get("apply") != null, "Module layout preview was not created");
@@ -111,12 +130,13 @@ public sealed class ModuleScaleScenario : EquipmentFixture
             foreach (string id in new[] { "source_title", "storage_status", "selected_count", "layout_performance", "layout_efficiency", "layout_quality" })
                 CheckGlyphs(browser.Get(id)?.text, id);
             Check(browser.Get("storage_status").text.text.Contains("QA Scale Storage"), "Bound storage capacity is absent");
+            CheckDirectActions(browser);
             Check(browser.Get("selected_count").text.text == ModHelper.GetLocalized(Mod, "grid.selected").Replace("{0}", "1"),
                 "Selection count was not updated");
             CheckPreviewWidth(browser);
             if (SystemInfo.graphicsDeviceType != UnityEngine.Rendering.GraphicsDeviceType.Null)
                 ScreenCapture.CaptureScreenshot(Path.Combine(Application.persistentDataPath,
-                    "qa-module-scale-" + widths[pass] + "x" + heights[pass] + "-" + (pass % 2) + ".png"));
+                    "qa-module-scale-" + widths[pass] + "x" + heights[pass] + "-" + (pass % 2) + "-" + language + ".png"));
             frame = Time.frameCount + 3; step = 4; return false;
         }
         if (step == 4)
@@ -124,10 +144,39 @@ public sealed class ModuleScaleScenario : EquipmentFixture
             Ui("f10")?.Close();
             if (++pass < widths.Length) { ChangeDisplay(); step = 1; return false; }
             Restore();
-            result = "PASS module workbench at 1280x720 and 1920x1080 with normal and 125% canvas scale, rendered labels, selection and F12 preview";
+            frame = Time.frameCount + 3; step = 5; return false;
+        }
+        if (step == 5)
+        {
+            Check(LocHelper.GetCurrentLocaleCode() == language, "Locale changed during module scale checks");
+            result = "PASS " + language + " module workbench at 1280x720 and 1920x1080 with normal and 125% canvas scale, visible direct actions, selection and F12 preview";
             return true;
         }
         throw new InvalidOperationException("Unknown module scale QA step " + step);
+    }
+
+    private bool VerifyStartupLocale()
+    {
+        if (SceneManager.GetActiveScene().name != "EmporiumMenu" || MainMenuUIController.Instance == null || CustomUIManager.Instance == null) return false;
+        var initial = LocalizationSettings.InitializationOperation;
+        if (!initial.IsValid() || !initial.IsDone) return false;
+        Check(initial.Status == AsyncOperationStatus.Succeeded, "Native localization initialization failed");
+        var selected = LocalizationSettings.SelectedLocaleAsync;
+        if (!selected.IsValid() || !selected.IsDone) return false;
+        Check(selected.Status == AsyncOperationStatus.Succeeded && selected.Result != null,
+            "Native startup locale could not be loaded");
+        Check(selected.Result.Identifier.Code == language && LocHelper.GetCurrentLocaleCode() == language &&
+            ES3.LoadString("locale", "", null, null) == language,
+            "Incorrect native startup locale: expected=" + language + " actual=" + selected.Result.Identifier.Code);
+        if (localeStableAfter == 0)
+        {
+            localeStableAfter = Time.realtimeSinceStartup + .5f;
+            localeFrame = Time.frameCount + 3;
+            return false;
+        }
+        if (Time.realtimeSinceStartup < localeStableAfter || Time.frameCount < localeFrame) return false;
+        localeReady = true;
+        return true;
     }
 
     private void ChangeDisplay()
@@ -139,20 +188,51 @@ public sealed class ModuleScaleScenario : EquipmentFixture
 
     private void Restore()
     {
-        if (!restore) return;
-        restore = false;
-        if (scaler != null)
+        if (restore)
         {
-            if (addedScaler) UnityEngine.Object.Destroy(scaler);
-            else
+            restore = false;
+            if (scaler != null)
             {
-                scaler.uiScaleMode = originalScaleMode; scaler.screenMatchMode = originalMatchMode;
-                scaler.referenceResolution = originalReference; scaler.matchWidthOrHeight = originalMatch; scaler.scaleFactor = originalScaleFactor;
+                if (addedScaler) UnityEngine.Object.Destroy(scaler);
+                else
+                {
+                    scaler.uiScaleMode = originalScaleMode; scaler.screenMatchMode = originalMatchMode;
+                    scaler.referenceResolution = originalReference; scaler.matchWidthOrHeight = originalMatch; scaler.scaleFactor = originalScaleFactor;
+                }
             }
+            EmporiumOption.Instance.fullscreenMode = originalMode; EmporiumOption.Instance.resolution = originalResolution;
+            EmporiumOption.Instance.borderlessDivisor = originalDivisor; EmporiumOption.Instance.ApplySetting();
         }
-        EmporiumOption.Instance.fullscreenMode = originalMode; EmporiumOption.Instance.resolution = originalResolution;
-        EmporiumOption.Instance.borderlessDivisor = originalDivisor; EmporiumOption.Instance.ApplySetting();
     }
+
+    private static void CheckDirectActions(CustomUIWindow browser)
+    {
+        Check(browser.Get("menu") == null && browser.Get("storage_change") == null, "Collapsed module actions are still present");
+        var choose = browser.Get("storage_choose_footer");
+        var refresh = browser.Get("refresh");
+        Check(choose?.button != null && refresh?.button != null && choose.root.activeInHierarchy && refresh.root.activeInHierarchy &&
+            choose.button.IsInteractable() && refresh.button.IsInteractable(), "Direct storage and refresh buttons are not visible and actionable");
+        Check(choose.GetText() == ModHelper.GetLocalized(Mod, "grid.choose_storage") &&
+            refresh.GetText() == ModHelper.GetLocalized(Mod, "machines.refresh"), "Direct module actions are not localized");
+        CheckGlyphs(choose.text, "storage_choose_footer");
+        CheckGlyphs(refresh.text, "refresh");
+        Check(!choose.text.isTextTruncated && !choose.text.isTextOverflowing && !refresh.text.isTextTruncated && !refresh.text.isTextOverflowing,
+            "Direct module action label is truncated");
+        Rect first = Bounds(choose.Rect), second = Bounds(refresh.Rect);
+        var firstScroll = choose.Rect.GetComponentInParent<ScrollRect>();
+        var secondScroll = refresh.Rect.GetComponentInParent<ScrollRect>();
+        Rect firstViewport = Bounds(firstScroll?.viewport != null ? firstScroll.viewport : browser.ContentRoot as RectTransform);
+        Rect secondViewport = Bounds(secondScroll?.viewport != null ? secondScroll.viewport : browser.ContentRoot as RectTransform);
+        Rect window = Bounds(browser.Rect), screen = new Rect(0, 0, Screen.width, Screen.height);
+        Check(Contains(firstViewport, first) && Contains(secondViewport, second) && Contains(window, first) && Contains(window, second) &&
+            Contains(screen, first) && Contains(screen, second), "Direct module buttons exceed their viewport: " + first + " / " + second);
+        Check(first.xMax <= second.xMin + 1 || second.xMax <= first.xMin + 1 ||
+            first.yMax <= second.yMin + 1 || second.yMax <= first.yMin + 1,
+            "Direct module buttons overlap: " + first + " / " + second);
+    }
+
+    private static bool Contains(Rect outer, Rect inner) => inner.xMin >= outer.xMin - 2 && inner.yMin >= outer.yMin - 2 &&
+        inner.xMax <= outer.xMax + 2 && inner.yMax <= outer.yMax + 2 && inner.width > 0 && inner.height > 0;
 
     private static void CheckGlyphs(TMP_Text text, string id)
     {
@@ -192,4 +272,9 @@ public sealed class ModuleScaleScenario : EquipmentFixture
         Vector2 high = RectTransformUtility.WorldToScreenPoint(camera, corners[2]);
         return Rect.MinMaxRect(low.x, low.y, high.x, high.y);
     }
+}
+
+public sealed class ModuleScaleEnglishScenario : ModuleScaleScenario
+{
+    public ModuleScaleEnglishScenario() : base("en") { }
 }
