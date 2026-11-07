@@ -16,7 +16,7 @@ public sealed class WaterBasketScenario
     private float since = Time.realtimeSinceStartup;
     private static void Need(bool ok, string message) { if (!ok) throw new InvalidOperationException(message); }
     private static CustomUIWindow W(string id) => CustomUIManager.Instance.GetWindow(Mod + "." + id);
-    private static void Action(string key) => RoutingScenario.OpenOptionAction(key);
+    private static void Action(string key) => RoutingScenario.RunFeatureAction(key);
     private static GameItem Item(string id, string label, GameInventory grid)
     {
         var i = DirectoryMaster.Item(id); Need(i != null, "Missing native fixture " + id);
@@ -176,9 +176,10 @@ public sealed class WaterBasketScenario
                 Need(place != null && offered.parentInventory == e.invElement && p.playerCash == money, "Basket preview changed stock/cash or no offer: " + Labels(basket));
                 place.onClick.Invoke(); step++; return false;
             case 4:
-                if (offered.parentInventory != e.backInvinvElement) return false;
-                Need(unseen.parentInventory == e.invElement && p.playerCash == money && GeneralHelper.IsItemOwned(offered), "Staging sold goods or moved unpriced stock");
-                result = "PASS known-grade water preview and 300 µL native pour, untested source excluded, real buyer quote, unpriced goods excluded and staged basket without sale";
+                if (offered.parentInventory != e.backInvinvElement || unseen.parentInventory != e.backInvinvElement) return false;
+                Need(p.playerCash == money && GeneralHelper.IsItemOwned(offered) && GeneralHelper.IsItemOwned(unseen),
+                    "Staging calculated and observed quotes sold goods or changed cash");
+                result = "PASS known-grade water preview and 300 µL native pour, untested source excluded, observed and calculated customer quotes staged without sale";
                 return true;
         }
         return false;

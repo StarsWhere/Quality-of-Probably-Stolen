@@ -32,10 +32,22 @@ namespace ShopAssist
         internal void Start()
         {
             settings.Changed += Changed; ModHook.OnGameLoadedInit += Close; ModHook.OnLeavingStoreEarly += Close;
-            InventoryContextActions.RegisterItem("f26.open", i => ShopSettings.Text("f26.open"), CanOpenFor, OpenFor);
+            InventoryContextActions.RegisterItem("f26.open", i => ShopSettings.Text("f26.open"), AppliesTo, AvailabilityFor, OpenFor);
         }
-        private bool CanOpenFor(GameItem item) => enabled.Value && ShopInventory.InStore && Vessel(item) && !NeedsInspection(item) && Grade(item) != -1 &&
-            WaterHelper.GetFreeCapacity(item) > 0 && VisibleVessels().Contains(item);
+        private static bool AppliesTo(GameItem item) => ShopInventory.InStore && ShopInventory.Owned(item) && VesselKind(item);
+        private ActionAvailability AvailabilityFor(GameItem item)
+        {
+            if (!enabled.Value) return ActionAvailability.Blocked(ActionUnavailableReason.Disabled, "availability.disabled", "f26.enabled");
+            if (!AppliesTo(item)) return ActionAvailability.Blocked(ActionUnavailableReason.MissingObject, "availability.object");
+            if (NeedsInspection(item)) return ActionAvailability.Blocked(ActionUnavailableReason.Conflict, "availability.water_inspect");
+            if (RequestBook.Reserved(item)) return ActionAvailability.Blocked(ActionUnavailableReason.Conflict, "availability.water_reserved");
+            if (!ShopInventory.Movable(item)) return ActionAvailability.Blocked(ActionUnavailableReason.Conflict, "availability.item_movable");
+            if (!WineLiquidAllowed(item)) return ActionAvailability.Blocked(ActionUnavailableReason.Conflict, "availability.water_unavailable");
+            if (Grade(item) == -1) return ActionAvailability.Blocked(ActionUnavailableReason.MissingResource, "availability.water_test");
+            if (WaterHelper.GetFreeCapacity(item) <= 0) return ActionAvailability.Blocked(ActionUnavailableReason.MissingResource, "availability.water_full");
+            return VisibleVessels().Contains(item) ? ActionAvailability.Ready :
+                ActionAvailability.Blocked(ActionUnavailableReason.MissingObject, "availability.water_location");
+        }
         private void OpenFor(GameItem item)
         {
             if (!enabled.Value || !ShopInventory.InStore || !Vessel(item) || NeedsInspection(item) || Grade(item) == -1 || WaterHelper.GetFreeCapacity(item) <= 0) return;
@@ -48,24 +60,38 @@ namespace ShopAssist
         {
             if (WaterHelper.GetCurrentCapacityUL(item) == 0) return -2;
             var publicQuality = item.FindItemFeatureByCategory("CATEGORY_WATER_PURITY");
-            return publicQuality != null && !publicQuality.isDisabled && (publicQuality.IsExposed() || publicQuality.IsFeatureDiscovered()) ?
-                WaterFeatureHelper.GetPurityArrayIndex(WaterHelper.GetWaterPurity(item)) : -1;
+            if (publicQuality != null && !publicQuality.isDisabled && (publicQuality.IsExposed() || publicQuality.IsFeatureDiscovered()))
+                return PublicWaterGrade(WaterHelper.GetWaterPurity(item));
+            // Wine bottles use a transient native purity feature. Their retained
+            // scan text is public; require it to match the current reading before
+            // using the grade, so stale or untested contents stay unknown.
+            if (item.identifier != "wine_bottle" || !item.IsTag(WaterHelper.LAST_SCAN_RESULT_TAG)) return -1;
+            int purity = WaterHelper.GetWaterPurity(item);
+            string shown = string.Format(CultureInfo.CurrentCulture, "[{0}]: {1:F2}% {2}",
+                LocHelper.GetLocalizedMechanic("mech_last_scan"), purity / 100.0, WaterFeatureHelper.GetWaterDisplayName(purity));
+            return item.GetTagReadonly(WaterHelper.LAST_SCAN_RESULT_TAG).GetString() == shown ?
+                PublicWaterGrade(purity) : -1;
         }
-        private static bool Vessel(GameItem item)
+        private static int PublicWaterGrade(int purity) => purity >= WaterFeatureHelper.GUTTERFLOW_WATER_PURITY ?
+            WaterFeatureHelper.GetPurityArrayIndex(purity) : -1;
+        private static bool WineLiquidAllowed(GameItem item) => item != null &&
+            (item.identifier != "wine_bottle" || WineHelper.CanModifyLiquid(item));
+        private static bool Vessel(GameItem item) => VesselKind(item) && WineLiquidAllowed(item) && ShopInventory.Movable(item) && !RequestBook.Reserved(item);
+        private static bool VesselKind(GameItem item)
         {
-            if (!ShopInventory.Movable(item) || !item.IsTag(WaterHelper.LIQUID_CONTAINER_TAG) || item.IsTag("CHEMICAL_PRODUCT_TAG") ||
-                item.IsTag(WaterHelper.LIQUID_CONTAINER_DROPPER_TAG) || RequestBook.Reserved(item)) return false;
+            if (item == null || !item.IsTag(WaterHelper.LIQUID_CONTAINER_TAG) || item.IsTag("CHEMICAL_PRODUCT_TAG") ||
+                item.IsTag(WaterHelper.LIQUID_CONTAINER_DROPPER_TAG)) return false;
             switch (item.identifier)
             {
                 case "bottled_water": case "bottled_water_premium": case "small_bottled_water": case "large_bottled_water":
-                case "water_jug": case "water_tank": case "water_pitcher": case "empty_beer_bottle": case "mini_bottle":
+                case "water_jug": case "water_tank": case "water_pitcher": case "empty_beer_bottle": case "mini_bottle": case "wine_bottle":
                     return true;
                 default: return false;
             }
         }
         private static List<GameItem> VisibleVessels()
         {
-            var stock = ShopInventory.OwnedLocations(true).Where(l => l.Ordinary).SelectMany(l => l.Inventory.childItems).ToList();
+            var stock = ShopInventory.OwnedLocations(true).Where(ShopInventory.VisibleGoods).SelectMany(l => l.Inventory.childItems).ToList();
             var all = stock.Where(Vessel).ToList();
             foreach (var farm in stock)
             {
@@ -94,7 +120,7 @@ namespace ShopAssist
         }
         private bool CanPour(GameItem item, int grade)
         {
-            if (item == null || target == null || item == target || grade < 0 || NeedsInspection(item) || NeedsInspection(target) ||
+            if (item == null || target == null || item == target || !Vessel(item) || !Vessel(target) || grade < 0 || NeedsInspection(item) || NeedsInspection(target) ||
                 !item.MayTarget(target) || !item.CanTarget(target)) return false;
             int dest = Grade(target);
             return dest != -1 && (dest == -2 || dest == grade || crossGrade.Value);
@@ -119,11 +145,14 @@ namespace ShopAssist
         private void DrawWith(List<GameItem> all)
         {
             if (target != null && !all.Contains(target)) target = null;
-            var dests = all.Where(i => !NeedsInspection(i) && Grade(i) != -1 && WaterHelper.GetFreeCapacity(i) > 0).ToList();
+            string run = PlayerStore.Instance.runID;
+            int slot = PlayerStore.Instance.saveSlotId;
+            IList<GameItem> Destinations() => enabled.Value && SameScope(run, slot) ? VisibleVessels()
+                .Where(i => !NeedsInspection(i) && Grade(i) != -1 && WaterHelper.GetFreeCapacity(i) > 0).ToList() : new List<GameItem>();
             var b = Window();
             VisualChoices.Slot(b, ShopSettings.Text("visual.target"), target, target == null ? null : Caption(target),
-                () => VisualChoices.ChooseItem(ShopSettings.Text("visual.target"), dests, target, item =>
-                { target = item; chosen.Remove(item); Draw(); }), "target");
+                () => VisualChoices.ChooseItem(ShopSettings.Text("visual.target"), Destinations, target, item =>
+                { if (Destinations().Contains(item)) { target = item; chosen.Remove(item); Draw(); } }), "target");
             if (target == null) { b.AddLabel(ShopSettings.Text("f26.hint")).Show(); return; }
             b.AddLabel(ShopSettings.Format("f26.free", Ml(WaterHelper.GetFreeCapacity(target))));
             b.BeginScrollFlexible(125);

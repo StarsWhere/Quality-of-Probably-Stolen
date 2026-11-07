@@ -78,7 +78,7 @@ public sealed class WaterSafetyScenario
         destination = Item("water_jug", "QA water boundary target", 0, 0);
         var secondTarget = Item("water_jug", "QA water inspection target", 0, 0);
         Need(Grade(a) >= 0 && Grade(b) >= 0 && Grade(a) != Grade(b), "Water grades are not publicly distinguishable");
-        RoutingScenario.OpenOptionAction("f26.open"); QaItemUi.Choose(Window(), "target", "QA water boundary target");
+        RoutingScenario.RunFeatureAction("f26.open"); QaItemUi.Choose(Window(), "target", "QA water boundary target");
         QaItemUi.Click(Window(), a); QaItemUi.Click(Window(), b); Window().Get("preview").button.onClick.Invoke();
         var preview = Window(); TradeScenario.SetOptions(false, "f26.mix");
         preview.Get("pour").button.onClick.Invoke();
@@ -95,7 +95,7 @@ public sealed class WaterSafetyScenario
         Need(calls == 1 && Inspect(changed) && Inspect(secondTarget) && Selected(changed),
             "An interrupted native pour did not preserve the source and mark both vessels for inspection");
         Window("operation")?.Close(); Window().Close();
-        RoutingScenario.OpenOptionAction("f26.open");
+        RoutingScenario.RunFeatureAction("f26.open");
         Need(Inspect(changed) && Inspect(secondTarget), "Closing and reopening cleared interrupted-pour inspection");
         result = "PASS F26 current mixing policy, per-source volume revalidation and interrupted-pour inspection";
         return true;
