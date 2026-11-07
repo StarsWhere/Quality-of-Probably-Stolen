@@ -172,7 +172,8 @@ public sealed class FastPlaybackTransitionsFlowScenario
         initialDay = StoreStation.GetDayCounter(); initialScale = Time.timeScale;
         observerId = "qa.fastplay.flow." + Guid.NewGuid().ToString("N");
         observer = new Harmony(observerId); active = this;
-        Observe(AccessTools.Method(typeof(MapUIManager), "<OpenUI>b__38_0"), nameof(MapOpened));
+        Observe(AccessTools.Method(typeof(MapUIManager), "<OpenUI>b__40_0") ??
+            AccessTools.Method(typeof(MapUIManager), "<OpenUI>b__38_0"), nameof(MapOpened));
         Observe(Nested(typeof(MapUIManager), "<Travel>b__0"), nameof(Traveled));
         Observe(Nested(typeof(MapUIManager), "<ReturnNow>b__0"), nameof(Returned));
         Observe(Nested(typeof(EndOfDayUIManager), "<OnEndDayButtonClick>b__0"), nameof(NightDuring));

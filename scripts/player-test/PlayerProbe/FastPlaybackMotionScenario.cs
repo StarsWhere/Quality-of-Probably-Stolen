@@ -21,7 +21,8 @@ public sealed class FastPlaybackMotionScenario
     private static int footsteps, arrivals, departures, guardArrivals, guardDepartures, guardDispatches;
     private static int fastGuardArrivals, fastGuardDepartures;
     private static int unlocked, frontHidden, closeClient, closeSound, dismissCalls;
-    private static float lastFootstep, lastGuardDispatch, unlockedAt, closedAt;
+    private static int nextCalls;
+    private static float lastFootstep, lastGuardDispatch, unlockedAt, closedAt, nextCalledAt;
     private readonly QaNewRun start = new QaNewRun();
     private readonly float began = Time.realtimeSinceStartup;
     private QaFastPlayback playback;
@@ -31,6 +32,10 @@ public sealed class FastPlaybackMotionScenario
     private float unrelated, initialTimeScale, timer, startedAt;
     private int step, speedIndex, previousArrivals, previousDepartures, lockBefore;
     private StoreClientInstance replacementClient;
+    private StoreClientInstance savedClient;
+    private PlayerStore.StoreState savedStoreState;
+    private bool savedCallNext, savedIgnoreLeft;
+    private int savedNextFlag, nextFlagBefore;
     private static readonly float[] Rates = { 2f, 4f, 8f, 16f };
 
     public bool Tick(out string result)
@@ -72,6 +77,7 @@ public sealed class FastPlaybackMotionScenario
             Observe(Closure("<EndAndClose>b__1"), nameof(CloseClient));
             Observe(Closure("<EndAndClose>b__2"), nameof(CloseSound));
             Observe(AccessTools.Method(typeof(PlayerStore), nameof(PlayerStore.DismissCurrentClient)), nameof(Dismissed));
+            Observe(AccessTools.Method(typeof(PlayerStore), nameof(PlayerStore.TryCallNextClient)), nameof(NextCalled));
             initialTimeScale = Time.timeScale;
             controlTween = DOTween.To(() => unrelated, value => unrelated = value, 1f, 1000f).SetEase(Ease.Linear);
             controlTween.timeScale = .7f;
@@ -123,7 +129,9 @@ public sealed class FastPlaybackMotionScenario
             customerTween.timeScale = .02f;
             previousArrivals = arrivals;
             ui.QueueClientArriveAnimation();
-            Need(customerTween.IsPlaying() && Near(customerTween.timeScale, .32f), "Customer arrival path was not scoped to 16x");
+            // The current game resets the arrival path to its native 1x baseline before playing it.
+            Need(customerTween.IsPlaying() && Near(customerTween.timeScale, 16f), "Customer arrival path was not scoped to 16x: playing=" +
+                customerTween.IsPlaying() + ", scale=" + customerTween.timeScale + ", rate=" + playback.Rate);
             customerTween.timeScale = .04f; step++; return false;
         }
         if (step == 8)
@@ -301,8 +309,61 @@ public sealed class FastPlaybackMotionScenario
             playback.Hold(); if (Time.realtimeSinceStartup < timer) return false;
             Need(unlocked == 1 && frontHidden == 1 && closeClient == 1 && closeSound == 1 && dismissCalls == 0,
                 "Shutter callbacks repeated after reaching the endpoint");
+            savedClient = player.currentClientInstance; savedStoreState = player.storeState;
+            savedCallNext = player.callNextWhenPossible; savedNextFlag = player.lockNextBellFlag;
+            savedIgnoreLeft = (bool)ClientIgnoreLeft.GetValue(ui.clientGameObject);
+            player.storeState = PlayerStore.StoreState.OPEN;
+            player.currentClientInstance = QuietClient();
+            ClientIgnoreLeft.SetValue(ui.clientGameObject, false);
+            nextFlagBefore = player.lockNextBellFlag;
+            nextCalls = 0; player.callNextWhenPossible = true; player.ClientFlagUp();
+            startedAt = Time.time;
+            ui.clientGameObject.OnLeft();
+            Need(!player.callNextWhenPossible && nextCalls == 0 && player.lockNextBellFlag == nextFlagBefore + 1,
+                "Fast customer departure did not schedule the native next-client callback");
+            timer = Time.realtimeSinceStartup + 3f; step++; return false;
+        }
+        if (step == 29)
+        {
+            playback.Hold(); Need(Time.realtimeSinceStartup < timer, "Fast next-client callback did not fire");
+            if (nextCalls == 0) return false;
+            Need(nextCalls == 1 && nextCalledAt - startedAt < .35f && player.lockNextBellFlag == nextFlagBefore,
+                "Fast next-client callback was late, repeated or failed to release the client lock");
+            timer = Time.realtimeSinceStartup + .65f; step++; return false;
+        }
+        if (step == 30)
+        {
+            playback.Hold(); if (Time.realtimeSinceStartup < timer) return false;
+            Need(nextCalls == 1, "Fast next-client callback repeated");
+            playback.Release(); step++; return false;
+        }
+        if (step == 31)
+        {
+            if (playback.Rate != 1f) return false;
+            nextCalls = 0; player.callNextWhenPossible = true; player.ClientFlagUp();
+            startedAt = Time.time;
+            ui.clientGameObject.OnLeft();
+            Need(!player.callNextWhenPossible && nextCalls == 0 && player.lockNextBellFlag == nextFlagBefore + 1,
+                "Normal customer departure did not schedule the native next-client callback");
+            timer = Time.realtimeSinceStartup + 3f; step++; return false;
+        }
+        if (step == 32)
+        {
+            Need(Time.realtimeSinceStartup < timer, "Normal next-client callback did not fire");
+            if (nextCalls == 0) return false;
+            Need(nextCalls == 1 && nextCalledAt - startedAt >= .4f && nextCalledAt - startedAt < 2f &&
+                player.lockNextBellFlag == nextFlagBefore, "Normal next-client callback had the wrong timing or lock state");
+            timer = Time.realtimeSinceStartup + .65f; step++; return false;
+        }
+        if (step == 33)
+        {
+            if (Time.realtimeSinceStartup < timer) return false;
+            Need(nextCalls == 1, "Normal next-client callback repeated");
+            player.currentClientInstance = savedClient; player.storeState = savedStoreState;
+            player.callNextWhenPossible = savedCallNext; player.lockNextBellFlag = savedNextFlag;
+            ClientIgnoreLeft.SetValue(ui.clientGameObject, savedIgnoreLeft);
             Cleanup();
-            result = "PASS F42 shutter motion and native callbacks, stale-customer guard, walking timers, customer forward/back/right paths, external tween baseline and guard endpoints";
+            result = "PASS F42 shutter and motion paths, guard endpoints, walking timers, and fast/normal next-client callback timing and single delivery";
             return true;
         }
         throw new InvalidOperationException("Unknown motion QA step " + step);
@@ -364,6 +425,7 @@ public sealed class FastPlaybackMotionScenario
     private static void CloseClient() { closeClient++; closedAt = Time.time; }
     private static void CloseSound() { closeSound++; closedAt = Time.time; }
     private static void Dismissed() { dismissCalls++; }
+    private static void NextCalled() { nextCalls++; nextCalledAt = Time.time; }
     private static void CloseDialogue()
     {
         var dialog = DialogUIManager.Instance;

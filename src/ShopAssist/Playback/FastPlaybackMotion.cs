@@ -256,7 +256,9 @@ namespace ShopAssist
             for (int i = 0; i < codes.Count; i++) if (codes[i].Calls(native)) indices.Add(i);
             bool valid = native != null && replacement != null && sites != null && indices.Count == sites.Length;
             int start = 0;
-            if (valid)
+            if (valid && __originalMethod.DeclaringType == typeof(StoreClientMono) && __originalMethod.Name == "OnLeft")
+                valid = MatchesClientLeave(codes, indices[0]);
+            else if (valid)
             {
                 for (int i = 0; i < sites.Length; i++)
                 {
@@ -273,6 +275,39 @@ namespace ShopAssist
             }
             foreach (int index in indices) codes[index].operand = replacement;
             return codes;
+        }
+
+        private static bool MatchesClientLeave(List<CodeInstruction> codes, int call)
+        {
+            // The compiler caches the Action. Verify its complete construction and that the
+            // native coroutine consumes this exact half-second wait before replacing it.
+            if (call < 11 || call + 2 >= codes.Count ||
+                !codes[call - 11].Calls(AccessTools.PropertyGetter(typeof(StoreUIManager), "Instance")) ||
+                codes[call - 10].opcode != OpCodes.Ldc_R4 || !(codes[call - 10].operand is float seconds) || seconds != .5f ||
+                codes[call - 9].opcode != OpCodes.Ldsfld || !(codes[call - 9].operand is FieldInfo cache) ||
+                cache.FieldType != typeof(Action) || codes[call - 8].opcode != OpCodes.Dup ||
+                (codes[call - 7].opcode != OpCodes.Brtrue && codes[call - 7].opcode != OpCodes.Brtrue_S) ||
+                codes[call - 7].operand == null || !HasLabel(codes[call], codes[call - 7].operand) ||
+                codes[call - 6].opcode != OpCodes.Pop || codes[call - 5].opcode != OpCodes.Ldsfld ||
+                !(codes[call - 5].operand is FieldInfo singleton) || codes[call - 4].opcode != OpCodes.Ldftn ||
+                !(codes[call - 4].operand is MethodInfo callback) || callback.IsStatic || callback.ReturnType != typeof(void) ||
+                callback.GetParameters().Length != 0 || callback.DeclaringType?.DeclaringType != typeof(StoreClientMono) ||
+                singleton.DeclaringType != callback.DeclaringType || singleton.FieldType != callback.DeclaringType || singleton.Name != "<>9" ||
+                cache.DeclaringType != callback.DeclaringType ||
+                !((callback.Name == "<OnLeft>b__42_0" && cache.Name == "<>9__42_0") ||
+                  (callback.Name == "<OnLeft>b__37_0" && cache.Name == "<>9__37_0")) ||
+                codes[call - 3].opcode != OpCodes.Newobj || !(codes[call - 3].operand is ConstructorInfo ctor) ||
+                ctor.DeclaringType != typeof(Action) || codes[call - 2].opcode != OpCodes.Dup ||
+                codes[call - 1].opcode != OpCodes.Stsfld || !Equals(codes[call - 1].operand, cache) ||
+                !codes[call + 1].Calls(AccessTools.Method(typeof(MonoBehaviour), nameof(MonoBehaviour.StartCoroutine), new[] { typeof(IEnumerator) })) ||
+                codes[call + 2].opcode != OpCodes.Pop) return false;
+            return true;
+        }
+
+        private static bool HasLabel(CodeInstruction instruction, object label)
+        {
+            var labels = AccessTools.Field(typeof(CodeInstruction), "labels")?.GetValue(instruction) as IList;
+            return labels != null && labels.Contains(label);
         }
 
         private static bool Matches(List<CodeInstruction> codes, int start, int end, WaitSite site)
@@ -309,7 +344,7 @@ namespace ShopAssist
                 case "StartArrestSequence" when type == typeof(StoreUIManager):
                     return new[] { new WaitSite { Callback = "<StartArrestSequence>b__124_0", DelayArgument = true } };
                 case "OnLeft" when type == typeof(StoreClientMono):
-                    return new[] { new WaitSite { Callback = "<OnLeft>b__37_0", Constant = .5f } };
+                    return new[] { new WaitSite { Callback = "<OnLeft>b__42_0", Constant = .5f } };
                 case "OnArrested" when type == typeof(WantedElement):
                     return new[] { new WaitSite { Callback = "<OnArrested>b__6_0", Constant = 1.5f } };
                 case "PlayWalking" when type == typeof(EmporiumAudioPlayer):
