@@ -23,6 +23,14 @@ namespace ShopAssist
         private string machinesRun;
         private int machinesSlot, machinesRevision;
         private bool machinesDirty, onlyAttention, machinesTruncated;
+        private bool overviewStructureDirty = true, overviewIssuesDirty = true, machineAttentionDirty;
+        private float nextMachinesRefresh, nextMachineAttention, nextConverterRefresh;
+        private List<ShopInventory.Location> overviewLocations;
+        private List<MachineRow> overviewBaseRows, overviewIssueRows;
+        private Dictionary<GameInventory, GameItem> overviewInventoryOwners;
+        private Dictionary<int, GameItem> overviewOwned;
+        private Dictionary<GameItem, MachineRow> overviewRowsByItem;
+        private readonly HashSet<GameItem> overviewChangedMachines = new HashSet<GameItem>();
         private string filterPath;
         private GameItem selectedOverviewMachine;
         private string selectedOverviewPath, selectedOverviewSlot;
@@ -40,16 +48,34 @@ namespace ShopAssist
             CloseMachines();
             machinesRun = PlayerStore.Instance.runID;
             machinesSlot = PlayerStore.Instance.saveSlotId;
+            overviewStructureDirty = overviewIssuesDirty = true;
             RenderMachines();
         }
 
         private void TickMachineOverview()
         {
+            if (machineAttentionDirty && Time.unscaledTime >= nextMachineAttention)
+            {
+                machineAttentionDirty = false;
+                nextMachineAttention = Time.unscaledTime + 0.5f;
+                AttentionBook.Changed();
+                if (machinesWindow != null) { overviewIssuesDirty = true; machinesDirty = true; }
+            }
             if (!overviewEnabled.Value) { if (machinesWindow != null) CloseMachines(); return; }
             if (machinesWindow != null)
             {
                 if (!machinesWindow.IsAlive || !SameMachineSession()) { CloseMachines(); return; }
-                if (machinesDirty) RenderMachines();
+                if (Time.unscaledTime >= nextConverterRefresh && overviewBaseRows != null)
+                {
+                    nextConverterRefresh = Time.unscaledTime + 2f;
+                    foreach (MachineRow row in overviewBaseRows)
+                    {
+                        GameItem battery = MachinePanel<GameSlotInventory>(row.Item, "power")?.childItem;
+                        if (battery?.IsTag("CURRENT_CONVERTER_TAG") == true)
+                        { overviewChangedMachines.Add(row.Item); machinesDirty = true; }
+                    }
+                }
+                if (machinesDirty && Time.unscaledTime >= nextMachinesRefresh && !OverviewInteractionBusy()) RenderMachines();
             }
             KeyCode key = overviewKey();
             if (key != KeyCode.None && ShopInput.Ready() && Input.GetKeyDown(key)) OpenMachines();
@@ -58,12 +84,27 @@ namespace ShopAssist
         private bool SameMachineSession() => ShopInventory.InStore && PlayerStore.Instance.runID == machinesRun &&
             PlayerStore.Instance.saveSlotId == machinesSlot;
 
-        private void MachineSettingsChanged() { if (!overviewEnabled.Value) CloseMachines(); else machinesDirty = true; }
+        private bool OverviewInteractionBusy()
+        {
+            if (StoreUIManager.IsAnyTyping() || UIDragHandler.isDraggingAnyUI || Input.GetMouseButton(0) ||
+                ItemMouseDragHandler.current?.IsDraggingItem == true || ItemGrid.DragActive) return true;
+            return machinesWindow?.root != null &&
+                (machinesWindow.root.GetComponentsInChildren<TMPro.TMP_Dropdown>(true).Any(dropdown => dropdown.IsExpanded) ||
+                 machinesWindow.root.GetComponentsInChildren<Dropdown>(true).Any(dropdown =>
+                     dropdown.transform.Find("Dropdown List")?.gameObject.activeInHierarchy == true));
+        }
+
+        private void MachineSettingsChanged()
+        {
+            if (!overviewEnabled.Value) CloseMachines();
+            else { overviewStructureDirty = overviewIssuesDirty = true; machinesDirty = true; }
+        }
 
         private void RenderMachines()
         {
             if (!SameMachineSession()) { CloseMachines(); return; }
             machinesDirty = false;
+            nextMachinesRefresh = Time.unscaledTime + 0.3f;
             List<MachineRow> rows = MachineRows();
             var paths = rows.Select(row => row.Path).Distinct().OrderBy(path => path, StringComparer.CurrentCulture).ToList();
             if (filterPath != null && !paths.Contains(filterPath)) filterPath = null;
@@ -132,7 +173,7 @@ namespace ShopAssist
                     {
                         if (!CurrentView()) return;
                         if (!cardRows.TryGetValue(entry, out MachineRow row) || !ShopInventory.Owned(row.Item))
-                        { machinesDirty = true; return; }
+                        { overviewStructureDirty = true; machinesDirty = true; return; }
                         SelectOverview(row); RenderMachines();
                     } });
             foreach (MachineRow row in withoutShape)
@@ -153,7 +194,12 @@ namespace ShopAssist
                 builder.End().AddLabel(selectedRow.Status);
                 if (builder.Last.text != null) builder.Last.text.richText = false;
             }
-            builder.AddButton(ShopSettings.Text("machines.refresh"), () => { if (CurrentView()) RenderMachines(); });
+            builder.AddButton(ShopSettings.Text("machines.refresh"), () =>
+            {
+                if (!CurrentView()) return;
+                overviewStructureDirty = overviewIssuesDirty = true;
+                RenderMachines();
+            });
             CustomUIBuilder.RebuildLayout(own.ContentRoot);
             UiLayout.RestoreScroll(machinesScroll, scrollPosition);
         }
@@ -177,39 +223,77 @@ namespace ShopAssist
 
         private List<MachineRow> MachineRows()
         {
-            var result = new List<MachineRow>();
-            machinesTruncated = false;
-            var locations = ShopInventory.MachineLocations();
-            var seen = new HashSet<GameItem>();
-            foreach (ShopInventory.Location location in locations)
+            if (overviewStructureDirty || overviewLocations == null)
             {
-                if (location.IsMachine) continue;
-                foreach (GameItem item in location.Inventory.childItems)
+                overviewStructureDirty = false;
+                overviewIssuesDirty = true;
+                overviewLocations = ShopInventory.MachineLocations();
+                overviewInventoryOwners = new Dictionary<GameInventory, GameItem>();
+                foreach (ShopInventory.Location location in overviewLocations.Where(location => location.IsMachine && location.Owner != null))
+                    overviewInventoryOwners[location.Inventory] = location.Owner;
+                overviewOwned = UniqueOwnedItems();
+                overviewBaseRows = new List<MachineRow>();
+                overviewRowsByItem = new Dictionary<GameItem, MachineRow>();
+                var seen = new HashSet<GameItem>();
+                foreach (ShopInventory.Location location in overviewLocations)
                 {
-                    if (item == null || !seen.Add(item) || !ShopInventory.Owned(item) ||
-                        !(item.IsGameItemType("MACHINE") || item.IsTag("machinery") || item.IsTag("HYDROPONIC_MACHINE_TAG"))) continue;
-                    bool attention;
-                    string status;
-                    switch (item.identifier)
+                    if (location.IsMachine) continue;
+                    foreach (GameItem item in location.Inventory.childItems)
                     {
-                        case "moisture_farm": status = MoistureStatus(item, locations, out attention); break;
-                        case "evaporator": case "printer": case "furnace": status = ProductionStatus(item, out attention); break;
-                        default: status = HydroponicStatus(item, locations, out attention); break;
+                        if (item == null || !seen.Add(item) || !ShopInventory.Owned(item) || !OverviewMachine(item)) continue;
+                        var row = new MachineRow { Item = item, Path = location.Name };
+                        UpdateMachineRow(row);
+                        overviewBaseRows.Add(row);
+                        overviewRowsByItem[item] = row;
+                        if (overviewBaseRows.Count > 100) break;
                     }
-                    result.Add(new MachineRow { Item = item, Path = location.Name, Status = status, NeedsAttention = attention });
-                    if (result.Count >= 100) { machinesTruncated = true; return result; }
+                    if (overviewBaseRows.Count > 100) break;
+                }
+                overviewChangedMachines.Clear();
+            }
+            else if (overviewChangedMachines.Count > 0)
+            {
+                foreach (MachineRow row in overviewBaseRows)
+                    if (overviewChangedMachines.Contains(row.Item)) UpdateMachineRow(row);
+                overviewChangedMachines.Clear();
+            }
+            if (overviewIssuesDirty || overviewIssueRows == null)
+            {
+                overviewIssuesDirty = false;
+                overviewIssueRows = new List<MachineRow>();
+                foreach (AttentionItem issue in AttentionBook.Snapshot().Where(issue => issue.ItemId > 0 &&
+                    (issue.Feature == "f31.open" || issue.Feature == "f32.open" || issue.Feature == "f33.open" || issue.Feature == "f35.open")))
+                {
+                    if (!overviewOwned.TryGetValue(issue.ItemId, out GameItem host)) continue;
+                    overviewIssueRows.Add(new MachineRow { Item = host, Path = MachineLocation(host, overviewLocations), NeedsAttention = true,
+                        Identity = issue.Key, ReasonKey = issue.ReasonKey, Status = ShopSettings.Text(issue.ReasonKey ?? "availability.unknown") });
                 }
             }
-            Dictionary<int, GameItem> owned = UniqueOwnedItems();
-            foreach (AttentionItem issue in AttentionBook.Snapshot().Where(issue => issue.ItemId > 0 &&
-                (issue.Feature == "f31.open" || issue.Feature == "f32.open" || issue.Feature == "f35.open")))
+            machinesTruncated = overviewBaseRows.Count + overviewIssueRows.Count > 100;
+            return overviewBaseRows.Concat(overviewIssueRows).Take(100).ToList();
+        }
+
+        private static bool OverviewMachine(GameItem item) => item.IsGameItemType("MACHINE") ||
+            item.IsTag("machinery") || item.IsTag("HYDROPONIC_MACHINE_TAG");
+
+        private void UpdateMachineRow(MachineRow row)
+        {
+            try
             {
-                if (!owned.TryGetValue(issue.ItemId, out GameItem host)) continue;
-                result.Add(new MachineRow { Item = host, Path = MachineLocation(host, locations), NeedsAttention = true,
-                    Identity = issue.Key, ReasonKey = issue.ReasonKey, Status = ShopSettings.Text(issue.ReasonKey ?? "availability.unknown") });
-                if (result.Count >= 100) { machinesTruncated = true; return result; }
+                bool attention;
+                switch (row.Item.identifier)
+                {
+                    case "moisture_farm": row.Status = MoistureStatus(row.Item, overviewLocations, out attention); break;
+                    case "evaporator": case "printer": case "furnace": row.Status = ProductionStatus(row.Item, out attention); break;
+                    default: row.Status = HydroponicStatus(row.Item, overviewLocations, out attention); break;
+                }
+                row.NeedsAttention = attention;
             }
-            return result;
+            catch (Exception error)
+            {
+                row.Status = ShopSettings.Text("f30.unknown"); row.NeedsAttention = true;
+                log("F30 could not read " + row.Item.identifier + ": " + error.Message);
+            }
         }
 
         private static string ProductionStatus(GameItem machine, out bool attention)
@@ -225,7 +309,7 @@ namespace ShopAssist
                 var vessel = MachinePanel<GameSlotInventory>(machine, "container");
                 var distillate = MachinePanel<GameSlotInventory>(machine, "distillate");
                 if (vessel == null || distillate == null) return ShopSettings.Text("f30.unknown");
-                if (distillate.childItem != null && WaterHelper.GetCurrentCapacityML(distillate.childItem) > 0)
+                if (distillate.childItem != null && WaterHelper.GetCurrentCapacityUL(distillate.childItem) > 0)
                     suffix = " · " + ShopSettings.Text("f30.distillate");
                 if (vessel.childItem == null) status = "f30.water_container";
                 else if (!MachineEvaporator.CanEvaporateContainer(vessel.childItem)) status = "f30.no_evaporation";
@@ -238,36 +322,50 @@ namespace ShopAssist
                 if (output.childItems.Count > 0) suffix = " · " + ShopSettings.Format("f30.output", output.childItems.Count);
                 if (machine.identifier == "printer")
                 {
+                    string state = MachineProgressHelper.GetMachineState(machine);
+                    if (state != MachineProgressHelper.STATE_READY && state != MachineProgressHelper.STATE_WORKING)
+                        return ShopSettings.Text("f30.unknown") + suffix;
                     var chip = MachinePanel<GameSlotInventory>(machine, "chip");
                     if (chip == null) return ShopSettings.Text("f30.unknown") + suffix;
-                    if (chip.childItem == null) status = "f30.chip";
-                    else if (!WillRunCycle(machine)) status = "f30.materials";
+                    if (state == MachineProgressHelper.STATE_READY)
+                    {
+                        if (chip.childItem == null) status = "f30.chip";
+                        else if (!MachineProgressHelper.CanStart(chip.childItem, machine) ||
+                            !MachineProgressHelper.HasRequiredAdditionalItems(chip.childItem, input.childItems)) status = "f30.materials";
+                    }
                 }
                 else
                 {
                     var bay = MachinePanel<GameGridInventory>(machine, "module");
                     if (bay == null) return ShopSettings.Text("f30.unknown") + suffix;
-                    int required = bay.childItems.Any(i => i.identifier == "furnace_module_blast") ? 3 : 2;
-                    if (input.childItems.Count(i => i.identifier == "scrap_metal" || i.identifier == "common_ore") < required)
+                    int required = GraphUtils.FindChildType<GameItem>(bay, i => i.identifier == "furnace_module_blast") != null ? 3 : 2;
+                    int metal = GraphUtils.FindAllChildrenType<GameItem>(input,
+                        i => i.identifier == "scrap_metal" || i.identifier == "common_ore").Count;
+                    bool junk = MachineFurnace.HaveJunkModule(bay) &&
+                        GraphUtils.FindAllChildrenType<GameItem>(input, i => i.identifier == "junk").Count >= 6;
+                    if (metal < required && !junk)
                         status = "f30.materials";
-                    // A furnace can still refuse an output shape. Only its native cycle may decide that.
                 }
             }
             if (status != null) return ShopSettings.Text(status) + suffix;
             var battery = power.childItem;
             if (battery == null) return ShopSettings.Text("f30.battery") + suffix;
-            if (!OrdinaryBattery(battery)) return ShopSettings.Text("f30.power_unknown") + suffix;
-            if (battery.GetTagReadonly("power_source_item_energy").GetInt() < MachineryHelper.GetMachinePowerUsage(machine))
+            if (!battery.IsTag("power_source_item")) return ShopSettings.Text("f30.power_unknown") + suffix;
+            if (!MachineHelper.CanPower(machine, power))
                 return ShopSettings.Text("f30.power") + suffix;
+            if (machine.identifier == "furnace") return ShopSettings.Text("f30.verify_output") + suffix;
             attention = suffix.Length != 0;
-            return ShopSettings.Text(machine.identifier == "printer" && MachineProgressHelper.GetMachineState(machine) == MachineProgressHelper.STATE_WORKING
-                ? "f30.working" : "f30.supplied") + suffix;
+            return ShopSettings.Text(machine.identifier == "printer"
+                ? MachineProgressHelper.GetMachineState(machine) == MachineProgressHelper.STATE_WORKING ? "f30.working" : "f30.ready"
+                : "f30.supplied") + suffix;
         }
 
         private static string HydroponicStatus(GameItem machine, List<ShopInventory.Location> locations, out bool attention)
         {
             attention = true;
+            if (machine.IsTag("BROKEN_MACHINE_TAG")) return ShopSettings.Text("f30.broken");
             if (!machine.IsTag("HYDROPONIC_MACHINE_TAG")) return ShopSettings.Text("f30.unknown");
+            if (machine.identifier != "hydroponic") return ShopSettings.Text("f30.unknown");
             var own = locations.Where(location => ReferenceEquals(location.Owner, machine)).ToList();
             GameSlotInventory seed = SingleSlot(own, "seed"), water = SingleSlot(own, "water"), power = SingleSlot(own, "power");
             var output = own.Where(location => location.Role == "output").Select(location => location.Inventory).ToList();
@@ -276,13 +374,13 @@ namespace ShopAssist
             string suffix = waiting > 0 ? " · " + ShopSettings.Format("f30.output", waiting) : "";
             if (seed.childItem == null) return ShopSettings.Text("f30.seed") + suffix;
             if (water.childItem == null) return ShopSettings.Text("f30.water_container") + suffix;
-            if (WaterHelper.GetCurrentCapacityML(water.childItem) < HydroponicHelper.GetWaterUsePerCycle(seed.childItem))
+            if (!(bool)AccessTools.Method(typeof(MachineHydroponic), "CanWater").Invoke(null, new object[] { machine }))
                 return ShopSettings.Text("f30.water") + suffix;
             if (power.childItem == null) return ShopSettings.Text("f30.battery") + suffix;
             GameItem battery = power.childItem;
-            if (!battery.IsTag("power_source_item") || battery.IsTag("CURRENT_CONVERTER_TAG") || battery.IsTag("HYPERTECH_BATTERY_TAG"))
+            if (!battery.IsTag("power_source_item"))
                 return ShopSettings.Text("f30.power_unknown") + suffix;
-            if (battery.GetTagReadonly("power_source_item_energy").GetInt() < MachineryHelper.GetMachinePowerUsage(machine))
+            if (!MachineHelper.CanPower(machine, power))
                 return ShopSettings.Text("f30.power") + suffix;
             string state = MachineProgressHelper.GetMachineState(machine);
             if (state != MachineProgressHelper.STATE_READY && state != MachineProgressHelper.STATE_WORKING)
@@ -302,9 +400,9 @@ namespace ShopAssist
             if (WaterHelper.GetFreeCapacity(bottle.childItem) == 0) return ShopSettings.Text("f30.farmFull");
             var battery = power.childItem;
             if (battery == null) return ShopSettings.Text("f30.battery");
-            if (!battery.IsTag("power_source_item") || battery.IsTag("CURRENT_CONVERTER_TAG") || battery.IsTag("HYPERTECH_BATTERY_TAG"))
+            if (!battery.IsTag("power_source_item"))
                 return ShopSettings.Text("f30.power_unknown");
-            if (battery.GetTagReadonly("power_source_item_energy").GetInt() < MachineryHelper.GetMachinePowerUsage(machine))
+            if (!MachineHelper.CanPower(machine, power))
                 return ShopSettings.Text("f30.power");
             attention = false;
             return ShopSettings.Text("f30.ready");
@@ -321,16 +419,61 @@ namespace ShopAssist
             CustomUIWindow window = machinesWindow;
             machinesWindow = null; machinesScroll = null; machinesRun = null; machinesDirty = false; filterPath = null; machinesRevision++;
             selectedOverviewMachine = null; selectedOverviewPath = selectedOverviewSlot = null;
+            overviewLocations = null; overviewBaseRows = null; overviewIssueRows = null;
+            overviewInventoryOwners = null; overviewRowsByItem = null; overviewOwned = null;
+            overviewChangedMachines.Clear(); overviewStructureDirty = overviewIssuesDirty = true;
             window?.Close();
+        }
+
+        private static void OverviewInventoryChanged(GameInventory inventory, GameItem item)
+        {
+            MachineTools owner = current;
+            if (owner?.started != true) return;
+            owner.modulesDirty = owner.maintenanceDirty = true;
+            owner.machineAttentionDirty = true;
+            if (owner.machinesWindow == null) return;
+            if (inventory != null && owner.overviewInventoryOwners != null &&
+                owner.overviewInventoryOwners.TryGetValue(inventory, out GameItem machine))
+            { owner.overviewChangedMachines.Add(machine); owner.machinesDirty = true; }
+            else if (item != null && (item.contentWindow != null || OverviewMachine(item)))
+            { owner.overviewStructureDirty = true; owner.machinesDirty = true; }
+        }
+
+        internal static void OverviewItemChanged(GameItem item)
+        {
+            MachineTools owner = current;
+            if (owner?.started != true || owner.machinesWindow == null || item == null || owner.overviewRowsByItem == null) return;
+            GameItem machine = null;
+            if (owner.overviewRowsByItem.ContainsKey(item)) machine = item;
+            else if (item.parentInventory != null && owner.overviewInventoryOwners != null)
+                owner.overviewInventoryOwners.TryGetValue(item.parentInventory, out machine);
+            if (machine == null) return;
+            owner.overviewChangedMachines.Add(machine);
+            owner.machinesDirty = true;
+        }
+
+        internal static void OverviewAttentionChanged()
+        {
+            if (current?.started != true || current.machinesWindow == null) return;
+            current.overviewIssuesDirty = true;
+            current.machinesDirty = true;
         }
     }
 
     [HarmonyPatch(typeof(GameGridInventory), nameof(GameGridInventory.UncheckedAccept))]
-    internal static class MachineGridAddedPatch { private static void Postfix() => MachineTools.InventoryChanged(); }
+    internal static class MachineGridAddedPatch { private static void Postfix(GameGridInventory __instance, GameItem __0, bool __result) { if (__result) MachineTools.InventoryChanged(__instance, __0); } }
     [HarmonyPatch(typeof(GameGridInventory), nameof(GameGridInventory.Expel))]
-    internal static class MachineGridRemovedPatch { private static void Postfix() => MachineTools.InventoryChanged(); }
+    internal static class MachineGridRemovedPatch { private static void Postfix(GameGridInventory __instance, GameItem __0, bool __result) { if (__result) MachineTools.InventoryChanged(__instance, __0); } }
     [HarmonyPatch(typeof(GameSlotInventory), nameof(GameSlotInventory.UncheckedAccept))]
-    internal static class MachineSlotAddedPatch { private static void Postfix() => MachineTools.InventoryChanged(); }
+    internal static class MachineSlotAddedPatch { private static void Postfix(GameSlotInventory __instance, GameItem __0, bool __result) { if (__result) MachineTools.InventoryChanged(__instance, __0); } }
     [HarmonyPatch(typeof(GameSlotInventory), nameof(GameSlotInventory.Expel))]
-    internal static class MachineSlotRemovedPatch { private static void Postfix() => MachineTools.InventoryChanged(); }
+    internal static class MachineSlotRemovedPatch { private static void Postfix(GameSlotInventory __instance, GameItem __0, bool __result) { if (__result) MachineTools.InventoryChanged(__instance, __0); } }
+    [HarmonyPatch(typeof(GameItem), "set_unitCount")]
+    internal static class MachineQuantityChangedPatch { private static void Postfix(GameItem __instance) => MachineTools.OverviewItemChanged(__instance); }
+    [HarmonyPatch(typeof(GameItem), nameof(GameItem.ModifyTag), new Type[] { typeof(string), typeof(Action<TagState>), typeof(bool) })]
+    internal static class MachineTagChangedPatch { private static void Postfix(GameItem __instance) => MachineTools.OverviewItemChanged(__instance); }
+    [HarmonyPatch(typeof(GameItem), nameof(GameItem.EnableTag), new Type[] { typeof(string), typeof(bool) })]
+    internal static class MachineTagEnabledPatch { private static void Postfix(GameItem __instance, bool __result) { if (__result) MachineTools.OverviewItemChanged(__instance); } }
+    [HarmonyPatch(typeof(GameItem), nameof(GameItem.DisableTag), new Type[] { typeof(string), typeof(bool) })]
+    internal static class MachineTagDisabledPatch { private static void Postfix(GameItem __instance, bool __result) { if (__result) MachineTools.OverviewItemChanged(__instance); } }
 }

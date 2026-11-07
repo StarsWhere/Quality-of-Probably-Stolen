@@ -15,6 +15,7 @@ namespace ShopAssist
         };
         private static readonly MethodInfo FilterMethod = AccessTools.Method(typeof(WaterHelper), nameof(WaterHelper.HandleFilter));
         private static readonly MethodInfo TankFilterMethod = AccessTools.Method(typeof(AquacultureHelper), "RunFilter", new[] { typeof(GameItem), typeof(GameItem) });
+        private static readonly MethodInfo TankCycleMethod = AccessTools.Method(typeof(AquacultureHelper), nameof(AquacultureHelper.TickTank));
         private static readonly MethodInfo TransferMethod = AccessTools.Method(typeof(WaterHelper), nameof(WaterHelper.TransferLiquid));
         private static readonly MethodInfo AddWaterMethod = AccessTools.Method(typeof(WaterHelper), nameof(WaterHelper.AddWater));
 
@@ -85,32 +86,22 @@ namespace ShopAssist
             return capability.Allowed ? MaintenanceSwap.MethodCapability() : capability;
         }
 
-        private ActionAvailability FilterCapability(GameItem host, GameItem filter, FilterPath path)
+        private ActionAvailability FilterCapability(GameItem host, FilterPath path)
         {
             if (filterHookFailed || filterHarmony == null)
                 return ActionAvailability.Blocked(ActionUnavailableReason.Unsupported, "maintenance.unsupported");
             ActionAvailability swap = MaintenanceSwap.MethodCapability();
             if (!swap.Allowed || host == null) return swap;
-            if (filter != null && AquaOwns(host, filter.identifier))
-                return ActionAvailability.Blocked(ActionUnavailableReason.Conflict, "f35.aqua_taken");
-            MethodInfo handle = FilterMethod;
-            if (handle == null) return ActionAvailability.Blocked(ActionUnavailableReason.Unsupported, "maintenance.unsupported");
-            if (!KnownWaterHooks(handle, "AfterFilter"))
-                return ActionAvailability.Blocked(ActionUnavailableReason.Conflict, "maintenance.conflict");
+            ActionAvailability handle = MethodCapability(FilterMethod);
+            if (!handle.Allowed) return handle;
             if (host.identifier != "water_pitcher")
-                return MethodCapability(TankFilterMethod);
-            ActionAvailability transfer = WaterPathCapability(TransferMethod, "AfterLiquidTransfer");
-            ActionAvailability added = WaterPathCapability(AddWaterMethod, null);
+                return MethodCapability(TankFilterMethod, TankCycleMethod);
+            ActionAvailability transfer = MethodCapability(TransferMethod);
+            ActionAvailability added = MethodCapability(AddWaterMethod);
             if (path == FilterPath.Transfer) return transfer;
             if (path == FilterPath.Added) return added;
             return transfer.Allowed || added.Allowed ? ActionAvailability.Ready : transfer;
         }
 
-        private static ActionAvailability WaterPathCapability(MethodInfo method, string aquaPostfix)
-        {
-            if (method == null) return ActionAvailability.Blocked(ActionUnavailableReason.Unsupported, "maintenance.unsupported");
-            return KnownWaterHooks(method, aquaPostfix) ? ActionAvailability.Ready :
-                ActionAvailability.Blocked(ActionUnavailableReason.Conflict, "maintenance.conflict");
-        }
     }
 }

@@ -59,7 +59,7 @@ public sealed class MachineLifecycleScenario
             instance.OnEnable();
             WaterScannerUIManager.Instance.RefreshUI();
             Require(VisibleBars(), "Scanner bars did not return after same-instance OnEnable");
-            RoutingScenario.OpenOptionAction("f10.open");
+            RoutingScenario.RunFeatureAction("f10.open");
             Require(CustomUIManager.Instance.GetWindow(Mod + ".f10")?.IsAlive == true, "Module browser failed after re-enable");
             result = "PASS F19 shared gear section and same-instance disable/re-enable restores F19 and F10";
             return true;

@@ -38,7 +38,8 @@ public sealed class MachineOverviewScenario
         {
             if (Time.realtimeSinceStartup < until || EmporiumEntry.Instance?.storeInteractables?.activeInHierarchy != true ||
                 StoreUIManager.Instance?.gameOptionUIManager == null) return false;
-            var e = EmporiumEntry.Instance; first = Item("hydroponic", "QA Hydro A"); second = Item("hydroponic", "QA Hydro B");
+            TradeScenario.SetOptions(false, "f15.enabled", "f17.enabled", "f21.enabled");
+            var e = EmporiumEntry.Instance; first = Item("hydroponic", "日常水培机"); second = Item("hydroponic", "备用水培机");
             Put(e.invElement, first);
             var destinations = new[] { (inventory: (GameInventory)e.backInvinvElement, key: "inv.counter"),
                 (inventory: (GameInventory)e.showcaseElement, key: "inv.showcase"),
@@ -47,12 +48,12 @@ public sealed class MachineOverviewScenario
                 if (TryPut(destination.inventory, second)) { secondSource = destination.inventory; secondPath = destination.key; break; }
             Need(secondSource != null, "No second native location accepted the QA machine");
             TradeScenario.SetOptions(true, "f30.enabled");
-            RoutingScenario.OpenOptionAction("f30.open");
+            RoutingScenario.RunFeatureAction("f30.open");
             var window = Overview(); Need(window?.IsAlive == true, "Machine overview failed to open");
             Need(window.root.GetComponentsInChildren<Transform>(true).Any(t => t.name == "ShopAssist_ItemCards") &&
                 window.root.GetComponentsInChildren<Image>(true).Any(image => image.sprite == ((GameItemElement)first).background.image.sprite),
                 "Machine overview lacks actual item cards / native sprites");
-            Need(Text(window).Contains("QA Hydro A") && Text(window).Contains("QA Hydro B") &&
+            Need(Text(window).Contains("日常水培机") && Text(window).Contains("备用水培机") &&
                 Text(window).Contains(ModHelper.GetLocalized(Mod, "f30.seed")), "Machine names or missing-seed status absent");
             LayoutScenario.Select(window, first); window = Overview();
             string source = ModHelper.GetLocalized(Mod, "vm.location") + " · " + ModHelper.GetLocalized(Mod, "inv.stock");

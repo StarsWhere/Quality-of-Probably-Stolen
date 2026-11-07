@@ -382,7 +382,7 @@ public sealed class FeedFullRecoveryScenario
             finally { GraphUtils.DestroyIfUnplaced(probe); }
             var battery = MachineFeatureQa.Stock("energy_credit_dis"); MachineFeatureQa.Put(MachineHelper.GetBatterySlot(furnace), battery);
             ItemMouseDoubleClickHandler.current.OpenContentAction(furnace, new Vector2(260, 140)); furnace.contentWindow.ToFront();
-            RoutingScenario.OpenOptionAction("f33.open");
+            RoutingScenario.RunFeatureAction("f33.open");
             FeedScenario.Select("source", "QA full feed source"); FeedScenario.Select("destination", "QA full feed destination");
             QaItemUi.Choose(FeedScenario.Ui(), "material", sourceGrid.childItems.First(i => i.identifier == "scrap_metal").GetDisplayName(true));
             FeedScenario.Ui().Get("limit").SetFloat(1, true); FeedScenario.Ui().Get("bind").button.onClick.Invoke();
@@ -399,7 +399,7 @@ public sealed class FeedFullRecoveryScenario
                 destinationGrid.childItems[0] == filler && input.childItems.Count == 0 && output.childItems.Count == 0,
                 "F33 did not pause without moving goods on a truly full destination: " + rules);
             MachineFeatureQa.ReturnToShop(filler);
-            FeedScenario.Ui()?.Close(); furnace.contentWindow.ToFront(); RoutingScenario.OpenOptionAction("f33.open");
+            FeedScenario.Ui()?.Close(); furnace.contentWindow.ToFront(); RoutingScenario.RunFeatureAction("f33.open");
             var resume = FeedScenario.Ui().Get("resume")?.button;
             MachineFeatureQa.Check(resume != null, "Full-destination pause has no resume action"); resume.onClick.Invoke();
             step++; return false;
@@ -446,7 +446,7 @@ public sealed class MachineBindingScenario
                 !MachineFeatureQa.Panel<GameGridInventory>(machine, "module").IsRemoveLocked(),
                 "QA machine is not idle and removable before saving");
             ItemMouseDoubleClickHandler.current.OpenContentAction(machine, new Vector2(260, 140)); machine.contentWindow.ToFront();
-            RoutingScenario.OpenOptionAction("f10.open");
+            RoutingScenario.RunFeatureAction("f10.open");
             var browser = CustomUIManager.Instance.GetWindow(MachineFeatureQa.Mod + ".f10");
             MachineFeatureQa.Check(browser?.Get("storage_choose_footer")?.button != null, "Module storage chooser unavailable");
             browser.Get("storage_choose_footer").button.onClick.Invoke();
@@ -465,7 +465,7 @@ public sealed class MachineBindingScenario
             string binding = ModHelper.GetModData(MachineFeatureQa.Mod, "module_storage", null);
             MachineFeatureQa.Check(!string.IsNullOrEmpty(binding), "Module storage binding not saved");
             CustomUIManager.Instance.GetWindow(MachineFeatureQa.Mod + ".f10")?.Close(); machine.contentWindow.ToFront();
-            RoutingScenario.OpenOptionAction("f31.open");
+            RoutingScenario.RunFeatureAction("f31.open");
             var options = CustomUIManager.Instance.GetWindow(MachineFeatureQa.Mod + ".maintenance");
             QaItemUi.Choose(options, "source", "QA cold battery supply"); options = CustomUIManager.Instance.GetWindow(MachineFeatureQa.Mod + ".maintenance");
             options.Get("threshold").SetFloat(50, true); options.Get("enable").button.onClick.Invoke();
@@ -514,7 +514,7 @@ public sealed class MachineBindingReloadScenario
             var calendar = AdvCalendarUIManager.Instance;
             if (calendar?.UIPanel?.activeSelf == true) StoreUIManager.Instance.storeCalendar.OnClick();
             ItemMouseDoubleClickHandler.current.OpenContentAction(machine, new Vector2(260, 140)); machine.contentWindow.ToFront();
-            RoutingScenario.OpenOptionAction("f10.open"); step++; return false;
+            RoutingScenario.RunFeatureAction("f10.open"); step++; return false;
         }
         if (step == 1)
         {
@@ -586,7 +586,7 @@ public sealed class MachineAttentionScenario
             MachineFeatureQa.Cycle(furnace);
             MachineFeatureQa.Check(MachineFeatureQa.Panel<GameGridInventory>(furnace, "output").childItems.Any(i => i.identifier == "metal_ingot"),
                 "Native furnace did not produce the QA output");
-            RoutingScenario.OpenOptionAction("f30.open");
+            RoutingScenario.RunFeatureAction("f30.open");
             var overview = Overview();
             MachineFeatureQa.Check(QaItemUi.Hit(overview.root, waiting) != null && QaItemUi.Hit(overview.root, ready) != null &&
                 MachineFeatureQa.Text(overview.root.transform).Contains(string.Format(CultureInfo.CurrentCulture,

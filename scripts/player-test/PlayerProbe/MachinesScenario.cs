@@ -68,7 +68,7 @@ public sealed class MachinesScenario
         }
         if (step == 2)
         {
-            RoutingScenario.OpenOptionAction("f10.open");
+            RoutingScenario.RunFeatureAction("f10.open");
             var browser = CustomUIManager.Instance.GetWindow(Mod + ".f10");
             Require(browser?.IsAlive == true, "Module browser did not open");
             bool hasIdle = QaItemUi.Hit(browser.root, idle) != null &&
@@ -90,7 +90,7 @@ public sealed class MachinesScenario
             Require(ReferenceEquals(installed.parentInventory, otherBay) && ReferenceEquals(idle.parentInventory, EmporiumEntry.Instance.invElement),
                 "Opening the browser moved a module");
             browser.Close();
-            RoutingScenario.OpenOptionAction("f30.open");
+            RoutingScenario.RunFeatureAction("f30.open");
             var overview = CustomUIManager.Instance.GetWindow(Mod + ".f30");
             Require(overview?.IsAlive == true, "Machine overview did not open");
             string overviewText = Text(overview);
@@ -101,6 +101,7 @@ public sealed class MachinesScenario
             seed = New("nutrifruit_seed");
             Put(EmporiumEntry.Instance.invElement, seed);
             Put(MachineHydroponic.GetInputSlot(machine), seed);
+            waitUntil = Time.realtimeSinceStartup + 4f;
             step = 20; return false;
         }
         if (step == 20)
@@ -108,6 +109,7 @@ public sealed class MachinesScenario
             var overview = CustomUIManager.Instance.GetWindow(Mod + ".f30");
             Require(overview?.IsAlive == true, "Machine overview disappeared after inventory change");
             string changedText = Text(overview);
+            if (!changedText.Contains(ModHelper.GetLocalized(Mod, "f30.water_container")) && Time.realtimeSinceStartup < waitUntil) return false;
             Require(changedText.Contains(ModHelper.GetLocalized(Mod, "f30.water_container")),
                 "Machine overview did not refresh the newly missing water container: " + changedText);
             overview.Close(); StoreUIManager.Instance.gameOptionUIManager.CloseUI();
@@ -134,7 +136,7 @@ public sealed class MachinesScenario
             Require(rows.Count > 1, "F19 did not display multiple component rows");
             chosenId = rows[1].name.Substring("Component_".Length);
             chosen = rows[1].GetComponentsInChildren<TMP_Text>(true).First().text;
-            RoutingScenario.OpenOptionAction("f19.choose");
+            RoutingScenario.RunFeatureAction("f19.choose");
             var picker = CustomUIManager.Instance.GetWindow(Mod + ".f19.pin");
             Require(picker?.IsAlive == true, "Liquid picker did not open");
             Button clear = picker.root.GetComponentsInChildren<Button>(true).FirstOrDefault(b =>

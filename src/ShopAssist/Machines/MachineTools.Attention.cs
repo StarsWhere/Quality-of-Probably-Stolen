@@ -89,8 +89,7 @@ namespace ShopAssist
             if (source == null) return "maintenance.source_missing";
             int required = MachineryHelper.GetMachinePowerUsage(host);
             if (required < 0) return "maintenance.unsupported";
-            var candidates = Ordered(source).Where(candidate => candidate.identifier == installed.identifier && OrdinaryBattery(candidate) &&
-                PowerHelper.CanDrawPowerSource(candidate, required) && candidate.GetTagReadonly("power_source_item_energy").GetInt() > energy).ToList();
+            var candidates = Ordered(source).Where(candidate => EligibleBattery(candidate, installed, required)).ToList();
             if (candidates.Count == 0) return "f31.missing";
             if (candidates.Any(candidate => MaintenanceSwap.Ready(host, power, source, installed, candidate))) return "f31.next_attempt";
             return candidates.Any(candidate => MaintenanceSwap.CallbackCapability(power, source, installed, candidate).Allowed) ?
@@ -129,8 +128,65 @@ namespace ShopAssist
                 }
             else Add("f32:invalid", "f32.open", null, "f32.invalid", true);
 
-            if (!ReadMaintenance(out MaintenanceData maintenance))
-                Add("maintenance:invalid", "f31.open", null, "maintenance.invalid", true);
+            MachineRuleReadStatus feedStatus = ReadFeedState(out FeedRules feeds, out _);
+            var known = new HashSet<int>();
+            if (feedStatus == MachineRuleReadStatus.Valid)
+            {
+                foreach (FeedRule rule in feeds.rules)
+                {
+                    int id = rule.machine; known.Add(id);
+                    bool unsaved = feedUnsaved.Contains(FeedScope(run, slot, id));
+                    bool awaiting = rule.pause != "" || rule.stopped == true || unsaved ||
+                        !feedEnabled.Value && (rule.staged.Count != 0 || rule.pending != 0);
+                    if (!awaiting) continue;
+                    GameItem host = Find(id);
+                    if (host?.identifier != "furnace" || !MachineAccessible(host, locations)) host = null;
+                    bool inspect = unsaved || rule.pause == "f33.inspect" || rule.stopped == true ||
+                        !feedEnabled.Value && (rule.staged.Count != 0 || rule.pending != 0);
+                    string reason = host == null ? "f33.machine_unavailable" : unsaved ? "f33.save_failed" :
+                        rule.stopped == true ? "f33.stopped" : rule.pause != "" ? rule.pause : "f33.inspect";
+                    Action retry = feedEnabled.Value && host != null ? (Action)(() => ResumeFeedRule(id, run, slot)) : null;
+                    Action resolve = rule.stopped && host != null ? (Action)(() => ConfirmFinishFeed(id, run, slot)) : null;
+                    Add("f33:" + id, "f33.open", host, reason, inspect, retry, resolve);
+                    items["f33:" + id].ActionLabelKey = "f33.resume";
+                    items["f33:" + id].ResolveLabelKey = "f33.finish_tracking";
+                    if (host == null) items["f33:" + id].ItemId = id;
+                }
+            }
+            else
+            {
+                bool invalid = feedStatus == MachineRuleReadStatus.Invalid;
+                bool pending = feedStatus == MachineRuleReadStatus.ResetPending;
+                Add("f33:invalid", "f33.open", null, invalid ? "f33.invalid" : pending ? "maintenance.reset_failed" : "maintenance.read_failed", true,
+                    pending ? (Action)(() => RetryRuleReset(FeedKey, run, slot)) : null,
+                    invalid ? (Action)(() => ConfirmRuleReset(FeedKey, run, slot)) :
+                        pending ? (Action)(() => CancelRuleReset(FeedKey, run, slot)) : null);
+                items["f33:invalid"].ActionLabelKey = "maintenance.reset_retry";
+                items["f33:invalid"].ResolveLabelKey = pending ? "maintenance.reset_cancel" : "f33.reset";
+            }
+            string feedScope = run + ":" + slot + ":";
+            foreach (string unsavedKey in feedUnsaved.Where(key => key.StartsWith(feedScope, StringComparison.Ordinal)).ToArray())
+            {
+                if (!int.TryParse(unsavedKey.Substring(feedScope.Length), out int id) || id <= 0 || known.Contains(id)) continue;
+                GameItem host = Find(id);
+                if (host?.identifier != "furnace" || !MachineAccessible(host, locations)) host = null;
+                Action resolve = feedStatus == MachineRuleReadStatus.Valid && host != null ? (Action)(() => AcknowledgeFeedFailure(id, run, slot)) : null;
+                Add("f33:" + id, "f33.open", host, host == null ? "f33.machine_unavailable" : "f33.save_failed", true, null, resolve);
+                if (host == null) items["f33:" + id].ItemId = id;
+            }
+
+            MachineRuleReadStatus maintenanceStatus = ReadMaintenanceState(out MaintenanceData maintenance, out _);
+            if (maintenanceStatus != MachineRuleReadStatus.Valid)
+            {
+                bool invalid = maintenanceStatus == MachineRuleReadStatus.Invalid;
+                bool pending = maintenanceStatus == MachineRuleReadStatus.ResetPending;
+                Add("maintenance:invalid", "f31.open", null, invalid ? "maintenance.invalid" : pending ? "maintenance.reset_failed" : "maintenance.read_failed", true,
+                    pending ? (Action)(() => RetryRuleReset(MaintenanceKey, run, slot)) : null,
+                    invalid ? (Action)(() => ConfirmRuleReset(MaintenanceKey, run, slot)) :
+                        pending ? (Action)(() => CancelRuleReset(MaintenanceKey, run, slot)) : null);
+                items["maintenance:invalid"].ActionLabelKey = "maintenance.reset_retry";
+                items["maintenance:invalid"].ResolveLabelKey = pending ? "maintenance.reset_cancel" : "maintenance.reset";
+            }
             var filterRows = MaintenanceFilterRows(locations, maintenance).ToList();
             foreach (MachineRow row in filterRows)
             {
@@ -176,9 +232,7 @@ namespace ShopAssist
                         if (!capability.Allowed) Add("f31:" + rule.host + ":capability", "f31.open", host, capability.ReasonKey);
                         continue;
                     }
-                    GameItem filter = FilterSlots(host).FirstOrDefault()?.childItem;
-                    if (filter != null && !AllowsFilter(rule, filter)) filter = null;
-                    ActionAvailability general = FilterCapability(host, filter, FilterPath.Any);
+                    ActionAvailability general = FilterCapability(host, FilterPath.Any);
                     if (!general.Allowed)
                     {
                         if (!filterRows.Any(row => row.Item.uniqueId == rule.host && row.ReasonKey == general.ReasonKey))
@@ -186,8 +240,8 @@ namespace ShopAssist
                         continue;
                     }
                     if (host.identifier != "water_pitcher") continue;
-                    ActionAvailability transfer = FilterCapability(host, filter, FilterPath.Transfer);
-                    ActionAvailability added = FilterCapability(host, filter, FilterPath.Added);
+                    ActionAvailability transfer = FilterCapability(host, FilterPath.Transfer);
+                    ActionAvailability added = FilterCapability(host, FilterPath.Added);
                     if (!transfer.Allowed) Add("f35:" + rule.host + ":transfer", "f35.open", host,
                         transfer.Code == ActionUnavailableReason.Unsupported ? "f35.transfer_unsupported" : "f35.transfer_conflict");
                     if (!added.Allowed) Add("f35:" + rule.host + ":added", "f35.open", host,

@@ -71,6 +71,7 @@ namespace ShopAssist
             CloseLayout();
             ResetReplant();
             ResetMaintenance();
+            SuspendFeedTransactions();
             CloseFeed();
             CloseModules();
             CloseMachines();
@@ -103,9 +104,12 @@ namespace ShopAssist
             if (current == null || !current.started) return;
             current.modulesDirty = true;
             current.machinesDirty = true;
+            current.overviewStructureDirty = true;
+            current.overviewIssuesDirty = true;
+            current.maintenanceDirty = true;
             AttentionBook.Changed();
         }
 
-        internal static void InventoryChanged() => Invalidate();
+        internal static void InventoryChanged(GameInventory inventory, GameItem item) => OverviewInventoryChanged(inventory, item);
     }
 }

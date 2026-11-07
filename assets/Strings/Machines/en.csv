@@ -18,15 +18,15 @@ f10.performance,Performance
 f10.efficiency,Efficiency
 f10.quality,Quality
 f12.enabled,Plan machine module layouts by attribute
-f12.tip,Enable the Module Cabinet. Select 1–5 compatible idle modules there, choose Arrange and select performance, efficiency or quality. Preview the layout and stat changes before applying the recommended modules. Existing modules stay installed but movable ones may change position; evaporators fill empty cells only.
+f12.tip,Enable the Module Cabinet. Choose Arrange and select performance, efficiency or quality. You can rearrange installed modules or select up to five compatible idle modules. Preview the layout and stat changes before applying. Existing modules stay installed but movable ones may change position; evaporators fill empty cells only.
 f12.open,Arrange modules
-f12.preview,Preview layout
-f12.apply,Apply layout
-f12.values,Performance {0}% → {1}% · Efficiency {2}% → {3}% · Quality {4}% → {5}%
+f12.preview,Preview
+f12.apply,Apply
+f12.values,Performance {0}% to {1}% · Efficiency {2}% to {3}% · Quality {4}% to {5}%
 f12.keep,Keep in place
 f12.move,Move inside bay
 f12.add,Add from inventory
-f12.unsupported,Open a supported unlocked machine and select 1–5 movable compatible idle modules. Layouts with unverified effects cannot be previewed.
+f12.unsupported,Open a supported unlocked machine and check its installed modules or select up to five movable compatible idle modules. Layouts with unverified effects cannot be previewed.
 f12.no_better,No better layout found.
 f12.timeout,Search timed out. Select fewer modules and retry.
 f12.changed,The machine or selected items changed. Preview again.
@@ -62,7 +62,7 @@ f19.display_apply,Apply
 f19.display_failed,Could not save display settings. Try again.
 f19.more,Details
 f19.less,Hide details
-f19.applies,Applicable
+f19.applies,Applies
 f30.enabled,View machine supplies, power and output
 f30.tip,Open Machine Status in the store to review input, power and output for hydroponic machines, collectors, evaporators, printers and furnaces. Filter for machines needing attention. Select a card to see its location and bring its already-open inventory window forward. Up to 100 entries are shown.
 f30.key,Open machine status overview
@@ -84,7 +84,9 @@ f30.working,Working
 f30.output,Output stacks: {0}
 f32.enabled,Automatically replant a chosen hydroponic seed
 f32.selected,Selected
-f32.tip,Open Shop Tools on a hydroponic machine and choose a seed from its input or output. Turn on gene scanning to choose between strains. After a non-perennial harvest an unstacked matching seed is taken from that machine's output. If replanting cannot proceed fix the issue and retry.
+f32.target,Selected crop: {0}
+f32.unknown_plant,Unknown crop
+f32.tip,Choose Replant on a hydroponic machine and select a seed from its input or output. Turn on gene scanning to choose between strains. After a non-perennial harvest an unstacked matching seed is taken from that machine's output. If replanting cannot proceed fix the issue and retry.
 f32.open,Choose the hydroponic replant seed
 f32.stop,Stop replanting this machine
 f32.empty,No seed is available in this machine.
@@ -103,9 +105,21 @@ f32.retry,Retry replanting
 f32.resolve,Checked — continue
 f32.need_machine,Open a hydroponic machine first.
 f33.enabled,Automatically supply and collect furnace batches
-f33.tip,Open Shop Tools on a furnace and choose material, source, output container and 1–10 batches. Each batch takes two unstacked items from the source and collects the ingot after confirmed production. It stops at the limit and pauses for missing supplies or power, insufficient output space or an incompatible machine state. Fix the issue and resume manually.
+f33.tip,Choose Furnace batches on a furnace and select the material, source, output container and 1–10 batches. Each batch takes two items from the source and collects the ingot after confirmed production. It stops at the limit and pauses for missing supplies or power, insufficient output space or an incompatible machine state. Fix the issue and resume manually.
 f33.open,Schedule furnace batches
 f33.progress,Batches completed: {0} / {1}
+f33.available,Available materials: {0}
+f33.restart,Run another batch
+f33.stopped,Automatic supply stopped. Check the items already processed.
+f33.save_failed,Could not save production state. Check the furnace and inventory before retrying.
+f33.machine_unavailable,The furnace is unavailable.
+f33.finish_tracking,Finish after checking
+f33.finish_warning,Check the furnace materials and output first. Ending tracking stops automatic production.
+f33.finish_cancel,Back
+f33.finished,Automatic production for this furnace has ended.
+f33.tracked,Check: {0} · {1}
+f33.tracked_missing,A tracked item could not be found.
+f33.busy,The furnace is processing this batch. Try again shortly.
 f33.choose_source,Choose source storage
 f33.choose_destination,Choose output storage
 f33.choose_material,Choose a material
@@ -115,6 +129,10 @@ f33.bind,Start this rule
 f33.stop,Stop this rule
 f33.resume,Resume this rule
 f33.invalid,Batch settings could not be read.
+f33.reset,Start batch settings over
+f33.reset_warning,First check the materials and output in every affected furnace. Starting over clears batch rules and retains the original record.
+f33.reset_confirm,Checked — clear batch rules
+f33.reset_done,Batch rules were cleared. You can set them up again.
 f33.source,Source is unavailable or lacks two separate selected items.
 f33.output,Output storage is unavailable or full.
 f33.power,Furnace needs usable power.
@@ -147,6 +165,7 @@ f30.materials,Missing recipe materials or requirements
 f30.distillate,Distillate available to collect
 f30.no_evaporation,No evaporative liquid in the vessel
 f30.supplied,Input and power available
+f30.verify_output,Input and power available; check output space
 f19.component,Component
 f19.volume,Volume
 f19.share,Share
