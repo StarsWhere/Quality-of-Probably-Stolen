@@ -10,22 +10,42 @@ f04.stolen,Mark stolen goods during inspections
 f04.stolen.tip,With inspection highlighting enabled, mark known stolen goods and containers where they were seen. Extra detection also includes undisclosed risks.
 f04.contraband,Mark contraband during inspections
 f04.contraband.tip,With inspection highlighting enabled, mark known contraband and containers where it was seen. Extra detection also includes undisclosed risks.
-f11.enabled,List goods matching the customer request
-f11.tip,Open the customer goods list from negotiation to see matching goods, sources, status and last quotes. Locate a source or drag movable goods to the trade counter.
-f11.key,Open customer goods list
-f11.key.tip,Open or close the goods list when a customer has a request.
-f11.open,Customer goods list
+f11.enabled,Search stock and customer goods
+f11.tip,Search accessible owned storage by name or open the customer goods list from negotiation to see sources and quotes. Locate goods in their inventory.
+f11.key,Open stock search
+f11.key.tip,Open or close stock search in the store.
+f11.purchase,Compare purchase prices
+f11.purchase.tip,Show native purchase records alongside quotes in the customer list and budget picker. Off by default. Records are purchase totals; missing records stay unknown. Unit costs after splitting or merging are not inferred.
+f11.purchase_record,Paid {0}¢ (record)
+f11.purchase_unknown,Paid: unknown
+f11.open,Stock search
+f11.customer_title,Customer goods list
+f11.query,Search item names
+f11.mode_all,All stock
+f11.mode_demand,Customer request
+f11.no_demand,There is no customer request right now.
+f11.no_results,No matching items found.
 f11.count,{0} item instances
 f11.empty,No goods match the current customer.
-f11.quoted,Last quote {0}
-f11.unquoted,Not quoted
+f11.quoted,Counter quote {0}¢
+f11.estimated,Estimate {0}¢
+f11.unquoted,Quote unavailable
 f11.in_use,In machine
 f11.reserved,Reserved
 f11.unavailable,Unavailable
 f11.available,{0} available
+f11.partial,Only {0} available; cannot drag the whole stack
+f11.manual_only,Locate to move manually
 f11.locate,Locate
-f11.return,Return to customer goods
-f11.more,Show more
+f11.drag_tip,Click to locate; drag to an empty space or a stack with enough room.
+f11.locate_tip,Click to locate.
+f11.move_manual,Cannot safely place here. Locate the item to move it manually.
+f11.target_locked,The destination is locked.
+f11.target_occupied,The destination slot is occupied.
+f11.target_reserved,The destination item is reserved.
+f11.stack_mismatch,These items cannot be stacked together.
+f11.stack_full,The target stack cannot hold the whole item.
+f11.return,Return to search
 f11.changed,The item or its location changed. Check the list again.
 f11.open_first,Open the item's area first.
 f11.failed,Could not read or locate the item.

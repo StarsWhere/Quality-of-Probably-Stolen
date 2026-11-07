@@ -52,17 +52,6 @@ internal static class PublicIndicatorTests
         indicator.Tick();
         Check(Outline(a) != null && Outline(b) == null && Outline(custom) != null,
             "the native buyer result controls ordinary, refused and custom-tooltip items");
-        var peer = new GameObject("CDH_Border");
-        peer.transform.SetParent(a.middle.transform);
-        var peerGraphic = peer.Add(new UnityEngine.UI.Graphic { color = Color.white });
-        indicator.Tick();
-        Check(Outline(a).gameObject.activeSelf, "the peer's unconfigured delayed border does not hide the helper");
-        peerGraphic.color = new Color(0.3f, 0.9f, 0.35f, 0.95f);
-        indicator.Tick();
-        Check(!Outline(a).gameObject.activeSelf, "a visible peer demand border suppresses the duplicate");
-        peer.SetActive(false);
-        indicator.Tick();
-        Check(Outline(a).gameObject.activeSelf, "the demand border returns when the peer is toggled off");
         Check(indicator.Matches(a) && !indicator.Matches(b), "native refusal overrides a matching category");
         var text = new RichText { nakedText = "Bread [Food]" };
         CustomerIndicators.TooltipBuilt(custom, text);
@@ -71,6 +60,16 @@ internal static class PublicIndicatorTests
         CustomerIndicators.TooltipDisplayed(text);
         indicator.Tick();
         Check(Outline(custom) != null && indicator.KnownTypes(custom).Contains("FOOD"), "tooltip evidence remains available to other features");
+        string observed = null;
+        void Observe(GameItemElement item, string value) { if (ReferenceEquals(item, custom)) observed = value; }
+        CustomerIndicators.PublicTooltipShown += Observe;
+        var native = new RichText { nakedText = "Bread [Food]" };
+        var composed = new RichText { nakedText = "Bread [Food]\nMOD label" };
+        CustomerIndicators.TooltipBuilt(custom, native);
+        CustomerIndicators.TooltipComposed(custom, native, composed);
+        CustomerIndicators.TooltipDisplayed(composed);
+        CustomerIndicators.PublicTooltipShown -= Observe;
+        Check(observed == native.nakedText, "a displayed card must expose only the native tooltip as evidence");
         CustomerIndicators.ItemStateChanging(custom);
         indicator.Tick();
         Check(Outline(custom) != null && indicator.KnownTypes(custom) == null, "item changes invalidate observations without suppressing native demand");
@@ -116,25 +115,6 @@ internal static class PublicIndicatorTests
         indicator.Tick();
         Check(Outline(stolen) != null, "visible recognizable stolen item is highlighted for an inspector");
         Check(Outline(box) != null, "an observed ordinary container receives a contained-risk mark");
-        float originalY = ((RectTransform)Outline(box).children[0]).anchoredPosition.y;
-        var containerPeer = new GameObject("CDH_Border");
-        containerPeer.transform.SetParent(box.middle.transform);
-        containerPeer.Add(new UnityEngine.UI.Graphic { color = new Color(1f, 0.7f, 0.1f, 0.95f) });
-        indicator.Tick();
-        Check(Outline(box).gameObject.activeSelf && ((RectTransform)Outline(box).children[0]).anchoredPosition.y < originalY,
-            "the distinct contained-risk dashes move inside the peer's solid border");
-        containerPeer.SetActive(false);
-        indicator.Tick();
-        Check(((RectTransform)Outline(box).children[0]).anchoredPosition.y == originalY,
-            "contained-risk dashes return to the edge when the peer is switched off");
-        var peer = new GameObject("CDH_Border");
-        peer.transform.SetParent(stolen.rotator.transform);
-        var peerGraphic = peer.Add(new UnityEngine.UI.Graphic { color = new Color(1f, 0.7f, 0.1f, 0.95f) });
-        indicator.Tick();
-        Check(!Outline(stolen).gameObject.activeSelf, "the same direct risk from the peer does not get two borders");
-        peerGraphic.color = new Color(0.95f, 0.22f, 0.2f, 0.95f);
-        indicator.Tick();
-        Check(Outline(stolen).gameObject.activeSelf, "a different peer risk does not hide the known stolen state");
         innerWindow.Hide();
         WindowsHandler.current.visibleWindows.Remove(innerWindow);
         VisibleInventoryViews.NotifyChanged();

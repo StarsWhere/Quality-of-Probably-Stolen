@@ -22,27 +22,31 @@ namespace ShopAssist
             internal GameInventory SourceInventory;
             internal GameItem SourceOwner;
             internal GameItem[] SourcePath;
-            internal string Name, Source, SourceRole, Quote;
+            internal string Name, Source, SourceRole, Quote, Purchase;
             internal int SourcePage, Quantity, Available;
-            internal bool Reserved, InUse;
+            internal bool Reserved, InUse, Demand, Draggable;
         }
 
         private readonly ShopSettings settings;
         private readonly CustomerIndicators indicators;
         private readonly Action<string> log;
-        private readonly ConfigEntry<bool> enabled;
+        private readonly ConfigEntry<bool> enabled, showPurchase;
         private readonly Func<KeyCode> key;
         private CustomUIWindow window;
-        private RectTransform scrollContent;
+        private RectTransform scrollContent, resultsRoot;
         private StoreClientInstance customer;
         private string run;
         private int slot, page;
-        private bool started, dirty, forceRender, resetScroll, collapsed;
+        private bool started, dirty, forceRender, resetScroll, collapsed, demandOnly;
+        private string query = "";
         private float refreshAt, nextPoll, savedScroll = 1f;
         private int restoreScrollAt = -1;
         private float pendingScroll;
         private Vector2 expandedPosition, expandedSize;
         private List<Row> renderedRows;
+        private CanvasGroup dragGroup;
+        private float dragAlpha;
+        private bool dragBlocksRaycasts;
 
         internal CustomerInventory(ShopSettings settings, CustomerIndicators indicators, Action<string> log)
         {
@@ -50,6 +54,7 @@ namespace ShopAssist
             this.indicators = indicators ?? throw new ArgumentNullException(nameof(indicators));
             this.log = log ?? throw new ArgumentNullException(nameof(log));
             enabled = settings.Toggle("f11.enabled", "f11.tip");
+            showPurchase = settings.Toggle("f11.purchase", "f11.purchase.tip");
             key = settings.Key("f11.key", "f11.key.tip");
             settings.Action("f11.open", Open, CanOpen);
         }
@@ -58,6 +63,7 @@ namespace ShopAssist
         {
             if (started) return;
             started = true;
+            WholeStackTransfer.Acquire();
             settings.Changed += SettingsChanged;
             indicators.Changed += Invalidate;
             VisibleInventoryViews.Changed += Invalidate;
@@ -66,8 +72,15 @@ namespace ShopAssist
             SceneManager.activeSceneChanged += SceneChanged;
         }
 
-        internal bool CanOpen() => started && enabled.Value && indicators.HasDemand && ShopInventory.InStore;
-        private bool SameContext() => CanOpen() && ReferenceEquals(customer, indicators.Customer) &&
+        internal bool CanOpen() => started && enabled.Value && ShopInventory.InStore;
+        internal bool CanOpenDemand() => CanOpen() && indicators.HasDemand;
+        internal string PurchaseLabel(GameItem item)
+        {
+            if (!showPurchase.Value) return null;
+            int? price = ShopLedger.PurchasePrice(item);
+            return price.HasValue ? ShopSettings.Format("f11.purchase_record", price.Value) : ShopSettings.Text("f11.purchase_unknown");
+        }
+        private bool SameContext() => CanOpen() && (!demandOnly || CanOpenDemand() && ReferenceEquals(customer, indicators.Customer)) &&
             PlayerStore.Instance.saveSlotId == slot && PlayerStore.Instance.runID == run;
 
         public void Tick()
@@ -77,7 +90,14 @@ namespace ShopAssist
             {
                 if (!window.IsAlive || !CanOpen() || PlayerStore.Instance.saveSlotId != slot || PlayerStore.Instance.runID != run)
                 { Close(); return; }
-                if (!ReferenceEquals(customer, indicators.Customer))
+                if (demandOnly && !CanOpenDemand())
+                {
+                    demandOnly = false;
+                    customer = null;
+                    page = 0; query = ""; resultsRoot = null;
+                    dirty = forceRender = resetScroll = true;
+                }
+                else if (demandOnly && !ReferenceEquals(customer, indicators.Customer))
                 {
                     customer = indicators.Customer;
                     page = 0;
@@ -110,17 +130,26 @@ namespace ShopAssist
         internal void QuotesChanged() => Invalidate();
         private void SceneChanged(Scene before, Scene after) => Reset();
 
-        internal void Open()
+        internal void Open() => Open(false);
+        internal void OpenDemand() => Open(true);
+
+        private void Open(bool demand)
         {
-            if (!CanOpen() || CustomUIManager.Instance == null) return;
-            if (window != null && window.IsAlive && SameContext())
+            if (!CanOpen() || demand && !CanOpenDemand() || CustomUIManager.Instance == null) return;
+            if (window != null && window.IsAlive && PlayerStore.Instance.saveSlotId == slot && PlayerStore.Instance.runID == run)
             {
+                bool changed = demandOnly != demand || demand && !ReferenceEquals(customer, indicators.Customer);
+                demandOnly = demand;
+                customer = demand ? indicators.Customer : null;
+                if (changed) { page = 0; query = ""; resultsRoot = null; resetScroll = true; }
                 if (collapsed) Expand();
+                else if (changed) Render();
                 window.BringToFront();
                 return;
             }
             Close();
-            customer = indicators.Customer;
+            demandOnly = demand;
+            customer = demand ? indicators.Customer : null;
             run = PlayerStore.Instance.runID;
             slot = PlayerStore.Instance.saveSlotId;
             page = 0;
@@ -131,25 +160,33 @@ namespace ShopAssist
         {
             var rows = new List<Row>();
             var seen = new HashSet<GameItem>();
-            List<ShopInventory.Location> locations = ShopInventory.CustomerLocations();
+            List<ShopInventory.Location> locations = demandOnly ? ShopInventory.CustomerLocations() :
+                ShopInventory.OwnedLocations(false).Where(Searchable).ToList();
             HashSet<GameItem> reservedItems = RequestBook.ReservedItems(locations);
+            WholeStackTransfer.SourceSafetySnapshot sourceSafety = null;
             foreach (ShopInventory.Location location in locations)
             {
                 foreach (GameItem item in location.Inventory.childItems)
                 {
                     if (item == null || !seen.Add(item) || !ShopInventory.Owned(item) ||
                         !ReferenceEquals(item.parentInventory, location.Inventory) ||
-                        !indicators.Matches(item)) continue;
+                        demandOnly && !indicators.Matches(item)) continue;
+                    string name = item.GetDisplayName(true);
+                    if (!string.IsNullOrWhiteSpace(query) && (name ?? "").IndexOf(query.Trim(), StringComparison.CurrentCultureIgnoreCase) < 0) continue;
                     bool reserved = reservedItems.Contains(item);
                     int available = 0;
                     if (CustomerIndicators.DemandLocation(location) && !reserved && ShopInventory.Movable(item))
                         available = Math.Max(0, Math.Min(item.unitCount, item.MaxNumRemove()));
-                    rows.Add(new Row { Item = item, Location = location, Name = item.GetDisplayName(true), Source = location.Name,
+                    bool eligible = !reserved && CustomerIndicators.DemandLocation(location) && available == item.unitCount && available > 0;
+                    if (eligible && sourceSafety == null) sourceSafety = new WholeStackTransfer.SourceSafetySnapshot();
+                    rows.Add(new Row { Item = item, Location = location, Name = name, Source = location.Name, Demand = demandOnly,
                         SourceInventory = location.Inventory, SourceOwner = location.Owner, SourceRole = location.Role,
                         SourcePage = location.Page, SourcePath = location.Path?.ToArray(),
                         Quantity = item.unitCount, Available = available, Reserved = reserved,
                         InUse = !CustomerIndicators.DemandLocation(location),
-                        Quote = QuoteLabel?.Invoke(item) ?? ShopSettings.Text("f11.unquoted") });
+                        Draggable = eligible && sourceSafety.Allows(item),
+                        Quote = demandOnly ? QuoteLabel?.Invoke(item) ?? ShopSettings.Text("f11.unquoted") : null,
+                        Purchase = demandOnly ? PurchaseLabel(item) : null });
                 }
             }
             return rows;
@@ -165,7 +202,7 @@ namespace ShopAssist
                     !ReferenceEquals(a.SourceOwner, b.SourceOwner) || a.SourceRole != b.SourceRole ||
                     a.SourcePage != b.SourcePage || a.Source != b.Source || a.Name != b.Name ||
                     a.Quantity != b.Quantity || a.Available != b.Available || a.Reserved != b.Reserved ||
-                    a.InUse != b.InUse || a.Quote != b.Quote) return false;
+                    a.InUse != b.InUse || a.Demand != b.Demand || a.Draggable != b.Draggable || a.Quote != b.Quote || a.Purchase != b.Purchase) return false;
                 GameItem[] first = a.SourcePath, second = b.SourcePath;
                 if (first == null || second == null || first.Length != second.Length) return false;
                 for (int n = 0; n < first.Length; n++) if (!ReferenceEquals(first[n], second[n])) return false;
@@ -209,14 +246,32 @@ namespace ShopAssist
                     .SetSize(size.x, size.y).SetDraggable(true).SetCloseOnEscape(true);
                 window = shell.GetWindow();
                 CustomUIWindow thisView = window;
-                shell.OnClose(() => { if (ReferenceEquals(window, thisView)) window = null; });
+                shell.OnClose(() =>
+                {
+                    if (!ReferenceEquals(window, thisView)) return;
+                    ItemGrid.CancelDragWithin(thisView.root);
+                    EndWindowDrag();
+                    window = null;
+                    Close();
+                });
                 shell.Show();
             }
             if (WindowElements?.GetValue(window) is not Dictionary<string, CustomUIElement> elements)
                 throw new InvalidOperationException("Customer list elements are unavailable.");
-            elements.Clear();
-            CustomUIBuilder.ClearContainer(window.ContentRoot);
-            var builder = new CustomUIBuilder(CustomUIManager.Instance, window, window.ContentRoot);
+            window.SetTitle(ShopSettings.Text(demandOnly ? "f11.customer_title" : "f11.open"));
+            if (resultsRoot == null)
+            {
+                elements.Clear();
+                CustomUIBuilder.ClearContainer(window.ContentRoot);
+                var shell = new CustomUIBuilder(CustomUIManager.Instance, window, window.ContentRoot);
+                shell.AddInput(ShopSettings.Text("f11.query"), query, ChangeQuery, "query", ChangeQuery);
+                shell.BeginRow().AddButton(ShopSettings.Text("f11.mode_all"), () => SwitchMode(false), "all")
+                    .AddButton(ShopSettings.Text("f11.mode_demand"), () => SwitchMode(true), "demand").End();
+                shell.BeginScrollFlexible(96); resultsRoot = shell.CurrentContainer;
+                shell.End();
+            }
+            UiLayout.Clear(resultsRoot, window);
+            var builder = new CustomUIBuilder(CustomUIManager.Instance, window, resultsRoot);
             builder.AddLabel(ShopSettings.Format("f11.count", rows.Count));
             UiLayout.Pager(builder, page, rows.Count, perPage, selected => { page = selected; resetScroll = true; Render(); });
             var shown = rows.Skip(page * perPage).Take(perPage).ToList();
@@ -225,29 +280,44 @@ namespace ShopAssist
                 Caption = row.Name,
                 SourceLabel = row.Source,
                 StatusLabel = row.Reserved ? ShopSettings.Text("f11.reserved") : row.InUse
-                    ? ShopSettings.Text("f11.in_use") : row.Available > 0 ? ShopSettings.Format("f11.available", row.Available) : ShopSettings.Text("f11.unavailable"),
-                QuoteLabel = row.Quote
+                    ? ShopSettings.Text("f11.in_use") : row.Available <= 0 ? ShopSettings.Text("f11.unavailable") :
+                    row.Available < row.Quantity ? ShopSettings.Format("f11.partial", row.Available) :
+                    !row.Draggable ? ShopSettings.Text("f11.manual_only") : ShopSettings.Format("f11.available", row.Available),
+                QuoteLabel = row.Quote,
+                PurchaseLabel = row.Purchase,
+                Draggable = row.Draggable,
+                TooltipHint = ShopSettings.Text(row.Draggable ? "f11.drag_tip" : "f11.locate_tip")
             }).ToList();
-            builder.BeginScrollFlexible(96);
-            scrollContent = builder.CurrentContainer;
-            ItemGrid.Add(builder, cells, new ItemGrid.Options
+            scrollContent = resultsRoot;
+            var options = new ItemGrid.Options
             {
                 Cards = true, Columns = 5, CardWidth = 116, CardHeight = 96,
+                RequireSourceShape = true,
                 OnClick = entry => Locate(shown[cells.IndexOf(entry)]),
-                CanDrop = (entry, target, pose) => CanMoveListed(shown[cells.IndexOf(entry)], target, pose),
-                OnDrop = (entry, target, pose) =>
+                OnDragStarted = BeginWindowDrag,
+                OnDragEnded = EndWindowDrag,
+                CanDropTarget = (entry, target, resident, pose) => PlanMove(shown[cells.IndexOf(entry)], target, resident, pose, out _) != null,
+                OnDropTarget = (entry, target, resident, pose) =>
                 {
                     var row = shown[cells.IndexOf(entry)];
-                    if (!CanMoveListed(row, target, pose)) { dirty = true; return; }
-                    if (!ItemGridMove.TryMove(entry.Item, target, pose, out bool restored))
-                        ShopNotice.Show(ShopSettings.Text(restored ? "inv.changed" : "f12.inspect"));
+                    var plan = PlanMove(row, target, resident, pose, out ShopInventory.Location destination);
+                    if (plan == null)
+                    { RejectMove(row, target, resident); return; }
+                    string sourceKey = row.Location.Key(true), targetKey = destination.Key(true);
+                    var outcome = WholeStackTransfer.Apply(plan, "f11.open", row.Source + " → " + destination.Name,
+                        sourceKey, targetKey, () => MoveScope(row, destination));
+                    if (outcome != WholeStackTransfer.Result.Applied)
+                        ShopNotice.Show(ShopSettings.Text(outcome == WholeStackTransfer.Result.Unchanged ? "inv.changed" :
+                            outcome == WholeStackTransfer.Result.Pending || !WholeStackTransfer.Ready ? "f08.pending" : "f08.journal_failed"));
                     dirty = true;
-                }
-            });
-            if (rows.Count == 0) builder.AddLabel(ShopSettings.Text("f11.empty"));
-            builder.End();
-            ExtraActions?.Invoke(builder);
-            CustomUIBuilder.RebuildLayout(window.ContentRoot);
+                },
+                OnRejectTarget = (entry, target, resident, pose) =>
+                    RejectMove(shown[cells.IndexOf(entry)], target, resident)
+            };
+            ItemGrid.Add(builder, cells, options);
+            if (rows.Count == 0) builder.AddLabel(ShopSettings.Text(demandOnly && string.IsNullOrWhiteSpace(query) ? "f11.empty" : "f11.no_results"));
+            if (demandOnly) ExtraActions?.Invoke(builder);
+            CustomUIBuilder.RebuildLayout(resultsRoot);
             UiLayout.RestoreScroll(scrollContent, scrollPosition);
             savedScroll = scrollPosition;
             pendingScroll = scrollPosition;
@@ -257,27 +327,116 @@ namespace ShopAssist
             nextPoll = Time.unscaledTime + 0.5f;
         }
 
-        private bool CanMoveListed(Row row, GameGridInventory target, GridShape shape)
+        private void ChangeQuery(string value)
         {
-            if (!SameContext() || !enabled.Value || row == null || !CustomerIndicators.DemandLocation(row.Location) || !ShopInventory.Movable(row.Item) ||
-                row.Reserved || RequestBook.Reserved(row.Item) || !indicators.Matches(row.Item) ||
-                !ReferenceEquals(row.Item.parentInventory, row.Location.Inventory)) return false;
-            // The root counter location is the native negotiation table. A manual
-            // drop reveals the buyer's quote there; it must not depend on F34's
-            // separately enabled, already-observed quote cache.
-            return ShopInventory.OwnedLocations(true).Any(l => l.Inventory == target && (l.Ordinary || l.Role == "front" ||
-                (l.Owner == null && l.Role == "counter" && NegociationUIManager.Instance?.IsOpen == true &&
-                    indicators.HasDemand))) &&
-                ItemGridMove.CanMove(row.Item, target, shape);
+            value ??= "";
+            if (query == value) return;
+            query = value; page = 0; resetScroll = true;
+            if (window?.IsAlive == true && !collapsed) Render();
+        }
+
+        private void SwitchMode(bool demand)
+        {
+            if (demand && !CanOpenDemand()) { ShopNotice.Show(ShopSettings.Text("f11.no_demand")); return; }
+            if (demandOnly == demand) return;
+            demandOnly = demand; customer = demand ? indicators.Customer : null;
+            page = 0; query = ""; resultsRoot = null; resetScroll = true;
+            Render();
+        }
+
+        private bool CanMoveListedSource(Row row)
+        {
+            return SameContext() && row?.Item != null && row.Demand == demandOnly && row.Item.unitCount == row.Quantity &&
+                RefreshLocation(row.Location, out ShopInventory.Location source) && SameSource(row, source) &&
+                ReferenceEquals(row.Item.parentInventory, source.Inventory) && source.Inventory.childItems.Contains(row.Item) &&
+                ShopInventory.Movable(row.Item) && row.Item.MaxNumRemove() >= row.Quantity && !row.Reserved && !RequestBook.Reserved(row.Item) &&
+                (!demandOnly || CustomerIndicators.DemandLocation(source) && indicators.Matches(row.Item));
+        }
+
+        private bool TargetLocation(GameInventory target, out ShopInventory.Location location)
+        {
+            location = null;
+            if (!(target is PixelElement element) || element.handler == null || !element.handler.gameObject.activeInHierarchy ||
+                !VisibleInventoryViews.Visible(element.handler.FindParentWindow())) return false;
+            location = ShopInventory.OwnedLocations(true).FirstOrDefault(l => ReferenceEquals(l.Inventory, target) &&
+                (l.IsMachine && target is GameSlotInventory || !l.IsMachine &&
+                    (l.Ordinary || l.Owner == null && (l.Role == "front" ||
+                        !demandOnly && (l.Role == "counter" || l.Role == "showcase") ||
+                        l.Role == "counter" && NegociationUIManager.Instance?.IsOpen == true && indicators.HasDemand))));
+            return location != null;
+        }
+
+        private WholeStackTransfer.Plan PlanMove(Row row, GameInventory target, GameItem resident, GridShape shape,
+            out ShopInventory.Location location)
+        {
+            location = null;
+            if (!CanMoveListedSource(row) || !WholeStackTransfer.Ready || !TargetLocation(target, out location)) return null;
+            if (resident != null)
+                return target is GameGridInventory && !location.IsMachine
+                    ? WholeStackTransfer.ExactStack(row.Item, target, resident) : null;
+            if (target is GameGridInventory grid && !location.IsMachine)
+                return WholeStackTransfer.ExactEmpty(row.Item, grid, shape);
+            return location.IsMachine && target is GameSlotInventory slot && slot.childItems.Count == 0
+                ? WholeStackTransfer.EmptySlot(row.Item, slot) : null;
+        }
+
+        private bool MoveScope(Row row, ShopInventory.Location destination)
+        {
+            return SameContext() && RefreshLocation(row.Location, out ShopInventory.Location source) && SameSource(row, source) &&
+                TargetLocation(destination?.Inventory, out ShopInventory.Location target) && SameLocation(destination, target);
+        }
+
+        private static bool SameLocation(ShopInventory.Location a, ShopInventory.Location b)
+        {
+            if (a == null || b == null || !ReferenceEquals(a.Inventory, b.Inventory) || !ReferenceEquals(a.Owner, b.Owner) ||
+                a.Role != b.Role || a.Page != b.Page || a.Path == null || b.Path == null || a.Path.Length != b.Path.Length) return false;
+            for (int i = 0; i < a.Path.Length; i++) if (!ReferenceEquals(a.Path[i], b.Path[i])) return false;
+            return true;
+        }
+
+        private void RejectMove(Row row, GameInventory target, GameItem resident)
+        {
+            dirty = forceRender = true;
+            string reason = "f11.move_manual";
+            try
+            {
+                if (!CanMoveListedSource(row)) reason = "inv.changed";
+                else if (!WholeStackTransfer.Ready) reason = "f08.pending";
+                else if (target?.IsInsertLocked() == true) reason = "f11.target_locked";
+                else if (target is GameSlotInventory && target.childItems.Count != 0) reason = "f11.target_occupied";
+                else if (target is GameGridInventory && resident != null && ReferenceEquals(resident.parentInventory, target))
+                {
+                    if (RequestBook.Reserved(resident)) reason = "f11.target_reserved";
+                    else if (!ReferenceEquals(resident, row.Item))
+                    {
+                        SlotMarker stack = resident.GetStackSlot(row.Item);
+                        if (stack == null || stack.targetItem != resident || stack.inventory != target) reason = "f11.stack_mismatch";
+                        else if (stack.numTransfer < row.Quantity) reason = "f11.stack_full";
+                    }
+                }
+            }
+            catch (Exception error) { log("F11 could not classify a rejected target: " + error); }
+            ShopNotice.Show(ShopSettings.Text(reason));
+        }
+
+        private static bool SameSource(Row row, ShopInventory.Location location)
+        {
+            if (location == null || !ReferenceEquals(row.SourceInventory, location.Inventory) ||
+                !ReferenceEquals(row.SourceOwner, location.Owner) || row.SourceRole != location.Role ||
+                row.SourcePage != location.Page || row.SourcePath == null || location.Path == null ||
+                row.SourcePath.Length != location.Path.Length) return false;
+            for (int i = 0; i < row.SourcePath.Length; i++)
+                if (!ReferenceEquals(row.SourcePath[i], location.Path[i])) return false;
+            return true;
         }
 
         private void Locate(Row row)
         {
             try
             {
-                if (!SameContext() || row?.Item == null || !ShopInventory.TryRefreshCustomer(row.Location, out ShopInventory.Location location) ||
+                if (!SameContext() || row?.Item == null || row.Demand != demandOnly || !RefreshLocation(row.Location, out ShopInventory.Location location) ||
                     !ReferenceEquals(row.Item.parentInventory, location.Inventory) || !location.Inventory.childItems.Contains(row.Item) ||
-                !ShopInventory.Owned(row.Item) || !indicators.Matches(row.Item))
+                    !ShopInventory.Owned(row.Item) || demandOnly && !indicators.Matches(row.Item))
                 {
                     dirty = true;
                     ShopNotice.Show(ShopSettings.Text("f11.changed"));
@@ -285,9 +444,9 @@ namespace ShopAssist
                 }
                 if (!ItemLocator.TryLocate(row.Item, location, out string failure))
                 { dirty = true; ShopNotice.Show(ShopSettings.Text(failure)); return; }
-                if (!SameContext() || !ShopInventory.TryRefreshCustomer(location, out location) ||
+                if (!SameContext() || !RefreshLocation(location, out location) ||
                     !ReferenceEquals(row.Item.parentInventory, location.Inventory) || !location.Inventory.childItems.Contains(row.Item) ||
-                    !ShopInventory.Owned(row.Item) || !indicators.Matches(row.Item))
+                    !ShopInventory.Owned(row.Item) || demandOnly && !indicators.Matches(row.Item))
                 {
                     ItemLocator.Clear();
                     dirty = true;
@@ -304,6 +463,33 @@ namespace ShopAssist
             }
         }
 
+        private bool RefreshLocation(ShopInventory.Location location, out ShopInventory.Location refreshed)
+        {
+            if (demandOnly) return ShopInventory.TryRefreshCustomer(location, out refreshed);
+            if (!ShopInventory.TryRefresh(location, out refreshed)) return false;
+            return Searchable(refreshed);
+        }
+
+        private static bool Searchable(ShopInventory.Location location) => ShopInventory.SearchableGoods(location);
+
+        private void BeginWindowDrag()
+        {
+            EndWindowDrag();
+            if (window?.IsAlive != true || window.root == null) return;
+            dragGroup = window.root.GetComponent<CanvasGroup>() ?? window.root.AddComponent<CanvasGroup>();
+            dragAlpha = dragGroup.alpha; dragBlocksRaycasts = dragGroup.blocksRaycasts;
+            dragGroup.alpha = .2f;
+            dragGroup.blocksRaycasts = false;
+        }
+
+        private void EndWindowDrag()
+        {
+            if (dragGroup == null) return;
+            dragGroup.alpha = dragAlpha;
+            dragGroup.blocksRaycasts = dragBlocksRaycasts;
+            dragGroup = null;
+        }
+
         private void Collapse(GameItemElement target)
         {
             if (target?.handler == null || window?.IsAlive != true || collapsed) return;
@@ -312,7 +498,7 @@ namespace ShopAssist
             expandedSize = window.Rect.sizeDelta;
             collapsed = true;
             restoreScrollAt = -1;
-            scrollContent = null;
+            scrollContent = resultsRoot = null;
             if (WindowElements?.GetValue(window) is not Dictionary<string, CustomUIElement> elements)
                 throw new InvalidOperationException("Customer list elements are unavailable.");
             elements.Clear();
@@ -321,12 +507,33 @@ namespace ShopAssist
             window.SetSize(width, height);
             Canvas targetCanvas = target.handler.GetComponentInParent<Canvas>();
             Camera camera = targetCanvas == null || targetCanvas.renderMode == RenderMode.ScreenSpaceOverlay ? null : targetCanvas.worldCamera;
+            var corners = new Vector3[4];
+            target.handler.rectTransform.GetWorldCorners(corners);
             Vector2 point = RectTransformUtility.WorldToScreenPoint(camera, target.handler.rectTransform.position);
+            float left = float.MaxValue, right = float.MinValue, bottom = float.MaxValue, top = float.MinValue;
+            foreach (Vector3 corner in corners)
+            {
+                Vector2 screen = RectTransformUtility.WorldToScreenPoint(camera, corner);
+                left = Mathf.Min(left, screen.x); right = Mathf.Max(right, screen.x);
+                bottom = Mathf.Min(bottom, screen.y); top = Mathf.Max(top, screen.y);
+            }
             Canvas canvas = window.root.GetComponentInParent<Canvas>();
             float scale = canvas != null && canvas.scaleFactor > 0 ? canvas.scaleFactor : 1f;
             float x = Mathf.Max(0, (Screen.width / scale - width) / 2f - 8f);
             float y = Mathf.Max(0, (Screen.height / scale - height) / 2f - 8f);
-            window.Rect.anchoredPosition = new Vector2(point.x < Screen.width / 2f ? x : -x, point.y < Screen.height / 2f ? y : -y);
+            Vector2 best = Vector2.zero;
+            float bestOverlap = float.MaxValue, bestDistance = -1;
+            foreach (float px in new[] { -x, x }) foreach (float py in new[] { -y, y })
+            {
+                float cx = Screen.width / 2f + px * scale, cy = Screen.height / 2f + py * scale;
+                float overlapX = Mathf.Max(0, Mathf.Min(right, cx + width * scale / 2f) - Mathf.Max(left, cx - width * scale / 2f));
+                float overlapY = Mathf.Max(0, Mathf.Min(top, cy + height * scale / 2f) - Mathf.Max(bottom, cy - height * scale / 2f));
+                float overlap = overlapX * overlapY;
+                float distance = (cx - point.x) * (cx - point.x) + (cy - point.y) * (cy - point.y);
+                if (overlap < bestOverlap || overlap == bestOverlap && distance > bestDistance)
+                { best = new Vector2(px, py); bestOverlap = overlap; bestDistance = distance; }
+            }
+            window.Rect.anchoredPosition = best;
             var builder = new CustomUIBuilder(CustomUIManager.Instance, window, window.ContentRoot);
             builder.AddButton(ShopSettings.Text("f11.return"), Expand, "return");
             CustomUIBuilder.RebuildLayout(window.ContentRoot);
@@ -343,12 +550,15 @@ namespace ShopAssist
 
         private void Close()
         {
+            if (window?.root != null) ItemGrid.CancelDragWithin(window.root);
+            EndWindowDrag();
             if (window != null && window.IsAlive) window.Close();
             window = null;
             customer = null;
             run = null;
-            dirty = forceRender = resetScroll = collapsed = false;
-            scrollContent = null; renderedRows = null; savedScroll = 1f; restoreScrollAt = -1;
+            dirty = forceRender = resetScroll = collapsed = demandOnly = false;
+            query = "";
+            scrollContent = resultsRoot = null; renderedRows = null; savedScroll = 1f; restoreScrollAt = -1;
         }
 
         private void Reset() => Close();
@@ -364,6 +574,7 @@ namespace ShopAssist
             ModHook.OnLeavingStoreEarly -= Reset;
             SceneManager.activeSceneChanged -= SceneChanged;
             Reset();
+            WholeStackTransfer.Release();
         }
     }
 

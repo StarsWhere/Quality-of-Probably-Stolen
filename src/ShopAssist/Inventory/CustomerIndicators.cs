@@ -27,7 +27,7 @@ namespace ShopAssist
         private readonly List<TreeNodeRender> scratchNodes = new List<TreeNodeRender>();
         private StoreClientInstance customer;
         private GameItemElement pendingTooltipItem;
-        private RichText pendingTooltip;
+        private RichText pendingTooltip, pendingTooltipDisplay;
         private int pendingTooltipFrame;
         private bool started, dirty = true;
         private float nextRefresh;
@@ -354,7 +354,7 @@ namespace ShopAssist
             risks.Clear();
             customer = null;
             pendingTooltipItem = null;
-            pendingTooltip = null;
+            pendingTooltip = pendingTooltipDisplay = null;
             outlines.Dispose();
             dirty = true;
             NotifyChanged();
@@ -376,22 +376,34 @@ namespace ShopAssist
             if (current == null || !current.started) return;
             current.pendingTooltipItem = item;
             current.pendingTooltip = text;
+            current.pendingTooltipDisplay = text;
             current.pendingTooltipFrame = Time.frameCount;
+        }
+
+        // A grid card may append its own labels to the native tooltip. Only the
+        // native portion is evidence, and only after that exact card is shown.
+        internal static void TooltipComposed(GameItemElement item, RichText original, RichText displayed)
+        {
+            var owner = current;
+            if (owner == null || !owner.started || owner.pendingTooltipFrame != Time.frameCount ||
+                !ReferenceEquals(owner.pendingTooltipItem, item) || !ReferenceEquals(owner.pendingTooltip, original)) return;
+            owner.pendingTooltipDisplay = displayed;
         }
 
         internal static void TooltipDisplayed(RichText text)
         {
             CustomerIndicators owner = current;
             if (owner == null || !owner.started || owner.pendingTooltipItem == null || text == null ||
-                owner.pendingTooltipFrame != Time.frameCount || !ReferenceEquals(owner.pendingTooltip, text) ||
+                owner.pendingTooltipFrame != Time.frameCount || !ReferenceEquals(owner.pendingTooltipDisplay, text) ||
                 OverlayHandler.current == null || !VisibleInventoryViews.Visible(owner.pendingTooltipItem) ||
                 OverlayHandler.current.GetTooltipWindow() == null || !OverlayHandler.current.GetTooltipWindow().IsVisible()) return;
             GameItemElement item = owner.pendingTooltipItem;
+            RichText original = owner.pendingTooltip;
             owner.pendingTooltipItem = null;
-            owner.pendingTooltip = null;
-            PublicTooltipShown?.Invoke(item, text.nakedText ?? "");
+            owner.pendingTooltip = owner.pendingTooltipDisplay = null;
+            PublicTooltipShown?.Invoke(item, original?.nakedText ?? "");
             if (HasOrdinaryTooltip(item)) return;
-            string displayed = text.nakedText ?? "";
+            string displayed = original?.nakedText ?? "";
             var observation = new Observation();
             foreach (string type in TypeHelper.ALL_TYPES_LIST)
                 if (PublicClues.ContainsShownType(displayed, TypeHelper.GetTypeDisplayName(type))) observation.Types.Add(type);

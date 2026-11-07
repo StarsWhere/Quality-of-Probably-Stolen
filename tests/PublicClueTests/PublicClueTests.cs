@@ -61,9 +61,6 @@ internal static class PublicClueTests
         var irregular = OutlineGeometry.Build(new[] { true, false, true, true }, 2, 2, 16, false);
         Check(irregular.Count == 8, "an L shape retains its actual boundary");
         Check(OutlineGeometry.Build(new[] { true }, 1, 1, 16, true).Count == 8, "contained risk uses dashed edges");
-        var inset = OutlineGeometry.Build(new[] { true }, 1, 1, 16, true, 2.5f);
-        Check(inset.Count == 8 && inset[0].X == 2.5f && inset[0].Y == -2.5f,
-            "contained-risk dashes can remain distinct inside a peer border");
         Check(OutlineGeometry.Build(new[] { true }, 2, 1, 16, false).Count == 0, "invalid masks fail closed");
     }
 

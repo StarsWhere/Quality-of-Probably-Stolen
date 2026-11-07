@@ -70,6 +70,43 @@ public sealed class CustomerScenario
                     "F11 did not follow native buyer acceptance with F03 disabled: " +
                     QaItemUi.Describe(first.root, ordinary, customTooltip, hiddenRejection, nested));
                 Require(!bag.contentWindow.IsVisible(), "F11 search opened the container as a side effect");
+                Require(!CardTexts(ordinary).Contains(ModHelper.GetLocalized(Mod, "f11.purchase_record", 14)),
+                    "Purchase comparison remained visible while disabled");
+                var options = StoreUIManager.Instance.gameOptionUIManager;
+                options.OpenUI();
+                var settings = CustomUIManager.Instance.GetWindow("game_options");
+                settings.Get(Mod + ":f11.purchase").SetBool(true, true);
+                options.CloseUI();
+                var discard = CustomUIManager.Instance.GetWindow(Mod + ".settings.discard");
+                Require(discard?.Get("discard")?.button != null, "Unapplied purchase setting did not ask before closing");
+                discard.Get("discard").button.onClick.Invoke();
+                Require(!((ConfigEntry<bool>)ModConfig.Find(Mod).Get("f11.purchase")).Value,
+                    "Cancelling native options enabled purchase comparison");
+                TradeScenario.SetOptions(true, "f11.purchase");
+                Advance(41); return false;
+            case 41:
+                if (Time.realtimeSinceStartup - since < .7f) return false;
+                Require(CardTexts(ordinary).Contains(ModHelper.GetLocalized(Mod, "f11.purchase_record", 14)) &&
+                    CardTexts(customTooltip).Contains(ModHelper.GetLocalized(Mod, "f11.purchase_unknown")) &&
+                    CardTexts(nested).Contains(ModHelper.GetLocalized(Mod, "f11.purchase_record", 0)),
+                    "Purchase cards did not distinguish recorded prices, missing records and real zero");
+                Require(ordinary.GetTagReadonly("BOUGHT_PRICE_TAG").GetInt() == 14 && !customTooltip.IsTag("BOUGHT_PRICE_TAG") &&
+                    ordinary.parentInventory == EmporiumEntry.Instance.invElement && nested.parentInventory == bag.contentWindow.childElement,
+                    "Showing purchase records mutated items");
+                if (SystemInfo.graphicsDeviceType != UnityEngine.Rendering.GraphicsDeviceType.Null)
+                {
+                    gridCapture = Path.Combine(Application.persistentDataPath, "qa-customer-prices-" + token + ".png");
+                    ScreenCapture.CaptureScreenshot(gridCapture);
+                }
+                captureFrame = Time.frameCount + 4; Advance(42); return false;
+            case 42:
+                if (Time.frameCount < captureFrame || gridCapture != null && !File.Exists(gridCapture)) return false;
+                TradeScenario.SetOptions(false, "f11.purchase");
+                Advance(43); return false;
+            case 43:
+                if (Time.realtimeSinceStartup - since < .7f) return false;
+                Require(!CardTexts(ordinary).Contains(ModHelper.GetLocalized(Mod, "f11.purchase_record", 14)),
+                    "Disabling purchase comparison did not refresh the existing list");
                 Advance(5); return false;
             case 5:
                 var view = List();
@@ -165,6 +202,7 @@ public sealed class CustomerScenario
     private void Prepare()
     {
         TradeScenario.SetOptions(true, "f03.enabled", "f04.enabled", "f04.stolen", "f04.contraband", "f11.enabled");
+        TradeScenario.SetOptions(false, "f11.purchase", "f34.enabled");
         var root = EmporiumEntry.Instance.invElement;
         ordinary = NewItem("processed_meat", "QA Ordinary " + token);
         hiddenRejection = NewItem("processed_juice", "QA Hidden " + token);
@@ -173,6 +211,8 @@ public sealed class CustomerScenario
             new RichTextBuilder(40).AddLine("[" + TypeHelper.GetTypeDisplayName("FOOD") + "]");
         bag = NewItem("backpack_medium", "QA Bag " + token);
         nested = NewItem("cup_noodle", "QA Nested " + token);
+        GeneralHelper.TrackBuyPrice(ordinary, 14);
+        GeneralHelper.TrackBuyPrice(nested, 0);
         stolen = NewItem("wine_yeast", "QA Stolen " + token);
         StolenHelper.SetHeat(stolen, 42);
         Require(bag.contentWindow?.childElement is GameGridInventory && bag.contentWindow.openCallback == null &&
@@ -213,12 +253,16 @@ public sealed class CustomerScenario
 
     private static void OpenList()
     {
-        RoutingScenario.OpenOptionAction("f11.open");
-        Require(ListOrNull() != null, "F11 list did not open");
+        RoutingScenario.RunFeatureAction("f11.open");
+        var list = ListOrNull();
+        Require(list?.Get("demand")?.button != null, "F11 list did not open");
+        list.Get("demand").button.onClick.Invoke();
     }
 
     private static CustomUIWindow ListOrNull() => CustomUIManager.Instance.GetWindow(ListWindow);
     private static CustomUIWindow List() => ListOrNull() ?? throw new InvalidOperationException("F11 list is closed");
+    private static string[] CardTexts(GameItem item) => QaItemUi.Hit(List().root, item).transform.parent.parent
+        .GetComponentsInChildren<TMP_Text>(true).Where(t => t.isActiveAndEnabled).Select(t => t.text).ToArray();
     internal static void RequireCaptionVisible(CustomUIWindow window, GameItem item)
     {
         var hit = QaItemUi.Hit(window.root, item);
