@@ -51,7 +51,7 @@ public sealed class FeedScenario
             window.Get(Mod + ":f15.enabled").SetBool(false, true);
             window.Get("apply").button.onClick.Invoke();
             options.CloseUI();
-            RoutingScenario.OpenOptionAction("f33.open");
+            RoutingScenario.RunFeatureAction("f33.open");
             Select("source", "QA feed source"); Select("destination", "QA feed destination");
             var ui = Ui();
             var material = sourceGrid.childItems.FirstOrDefault(item => item.identifier == "scrap_metal");
@@ -82,7 +82,7 @@ public sealed class FeedScenario
         {
             if (Time.frameCount < attachAt) return false;
             Require(furnace.onCycleEndSlotItemFunc != originalCycle, "Re-enabling F33 did not restore its wrapper");
-            furnace.contentWindow.ToFront(); RoutingScenario.OpenOptionAction("f33.open");
+            furnace.contentWindow.ToFront(); RoutingScenario.RunFeatureAction("f33.open");
             step = 2; return false;
         }
         if (step == 2)
@@ -95,7 +95,7 @@ public sealed class FeedScenario
                 "F33 moved material without furnace power: " + paused);
             Put(MachineHelper.GetBatterySlot(furnace), battery);
             Ui().Close();
-            RoutingScenario.OpenOptionAction("f33.open");
+            RoutingScenario.RunFeatureAction("f33.open");
             Require(Ui().Get("resume")?.button != null, "Paused F33 rule could not be resumed");
             Ui().Get("resume").button.onClick.Invoke();
             step++; return false;
@@ -226,7 +226,7 @@ public sealed class FeedReloadScenario
 
         ItemMouseDoubleClickHandler.current.OpenContentAction(furnace, new Vector2(260, 140));
         furnace.contentWindow.ToFront();
-        RoutingScenario.OpenOptionAction("f33.open");
+        RoutingScenario.RunFeatureAction("f33.open");
         FeedScenario.Ui().Get("stop").button.onClick.Invoke();
         FeedScenario.Select("source", "QA feed source"); FeedScenario.Select("destination", "QA feed destination");
         var ui = FeedScenario.Ui();
