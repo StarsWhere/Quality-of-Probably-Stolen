@@ -1,13 +1,11 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
-using HarmonyLib;
 
 namespace ShopAssist
 {
     internal sealed partial class MachineTools
     {
-        private const string AquaSenseId = "chiqingsan.AquaSense";
         private static readonly string[] FilterKinds = { "water_filter", "kotton_fabric", "hydroreed_filter" };
         private static int FilterBit(string id) => id == "water_filter" ? 1 : id == "kotton_fabric" ? 2 : id == "hydroreed_filter" ? 4 : 0;
 
@@ -23,29 +21,6 @@ namespace ShopAssist
             if (old.identifier == next.identifier) return true;
             int previousSize = old.GetTagReadonly("FILTER_SIZE_TAG").GetInt(), nextSize = next.GetTagReadonly("FILTER_SIZE_TAG").GetInt();
             return previousSize > 0 && nextSize > 0 && (rule.grade == 2 || rule.grade == 1 && nextSize <= previousSize);
-        }
-
-        private static bool AquaOwns(GameItem host, string filterId)
-        {
-            if (host?.identifier != "water_pitcher" || !ShopPeers.Running(AquaSenseId)) return false;
-            string key = filterId == "water_filter" ? "AutoReplaceFilters" :
-                filterId == "kotton_fabric" ? "AutoReplaceCloth" : null;
-            return key != null && ((ModConfig.Find(AquaSenseId)?.Get(key) as ConfigEntry<bool>)?.Value ?? true);
-        }
-
-        // AquaSense 1.9 observes two native methods even when its automatic replacement is off.
-        // Admit only its verified postfix on that method. All unknown patches still veto the exchange.
-        private static bool KnownWaterHooks(MethodInfo method, string aquaPostfix)
-        {
-            if (MaintenanceSwap.NoForeignPatches(method)) return true;
-            var aqua = ShopPeers.Active(AquaSenseId);
-            if (aqua?.Manifest.ModVersion != "1.9.0" || aquaPostfix == null) return false;
-            var patches = Harmony.GetPatchInfo(method);
-            string owner = "mod." + ModEntry.Id + ".f35";
-            return patches != null && patches.Prefixes.All(p => p.owner == owner) &&
-                patches.Finalizers.All(p => p.owner == owner) && patches.Transpilers.All(p => p.owner == owner) &&
-                patches.Postfixes.All(p => p.owner == owner || (p.owner == "chiqingsan.water-scan-tooltip" &&
-                    p.PatchMethod?.DeclaringType?.Assembly == aqua.Assembly && p.PatchMethod.Name == aquaPostfix));
         }
 
         private static List<GameSlotInventory> FilterSlots(GameItem host)
@@ -67,33 +42,161 @@ namespace ShopAssist
             return result;
         }
 
-        private static void BeforeTankFilter(GameItem __0, GameItem __1, MethodBase __originalMethod, out GameItem __state)
+        private enum FilterOperation { Transfer, Fill, Tank }
+        private sealed class FilterFrame
         {
-            __state = null;
-            if (current?.filterEnabled.Value != true || __0 == null || !EligibleFilter(__1) ||
-                !(__1.parentInventory is GameSlotInventory seat) || !seat.IsTag("RAS_FILTER_SLOT_TAG") || !ShopInventory.InStore) return;
-            var host = seat.GetParentItem();
-            if (!IsFilterHost(host) || !ShopInventory.Owned(host) || MachineRAS.GetWaterSlot(host)?.childItem != __0 || !FilterSlots(host).Contains(seat)) return;
-            ActionAvailability capability = current.FilterCapability(host, __1, FilterPath.Tank);
-            if (!capability.Allowed) { current.RememberMaintenanceFailure(host, 35, capability.ReasonKey, filter: __1); return; }
-            int pore = __1.GetTagReadonly("FILTER_SIZE_TAG").GetInt();
-            if (Liquid.Liquids.Any(liquid => liquid.identifier != "water" && liquid.identifier != "microbe" &&
-                liquid.particleSize >= pore && __0.GetTagReadonly(liquid.currentPart).GetInt() > 0)) __state = host;
+            internal FilterOperation Operation;
+            internal GameItem Host, Source, Filter;
+            internal GameSlotInventory Seat;
+            internal List<GameSlotInventory> Seats;
+            internal int Before;
+            internal bool Observed, Invalid;
+            internal readonly Dictionary<GameSlotInventory, GameItem> Processed = new Dictionary<GameSlotInventory, GameItem>();
+        }
+        private sealed class FilterCandidate
+        {
+            internal GameItem Host, Filter;
+            internal GameSlotInventory Seat;
+        }
+        [ThreadStatic] private static FilterProcessingTracker<FilterFrame, FilterCandidate> filterProcessing;
+
+        private static FilterProcessingTracker<FilterFrame, FilterCandidate>.Scope BeginFilterFrame(FilterOperation operation)
+        {
+            if (current?.started != true || !current.filterEnabled.Value) return null;
+            if (filterProcessing == null) filterProcessing = new FilterProcessingTracker<FilterFrame, FilterCandidate>();
+            return filterProcessing.Enter(new FilterFrame { Operation = operation });
         }
 
-        private static void AfterTankFilter(GameItem __1, GameItem __state)
+        private static void BeginFilterTransfer(GameItem __0, GameItem __1,
+            out FilterProcessingTracker<FilterFrame, FilterCandidate>.Scope __state)
         {
-            if (current != null && __state != null && __1.parentInventory is GameSlotInventory seat && seat.childItem == __1)
-                current.QueueFilter(__state, seat);
+            __state = BeginFilterFrame(FilterOperation.Transfer);
+            PreparePitcher(__state, __1, __0);
+        }
+
+        private static void BeginFilterFill(GameItem __0,
+            out FilterProcessingTracker<FilterFrame, FilterCandidate>.Scope __state)
+        {
+            __state = BeginFilterFrame(FilterOperation.Fill);
+            PreparePitcher(__state, __0, null);
+        }
+
+        private static void PreparePitcher(FilterProcessingTracker<FilterFrame, FilterCandidate>.Scope scope, GameItem host, GameItem source)
+        {
+            if (scope == null || host?.identifier != "water_pitcher" || !ShopInventory.InStore) return;
+            FilterFrame frame = scope.Frame;
+            frame.Host = host;
+            try
+            {
+                if (!ShopInventory.Owned(host) || !(host.contentWindow?.childElement is GameSlotInventory seat)) return;
+                GameItem filter = seat.childItem;
+                if (!EligibleFilter(filter)) return;
+                ActionAvailability capability = current.FilterCapability(host, source == null ? FilterPath.Added : FilterPath.Transfer);
+                if (!capability.Allowed) { current.RememberMaintenanceFailure(host, 35, capability.ReasonKey, filter: filter); return; }
+                frame.Seat = seat; frame.Filter = filter; frame.Source = source;
+                frame.Before = WaterHelper.GetCurrentCapacityUL(source ?? host);
+            }
+            catch (Exception error) { FilterObservationFailed(frame, error); }
+        }
+
+        private static void BeginTankProcessing(GameItem __0, GameItem __2, List<GameSlotInventory> __3, bool __5,
+            out FilterProcessingTracker<FilterFrame, FilterCandidate>.Scope __state)
+        {
+            __state = BeginFilterFrame(FilterOperation.Tank);
+            if (__state == null || !__5 || __0 == null || __2 == null || __3 == null || !ShopInventory.InStore) return;
+            FilterFrame frame = __state.Frame;
+            frame.Host = __0;
+            try
+            {
+                if (!IsFilterHost(__0) || !ShopInventory.Owned(__0) || MachineRAS.GetWaterSlot(__0)?.childItem != __2) return;
+                ActionAvailability capability = current.FilterCapability(__0, FilterPath.Tank);
+                if (!capability.Allowed) { current.RememberMaintenanceFailure(__0, 35, capability.ReasonKey); return; }
+                var actual = FilterSlots(__0);
+                frame.Seats = __3.Where(seat => actual.Contains(seat)).ToList();
+                frame.Source = __2;
+            }
+            catch (Exception error) { FilterObservationFailed(frame, error); }
+        }
+
+        // The native filter changes its amount argument while processing it.
+        // Preserve the incoming volume so a completely filtered pour is still observed.
+        private static void BeforeFilterProcessing(int __1, out int __state) => __state = __1;
+
+        private static void ObserveFilterProcessing(int __state, GameItem __2, GameItem __3)
+        {
+            if (__state <= 0 || __3 == null || filterProcessing?.Current == null) return;
+            try
+            {
+                for (var scope = filterProcessing.Current; scope != null; scope = scope.Parent)
+                {
+                    FilterFrame frame = scope.Frame;
+                    if (frame.Invalid) continue;
+                    if (frame.Operation == FilterOperation.Tank)
+                    {
+                        if (frame.Source != __2 || !(__3.parentInventory is GameSlotInventory seat) ||
+                            frame.Seats == null || !frame.Seats.Contains(seat) || seat.childItem != __3) continue;
+                        frame.Processed[seat] = __3;
+                        break;
+                    }
+                    if (frame.Filter == __3 && frame.Seat?.childItem == __3 && frame.Source == __2)
+                    { frame.Observed = true; break; }
+                }
+            }
+            catch (Exception error) { FilterObservationFailed(filterProcessing.Current.Frame, error); }
+        }
+
+        private static Exception EndFilterProcessing(Exception __exception,
+            FilterProcessingTracker<FilterFrame, FilterCandidate>.Scope __state)
+        {
+            if (__state == null) return __exception;
+            FilterFrame frame = __state.Frame;
+            try
+            {
+                if (__exception == null && !frame.Invalid)
+                {
+                    if (frame.Operation == FilterOperation.Tank)
+                    {
+                        foreach (var pair in frame.Processed)
+                            __state.Items.Add(new FilterCandidate { Host = frame.Host, Seat = pair.Key, Filter = pair.Value });
+                    }
+                    else if (frame.Seat != null && (frame.Operation == FilterOperation.Transfer
+                        ? FilterProcessingRules.Transferred(frame.Observed, frame.Before, WaterHelper.GetCurrentCapacityUL(frame.Source))
+                        : FilterProcessingRules.Filled(frame.Observed, frame.Before, WaterHelper.GetCurrentCapacityUL(frame.Host))))
+                        __state.Items.Add(new FilterCandidate { Host = frame.Host, Seat = frame.Seat, Filter = frame.Filter });
+                }
+                else if (__exception != null && frame.Host != null)
+                    FilterObservationFailed(frame, __exception);
+                filterProcessing.Complete(__state, __exception == null && !frame.Invalid, candidate =>
+                {
+                    try { if (candidate.Seat?.childItem == candidate.Filter) current?.QueueFilter(candidate.Host, candidate.Seat); }
+                    catch (Exception error) { FilterObservationFailed(new FilterFrame { Host = candidate.Host, Filter = candidate.Filter }, error); }
+                });
+            }
+            catch (Exception error)
+            {
+                FilterObservationFailed(frame, error);
+                // Ensure an observation error does not change the native operation's exception.
+                if (filterProcessing?.Current == __state)
+                    filterProcessing.Complete(__state, false, _ => { });
+            }
+            return __exception;
+        }
+
+        private static void FilterObservationFailed(FilterFrame frame, Exception error)
+        {
+            frame.Invalid = true;
+            current?.log("F35 could not track filter processing: " + error);
+            try { if (frame.Host != null) current?.RememberMaintenanceFailure(frame.Host, 35, "f35.inspect", true, frame.Filter); }
+            catch (Exception reportingError) { current?.log("F35 could not report the processing failure: " + reportingError); }
         }
 
         private void QueueFilter(GameItem host, GameSlotInventory seat)
         {
             GameItem filter = seat?.childItem;
-            if (!EligibleFilter(filter) || DurabilityHelper.GetRealDurability(filter) != 0 || AquaOwns(host, filter.identifier) ||
-                (pendingFilters.Count >= 128 && !pendingFilters.ContainsKey(seat))) return;
+            if (!EligibleFilter(filter) || DurabilityHelper.GetRealDurability(filter) != 0) return;
             pendingFilters[seat] = new PendingFilter { Host = host, Filter = filter, Parent = host.parentInventory, Seat = seat,
                 Run = PlayerStore.Instance.runID, Slot = PlayerStore.Instance.saveSlotId };
+            machinesDirty = true; machineAttentionDirty = true;
         }
     }
 }
