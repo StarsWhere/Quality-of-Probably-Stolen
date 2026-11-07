@@ -85,7 +85,7 @@ namespace ShopAssist
         private readonly View water = new View(), chem = new View();
         private readonly List<string> pins = new List<string>();
         private CustomUIWindow picker;
-        private string lastPinValue, conflictingPeer;
+        private string lastPinValue;
         private bool started, pinDataValid;
 
         internal LiquidBars(ShopSettings settings, Action<string> log)
@@ -98,7 +98,7 @@ namespace ShopAssist
             showColors = settings.Toggle("f19.colors", "f19.colors.tip");
             sortByShare = settings.Toggle("f19.sort", "f19.sort.tip", true);
             config = ModHelper.GetConfig(ModEntry.Id);
-            pinSetting = config.Define("f19.pinned", "", enabled.Section,
+            pinSetting = config.Define("f19.pinned", LiquidPins.Write(Array.Empty<string>()), enabled.Section,
                 () => ShopSettings.Text("f19.pinned"), tooltip: () => ShopSettings.Text("f19.pinned.tip"));
             settings.Action("f19.choose", OpenPicker, CanChoose);
         }
@@ -114,10 +114,9 @@ namespace ShopAssist
         private void LoadPins()
         {
             pins.Clear(); lastPinValue = pinSetting.Value ?? "";
-            pinDataValid = LiquidPins.TryReadOrMigrate(lastPinValue, out List<string> loaded, out bool migrated);
+            pinDataValid = LiquidPins.TryRead(lastPinValue, out List<string> loaded);
             if (pinDataValid) pins.AddRange(loaded);
             else log("F19 retained invalid pinned-component preferences; pin changes are disabled.");
-            if (pinDataValid && migrated) SavePins();
         }
 
         private bool SavePins()
@@ -159,53 +158,10 @@ namespace ShopAssist
             return false;
         }
 
-        private string ResolvePin(string value)
-        {
-            if (string.IsNullOrWhiteSpace(value)) return null;
-            string text = value.Trim();
-            Liquid exact = Liquid.Liquids?.FirstOrDefault(liquid => liquid != null && string.Equals(liquid.identifier, text, StringComparison.Ordinal));
-            if (exact != null) return exact.identifier;
-            var matches = Liquid.Liquids?.Where(liquid => liquid != null && (string.Equals(liquid.displayName, text, StringComparison.Ordinal) ||
-                string.Equals(displayNames.Get(liquid), text, StringComparison.Ordinal))).Take(2).ToArray();
-            return matches?.Length == 1 ? matches[0].identifier : text;
-        }
-
-        private void ResolvePins()
-        {
-            if (!pinDataValid) return;
-            var resolved = pins.Select(ResolvePin).Where(id => !string.IsNullOrEmpty(id)).Distinct(StringComparer.Ordinal).ToList();
-            if (resolved.SequenceEqual(pins)) return;
-            CommitPins(resolved);
-        }
-
-        private string ActiveScannerPeer()
-        {
-            foreach (LoadedMod mod in ModLoader.Mods)
-            {
-                if (mod == null || !mod.IsEnabled || mod.Instance == null || !string.IsNullOrEmpty(mod.LoadError)) continue;
-                string name = string.Join(" ", (mod.Manifest?.Name ?? "").Normalize().Split((char[])null, StringSplitOptions.RemoveEmptyEntries));
-                if (string.Equals(name, "Better Liquid Scanner", StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(name, "更好的液体扫描仪", StringComparison.OrdinalIgnoreCase)) return mod.Manifest?.ID ?? name;
-            }
-            return null;
-        }
-
-        private bool PeerOwnsScanner()
-        {
-            string peer = ActiveScannerPeer();
-            if (peer != conflictingPeer)
-            {
-                conflictingPeer = peer;
-                if (peer != null) log("F19 yielded scanner presentation to active mod " + peer + ".");
-            }
-            return peer != null;
-        }
-
         internal void Tick()
         {
             if (!started) return;
             if (!enabled.Value) { Reset(); return; }
-            if (PeerOwnsScanner()) { Clear(water); Clear(chem); if (pinDataValid) ClosePicker(); return; }
             CheckSafely(water); CheckSafely(chem);
             if (picker != null && (!picker.IsAlive || !CanChoose())) ClosePicker();
         }
@@ -224,7 +180,6 @@ namespace ShopAssist
             if (view.Root == null)
             {
                 if (!view.NativeText.enabled || view.NativeText.text != view.Raw) { Clear(view); return; }
-                ResolvePins();
                 if (!Create(view)) { Clear(view); return; }
                 view.Pending = false; UpdateRows(view); UpdateDetail(view);
                 return;
@@ -259,9 +214,7 @@ namespace ShopAssist
         {
             if (!started) return;
             if ((pinSetting.Value ?? "") != lastPinValue) LoadPins();
-            ResolvePins();
             if (!enabled.Value) { Reset(); return; }
-            if (PeerOwnsScanner()) { Clear(water); Clear(chem); if (pinDataValid) ClosePicker(); return; }
             ReapplySafely(water); ReapplySafely(chem);
         }
 
@@ -287,7 +240,7 @@ namespace ShopAssist
                 ReferenceEquals(WaterScannerUIManager.Instance?.currentWaterContainer, view.Sample);
         }
 
-        private bool CanChoose() => enabled.Value && (!pinDataValid || !PeerOwnsScanner() &&
+        private bool CanChoose() => enabled.Value && (!pinDataValid ||
             (StillOpen(chem) && chem.Rows.Count > 0 || StillOpen(water) && water.Rows.Count > 0));
 
         private void OpenPicker()
@@ -354,7 +307,7 @@ namespace ShopAssist
             TextMeshProUGUI tested, TextMeshProUGUI label, TextMeshProUGUI totalText, TextMeshProUGUI product,
             Button match, Button confront, bool chemical)
         {
-            if (!started || !enabled.Value || PeerOwnsScanner() || panel == null || !panel.activeInHierarchy || sample == null || text == null)
+            if (!started || !enabled.Value || panel == null || !panel.activeInHierarchy || sample == null || text == null)
             { Clear(view); return; }
             try
             {
@@ -375,7 +328,6 @@ namespace ShopAssist
                 view.NativeRows.Clear(); view.NativeRows.AddRange(rows);
                 foreach (LiquidComposition.Row row in rows) view.Seen[row.Liquid.identifier] = row.Liquid;
                 if (!displayNames.Ready()) { view.Pending = true; return; }
-                ResolvePins();
                 if (view.Root == null && !Create(view)) { Clear(view); return; }
                 if ((view.Match?.gameObject.activeInHierarchy == true) != view.MatchActive ||
                     (view.Confront?.gameObject.activeInHierarchy == true) != view.ConfrontActive ||

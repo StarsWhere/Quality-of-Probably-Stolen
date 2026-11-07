@@ -67,28 +67,6 @@ namespace ShopAssist
             [JsonRequired] public List<string> pins;
         }
 
-        internal static bool TryLegacy(string legacy, out List<string> pins)
-        {
-            pins = new List<string>();
-            if (string.IsNullOrWhiteSpace(legacy)) return true;
-            string value = legacy.Trim();
-            if (value.Length > 128) return false;
-            pins.Add(value);
-            return true;
-        }
-
-        internal static bool TryReadOrMigrate(string raw, out List<string> pins, out bool migrated)
-        {
-            migrated = false;
-            if (TryRead(raw, out pins)) return true;
-            string value = (raw ?? "").Trim();
-            if (value.StartsWith("{", StringComparison.Ordinal) || value.StartsWith("[", StringComparison.Ordinal) ||
-                value.StartsWith("\"", StringComparison.Ordinal)) return false;
-            if (!TryLegacy(raw, out pins)) return false;
-            migrated = true;
-            return true;
-        }
-
         internal static bool TryRead(string raw, out List<string> pins)
         {
             pins = null;

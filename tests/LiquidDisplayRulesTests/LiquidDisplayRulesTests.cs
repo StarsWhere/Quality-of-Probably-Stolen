@@ -19,14 +19,7 @@ internal static class LiquidDisplayRulesTests
         var pins = new List<string> { "microbe", "waste" };
         string encoded = LiquidPins.Write(pins);
         Check(LiquidPins.TryRead(encoded, out var decoded) && decoded.SequenceEqual(pins), "Pin order did not round-trip.");
-        Check(LiquidPins.TryLegacy("  organic_waste  ", out var migrated) && migrated.SequenceEqual(new[] { "organic_waste" }) &&
-            LiquidPins.TryLegacy("", out migrated) && migrated.Count == 0 && !LiquidPins.TryLegacy(new string('x', 129), out _),
-            "Legacy single pins were not migrated safely.");
-        Check(LiquidPins.TryReadOrMigrate("organic_waste", out migrated, out bool didMigrate) && didMigrate &&
-            migrated.SequenceEqual(new[] { "organic_waste" }) &&
-            LiquidPins.TryReadOrMigrate(encoded, out migrated, out didMigrate) && !didMigrate && migrated.SequenceEqual(pins) &&
-            !LiquidPins.TryReadOrMigrate("{broken", out _, out _), "Pin migration accepted malformed structured data.");
-        foreach (string invalid in new[] { "", "{}", "{\"version\":2,\"pins\":[]}",
+        foreach (string invalid in new[] { "", "organic_waste", "{}", "{\"version\":2,\"pins\":[]}",
             "{\"version\":1,\"pins\":[\"water\",\"water\"]}", "{\"version\":1,\"pins\":[\" \"]}",
             "{\"version\":1,\"pins\":[],\"extra\":true}" })
             Check(!LiquidPins.TryRead(invalid, out _), "Invalid pin data was accepted: " + invalid);
