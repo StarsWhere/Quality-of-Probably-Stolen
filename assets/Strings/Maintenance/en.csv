@@ -1,5 +1,5 @@
 f31.enabled,Automatically replace hydroponic and printer batteries
-f31.tip,Open Shop Tools on a hydroponic machine or printer and choose a spare container and charge threshold. Before a night cycle, when the machine can produce and its installed ordinary battery is below the threshold, it attempts at most one exchange per day. The spare must be the same type, hold more charge and power the cycle; the old battery returns to the source. A 0% threshold never triggers.
+f31.tip,Choose Spare battery on a hydroponic machine or printer to set the source and charge threshold. Before a night cycle, when the machine can produce and its installed ordinary battery is below the threshold, it attempts at most one exchange per day. The spare must be the same type, hold more charge and power the cycle; the old battery returns to the source. A 0% threshold never triggers.
 f31.open,Set up spare machine batteries
 f31.threshold,Battery replacement threshold
 f31.position,Choose spare batteries in container order
@@ -9,13 +9,20 @@ f31.inspect,Check the batteries and swap buffer.
 f31.paused,Automatic battery replacement is paused.
 f31.next_attempt,The spare is available. Waiting for the next replacement opportunity.
 f35.enabled,Automatically replace pitcher and aquaculture filters
-f35.tip,Open Shop Tools on a pitcher or aquaculture system and choose a spare container, allowed filter types and a pore-size rule. When an enabled filter is exhausted during filtration, replace it from the source, preferring the same type; other enabled types can be allowed by pore size. The old filter must fit back in the source. Disable the corresponding AquaSense replacement when it controls the pitcher.
+f35.tip,Choose Spare filter on a pitcher or aquaculture system to set the source, allowed filter types and a pore-size rule. When an enabled filter is exhausted during filtration, replace it from the source, preferring the same type; other enabled types can be allowed by pore size. The old filter must fit back in the source.
 f35.open,Set up spare filters
 f35.missing,No suitable filter is available in the selected container.
 f35.pending,Exhausted filter needs attention.
 f35.inspect,Check the filters and swap buffer.
 maintenance.no_host,Open the machine or pitcher to configure it.
 maintenance.no_source,Open an owned container for replacement parts.
+maintenance.spare_count,Matching spares: {0} · exchangeable now: {1}
+maintenance.spare_unknown,Install the part to check compatible spares.
+maintenance.copy,Copy saved rule
+maintenance.copy_apply,Copy to selected devices
+maintenance.configured,Already configured
+maintenance.no_targets,No other compatible devices.
+maintenance.copy_result,Copied to {0} devices; skipped {1}.
 maintenance.enable,Save
 maintenance.disable,Remove rule
 maintenance.saved,Replacement rule saved.
@@ -25,15 +32,22 @@ maintenance.saved_inactive,Replacement rule saved but it cannot run right now.
 maintenance.saved_partial,Replacement rule saved but some processing paths cannot replace filters automatically.
 maintenance.host_unavailable,The selected machine is unavailable.
 maintenance.invalid,Replacement settings could not be read.
+maintenance.read_failed,Settings are temporarily unavailable. Refresh to retry.
+maintenance.reset,Start settings over
+maintenance.reset_warning,Starting over clears all automatic battery and filter replacement rules. The original record will be retained. Continue?
+maintenance.reset_confirm,Clear rules and start over
+maintenance.reset_retry,Retry starting over
+maintenance.reset_cancel,Stop retrying
+maintenance.reset_cancelled,Retry stopped. Check the current settings.
+maintenance.reset_failed,Starting over did not complete. Please retry.
+maintenance.reset_done,Replacement rules were cleared. You can set them up again.
 maintenance.unsupported,Automatic replacement is not supported by this game version.
 maintenance.conflict,Another mod changed an operation needed for automatic replacement.
 maintenance.swap_unavailable,The spare or swap location is unavailable.
-f35.aqua_taken,AquaSense handles replacement for this filter.
 f35.transfer_unsupported,Automatic replacement during liquid transfer is unsupported by this game version.
 f35.transfer_conflict,Automatic replacement during liquid transfer conflicts with another mod.
 f35.added_unsupported,Automatic replacement when adding water is unsupported by this game version.
 f35.added_conflict,Automatic replacement when adding water conflicts with another mod.
-f35.aqua,AquaSense handles its enabled pitcher replacements. Turn off the matching AquaSense gear setting to use this source.
 maintenance.source_missing,Saved supply unavailable — select a new source
 f35.same,Same filter type only
 f35.equivalent,Prefer same type; allow equal or finer pores

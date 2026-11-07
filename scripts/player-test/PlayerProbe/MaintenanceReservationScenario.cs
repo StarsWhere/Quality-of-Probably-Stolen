@@ -46,7 +46,7 @@ public sealed class MaintenanceReservationScenario
             options.Get(Mod + ":f35.enabled").SetBool(true, true);
             options.Get("apply").button.onClick.Invoke();
             opts.CloseUI();
-            RoutingScenario.OpenOptionAction("f35.open");
+            RoutingScenario.RunFeatureAction("f35.open");
             var chooser = CustomUIManager.Instance.GetWindow(Mod + ".maintenance");
             Need(chooser != null, "F35 source selector unavailable");
             QaItemUi.Choose(chooser, "source", label);
@@ -83,7 +83,7 @@ public sealed class MaintenanceReservationScenario
         {
             Need(filterSlot.childItem == oldFilter && spare.parentInventory == source, "F35 consumed a filter reserved by F27");
             if (Time.realtimeSinceStartup < until) return false;
-            RoutingScenario.OpenOptionAction("f27.open");
+            RoutingScenario.RunFeatureAction("f27.open");
             var book = Book();
             var orderButton = book.root.GetComponentsInChildren<Button>(true).FirstOrDefault(b =>
                 b.GetComponentInChildren<TMP_Text>(true)?.text == ModHelper.GetLocalized(Mod, "f27.prepare") &&

@@ -89,7 +89,7 @@ public sealed class MaintenanceScenario
                 Require(ReferenceEquals(filterSlot.childItem, oldFilter) && ReferenceEquals(spareFilter.parentInventory, source),
                     "F35 moved a pinned spare filter");
                 if (Time.realtimeSinceStartup < until) return false;
-                RoutingScenario.OpenOptionAction("f30.open");
+                RoutingScenario.RunFeatureAction("f30.open");
                 var overview = CustomUIManager.Instance.GetWindow(Mod + ".f30");
                 string missing = ModHelper.GetLocalized(Mod, "maintenance.swap_unavailable");
                 Require(overview != null && overview.root.GetComponentsInChildren<TMP_Text>(true).Any(t => t.text != null && t.text.Contains(missing)),
@@ -217,7 +217,7 @@ public sealed class MaintenanceScenario
 
     private void Configure(string action, int threshold)
     {
-        RoutingScenario.OpenOptionAction(action);
+        RoutingScenario.RunFeatureAction(action);
         CustomUIWindow window = CustomUIManager.Instance.GetWindow(Mod + ".maintenance");
         Require(window != null && window.IsVisible, "Maintenance window unavailable: " + action);
         QaItemUi.Choose(window, "source", label);

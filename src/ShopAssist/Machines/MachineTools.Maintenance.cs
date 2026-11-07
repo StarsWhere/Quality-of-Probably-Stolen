@@ -14,13 +14,16 @@ namespace ShopAssist
         private const string MaintenanceKey = "machineMaintenance";
         private ConfigEntry<bool> batteryEnabled, filterEnabled;
         private CustomUIWindow maintenanceWindow;
+        private CustomUIWindow maintenanceCopyWindow;
         private RectTransform maintenanceScroll;
         private string maintenanceRun;
         private int maintenanceSlot, maintenanceRevision;
         private GameItem maintenanceHost;
+        private GameItem maintenanceDraftHost;
         private ShopInventory.Location maintenanceSource;
         private int maintenanceKind, maintenanceThreshold = 20, maintenancePriority;
         private int maintenanceMaterials, maintenanceGrade;
+        private bool maintenanceDirty;
         private Harmony batteryHarmony, filterHarmony;
         private bool batteryHookFailed, filterHookFailed;
         private string maintenanceReadError;
@@ -37,8 +40,8 @@ namespace ShopAssist
         }
         private sealed class MaintenanceRule
         {
-            [JsonRequired] public int kind, host, source, page, threshold, priority;
-            [JsonRequired] public string role;
+            [JsonRequired] public int kind, host, threshold, priority;
+            [JsonRequired] public string location;
             public int? materials, grade;
         }
         private sealed class PendingFilter
@@ -49,12 +52,6 @@ namespace ShopAssist
             internal string Run;
             internal int Slot;
         }
-        private sealed class WaterObservation
-        {
-            internal GameItem Host, Filter, Source;
-            internal int AmountBefore;
-        }
-
         private void InitMaintenance()
         {
             batteryEnabled = settings.Toggle("f31.enabled", "f31.tip");
@@ -79,12 +76,17 @@ namespace ShopAssist
             if (maintenanceWindow != null && ((maintenanceKind == 31 && !batteryEnabled.Value) || (maintenanceKind == 35 && !filterEnabled.Value))) CloseMaintenance();
             if (!filterEnabled.Value) { pendingFilters.Clear(); machinesDirty = true; }
             UpdateMaintenanceHooks();
+            maintenanceDirty = true;
             AttentionBook.Changed();
         }
 
         private void TickMaintenance()
         {
             if (maintenanceWindow != null && (!maintenanceWindow.IsAlive || !SameMaintenanceSession())) CloseMaintenance();
+            else if (maintenanceWindow != null && maintenanceDirty && !UIDragHandler.isDraggingAnyUI &&
+                ItemMouseDragHandler.current?.IsDraggingItem != true) RenderMaintenance();
+            if (maintenanceCopyWindow != null && (!maintenanceCopyWindow.IsAlive || maintenanceWindow?.IsAlive != true || !SameMaintenanceSession()))
+                CloseMaintenanceCopy();
             if (!filterEnabled.Value) { pendingFilters.Clear(); return; }
             if (pendingFilters.Count == 0 || !ShopInput.Ready() || UIDragHandler.isDraggingAnyUI ||
                 ItemMouseDragHandler.current?.IsDraggingItem == true || DialogUIManager.Instance?.currentDialog != null ||
@@ -125,15 +127,18 @@ namespace ShopAssist
                 try
                 {
                     filterHarmony = new Harmony("mod." + ModEntry.Id + ".f35");
-                    MethodInfo postfix = AccessTools.Method(typeof(MachineTools), nameof(AfterWaterTransfer));
-                    MethodInfo afterFill = AccessTools.Method(typeof(MachineTools), nameof(AfterWaterAdded));
                     filterHarmony.Patch(AccessTools.Method(typeof(WaterHelper), nameof(WaterHelper.TransferLiquid)),
-                        prefix: new HarmonyMethod(AccessTools.Method(typeof(MachineTools), nameof(BeforeWaterTransfer))), postfix: new HarmonyMethod(postfix));
+                        prefix: new HarmonyMethod(AccessTools.Method(typeof(MachineTools), nameof(BeginFilterTransfer))),
+                        finalizer: new HarmonyMethod(AccessTools.Method(typeof(MachineTools), nameof(EndFilterProcessing))));
                     filterHarmony.Patch(AccessTools.Method(typeof(WaterHelper), nameof(WaterHelper.AddWater)),
-                        prefix: new HarmonyMethod(AccessTools.Method(typeof(MachineTools), nameof(BeforeWaterAdded))), postfix: new HarmonyMethod(afterFill));
-                    filterHarmony.Patch(AccessTools.Method(typeof(AquacultureHelper), "RunFilter", new[] { typeof(GameItem), typeof(GameItem) }),
-                        prefix: new HarmonyMethod(AccessTools.Method(typeof(MachineTools), nameof(BeforeTankFilter))),
-                        postfix: new HarmonyMethod(AccessTools.Method(typeof(MachineTools), nameof(AfterTankFilter))));
+                        prefix: new HarmonyMethod(AccessTools.Method(typeof(MachineTools), nameof(BeginFilterFill))),
+                        finalizer: new HarmonyMethod(AccessTools.Method(typeof(MachineTools), nameof(EndFilterProcessing))));
+                    filterHarmony.Patch(AccessTools.Method(typeof(AquacultureHelper), nameof(AquacultureHelper.TickTank)),
+                        prefix: new HarmonyMethod(AccessTools.Method(typeof(MachineTools), nameof(BeginTankProcessing))),
+                        finalizer: new HarmonyMethod(AccessTools.Method(typeof(MachineTools), nameof(EndFilterProcessing))));
+                    filterHarmony.Patch(AccessTools.Method(typeof(WaterHelper), nameof(WaterHelper.HandleFilter)),
+                        prefix: new HarmonyMethod(AccessTools.Method(typeof(MachineTools), nameof(BeforeFilterProcessing))),
+                        postfix: new HarmonyMethod(AccessTools.Method(typeof(MachineTools), nameof(ObserveFilterProcessing))));
                 }
                 catch (Exception error)
                 {
@@ -195,57 +200,6 @@ namespace ShopAssist
             catch (Exception error) { tools.log("F31 replacement failed: " + error); tools.RememberMaintenanceFailure(__0, 31, "f31.inspect", true); }
         }
 
-        private static void BeforeWaterTransfer(GameItem __0, GameItem __1, out WaterObservation __state)
-        {
-            __state = ObserveWater(__1, __0);
-        }
-        private static void BeforeWaterAdded(GameItem __0, out WaterObservation __state)
-        {
-            __state = ObserveWater(__0, null);
-        }
-        private static WaterObservation ObserveWater(GameItem host, GameItem source)
-        {
-            var tools = current;
-            if (tools == null || !tools.started || !tools.filterEnabled.Value || host?.identifier != "water_pitcher" ||
-                !ShopInventory.InStore || !ShopInventory.Owned(host)) return null;
-            try
-            {
-                var filter = (host.contentWindow?.childElement as GameSlotInventory)?.childItem;
-                if (!EligibleFilter(filter)) return null;
-                ActionAvailability capability = tools.FilterCapability(host, filter, source == null ? FilterPath.Added : FilterPath.Transfer);
-                if (!capability.Allowed) { tools.RememberMaintenanceFailure(host, 35, capability.ReasonKey, filter: filter); return null; }
-                return new WaterObservation { Host = host, Filter = filter, Source = source,
-                    AmountBefore = WaterHelper.GetCurrentCapacityML(source ?? host) };
-            }
-            catch (Exception error) { tools.log("F35 could not observe water processing: " + error.Message); return null; }
-        }
-        private static void AfterWaterTransfer(WaterObservation __state)
-        {
-            if (__state == null) return;
-            try { if (WaterHelper.GetCurrentCapacityML(__state.Source) < __state.AmountBefore) QueueFilter(__state); }
-            catch (Exception error) { current?.log("F35 could not verify water transfer: " + error.Message); }
-        }
-        private static void AfterWaterAdded(WaterObservation __state)
-        {
-            if (__state == null) return;
-            try { if (WaterHelper.GetCurrentCapacityML(__state.Host) > __state.AmountBefore) QueueFilter(__state); }
-            catch (Exception error) { current?.log("F35 could not verify added water: " + error.Message); }
-        }
-        private static void QueueFilter(WaterObservation observation)
-        {
-            GameItem host = observation.Host;
-            var tools = current;
-            if (tools == null || !tools.started || !tools.filterEnabled.Value || host?.identifier != "water_pitcher" ||
-                !ShopInventory.InStore || !ShopInventory.Owned(host)) return;
-            try
-            {
-                var slot = host.contentWindow?.childElement as GameSlotInventory;
-                GameItem filter = slot?.childItem;
-                if (filter == observation.Filter) tools.QueueFilter(host, slot);
-            }
-            catch (Exception error) { tools.log("F35 could not observe the processed filter: " + error.Message); }
-        }
-
         private void ReplaceBattery(GameItem host)
         {
             if (!BatteryHost(host) || !ShopInventory.InStore || !ShopInventory.Owned(host) || host.uniqueId <= 0 ||
@@ -267,8 +221,7 @@ namespace ShopAssist
             if (source == null || required < 0) { RememberMaintenanceFailure(host, 31, "maintenance.source_missing"); return; }
             IEnumerable<GameItem> candidates = Ordered(source);
             if (rule.priority == 1) candidates = candidates.OrderByDescending(candidate => candidate.GetTagReadonly("power_source_item_energy").GetInt());
-            var eligible = candidates.Where(candidate => candidate.identifier == old.identifier && OrdinaryBattery(candidate) &&
-                PowerHelper.CanDrawPowerSource(candidate, required) && candidate.GetTagReadonly("power_source_item_energy").GetInt() > energy).ToList();
+            var eligible = candidates.Where(candidate => EligibleBattery(candidate, old, required)).ToList();
             GameItem spare = eligible.FirstOrDefault(candidate => MaintenanceSwap.Ready(host, power, source, old, candidate));
             if (spare == null)
             {
@@ -308,12 +261,17 @@ namespace ShopAssist
             !item.IsTag("CURRENT_CONVERTER_TAG") && !item.IsTag("HYPERTECH_BATTERY_TAG") &&
             !item.IsTag("BREEDER_POWER_SOURCE_ITEM_TAG") && !item.IsTag("power_source_item_recharge");
 
+        private static bool EligibleBattery(GameItem candidate, GameItem installed, int required) =>
+            OrdinaryBattery(candidate) && OrdinaryBattery(installed) && required >= 0 && candidate.identifier == installed.identifier &&
+            PowerHelper.CanDrawPowerSource(candidate, required) && candidate.GetTagReadonly("power_source_item_energy").GetInt() >
+                installed.GetTagReadonly("power_source_item_energy").GetInt();
+
         private void ReplaceFilter(PendingFilter pending)
         {
             if (!ShopInventory.InStore || pending.Run != PlayerStore.Instance.runID || pending.Slot != PlayerStore.Instance.saveSlotId ||
                 !IsFilterHost(pending.Host) || !ShopInventory.Owned(pending.Host) || pending.Host.uniqueId <= 0 ||
                 pending.Host.parentInventory != pending.Parent || !FilterSlots(pending.Host).Contains(pending.Seat) ||
-                pending.Seat.childItem != pending.Filter || !EligibleFilter(pending.Filter) || AquaOwns(pending.Host, pending.Filter.identifier) ||
+                pending.Seat.childItem != pending.Filter || !EligibleFilter(pending.Filter) ||
                 DurabilityHelper.GetRealDurability(pending.Filter) != 0 || ItemPinHelper.IsPinned(pending.Filter)) return;
             if (AttentionBook.HasInspection("f35.open", pending.Host.uniqueId)) return;
             GameSlotInventory slot = pending.Seat;
@@ -357,12 +315,12 @@ namespace ShopAssist
                     for (int index = 0; index < slots.Count; index++)
                     {
                         GameItem filter = slots[index].childItem;
-                        if (!AllowsFilter(rule, filter) || DurabilityHelper.GetRealDurability(filter) != 0 || AquaOwns(host, filter.identifier)) continue;
+                        if (!AllowsFilter(rule, filter) || DurabilityHelper.GetRealDurability(filter) != 0) continue;
                         if (sources == null) sources = ShopInventory.OwnedLocations(false);
                         GameGridInventory source = ResolveMaintenanceSource(rule, sources);
                         var candidates = source == null ? new List<GameItem>() : source.childItems.Where(i => CompatibleFilter(rule, filter, i)).ToList();
                         bool available = candidates.Any(i => MaintenanceSwap.Ready(host, slots[index], source, filter, i, true));
-                        ActionAvailability capability = FilterCapability(host, filter, FilterPath.Any);
+                        ActionAvailability capability = FilterCapability(host, FilterPath.Any);
                         string reason = !capability.Allowed ? capability.ReasonKey : available ? "f35.pending" : source == null ? "maintenance.source_missing" : candidates.Count == 0 ? "f35.missing" :
                             candidates.Any(i => MaintenanceSwap.CallbackCapability(slots[index], source, filter, i).Allowed) ? "maintenance.swap_unavailable" : "maintenance.conflict";
                         yield return new MachineRow { Item = host, Path = location.Name, NeedsAttention = true,
@@ -404,47 +362,45 @@ namespace ShopAssist
             return result;
         }
 
-        private static bool IsMaintenanceSource(ShopInventory.Location location, int kind) => location?.Owner != null &&
-            location.Inventory is GameGridInventory &&
-            ((location.Ordinary && !location.IsMachine && ShopInventory.SafeContainerForPeek(location.Owner)) ||
-             (kind == 31 && location.Owner.identifier == "recharger" && location.Role == "batteries" && ShopInventory.Owned(location.Owner))) &&
-            location.Page >= -1 && location.Page <= 4;
+        private static bool IsMaintenanceSource(ShopInventory.Location location, int kind) => location != null &&
+            location.Inventory is GameGridInventory && location.Page >= -1 && location.Page <= 4 &&
+            (location.Owner == null ? location.Ordinary && location.Role == "stock" &&
+                ReferenceEquals(location.Inventory, EmporiumEntry.Instance?.invElement) :
+             (location.Ordinary && !location.IsMachine && ShopInventory.SafeContainerForPeek(location.Owner)) ||
+             (kind == 31 && location.Owner.identifier == "recharger" && location.Role == "batteries" && ShopInventory.Owned(location.Owner)));
 
         private void RenderMaintenance()
         {
             if (!SameMaintenanceSession() || !ReadMaintenance(out MaintenanceData data)) { CloseMaintenance(); return; }
+            maintenanceDirty = false;
             var hosts = MaintenanceHosts(maintenanceKind);
             if (maintenanceHost != null && !hosts.Contains(maintenanceHost))
             { CloseMaintenance(); ShopNotice.Show(ShopSettings.Text("inv.changed")); return; }
             if (maintenanceHost == null) maintenanceHost = hosts.OrderByDescending(h => h.contentWindow.focusStamp).FirstOrDefault();
-            var sources = ShopInventory.OwnedLocations(false).Where(l => IsMaintenanceSource(l, maintenanceKind) && l.Owner != maintenanceHost).Take(100).ToList();
+            var sources = MaintenanceSources();
             var saved = maintenanceHost == null ? null : data.rules.Find(r => r.kind == maintenanceKind && r.host == maintenanceHost.uniqueId);
-            if (maintenanceSource == null || !sources.Any(l => l.Inventory == maintenanceSource.Inventory))
+            if (!ReferenceEquals(maintenanceDraftHost, maintenanceHost))
             {
-                maintenanceSource = saved == null ? sources.FirstOrDefault() :
-                    sources.FirstOrDefault(l => l.Owner.uniqueId == saved.source && l.Role == saved.role && l.Page == saved.page);
+                maintenanceDraftHost = maintenanceHost;
+                maintenanceSource = saved == null ? null : sources.FirstOrDefault(l => l.Key() == saved.location);
                 maintenanceThreshold = saved?.threshold ?? 20;
                 maintenancePriority = saved?.priority ?? 0;
                 maintenanceMaterials = saved?.materials ?? 7;
                 maintenanceGrade = saved?.grade ?? 0;
             }
-            else maintenanceSource = sources.First(l => l.Inventory == maintenanceSource.Inventory);
+            else if (maintenanceSource != null) maintenanceSource = sources.FirstOrDefault(l => l.Inventory == maintenanceSource.Inventory);
             int selectedHost = maintenanceHost == null ? -1 : hosts.IndexOf(maintenanceHost);
             int selectedSource = maintenanceSource == null ? -1 : sources.IndexOf(maintenanceSource);
             float windowHeight = 410f;
             if (maintenanceHost != null)
             {
                 if (maintenanceHost.uniqueId > 0 && AttentionBook.HasInspection(maintenanceKind == 31 ? "f31.open" : "f35.open", maintenanceHost.uniqueId)) windowHeight += 36f;
-                bool aqua = maintenanceKind == 35 && maintenanceHost.identifier == "water_pitcher" &&
-                    (AquaOwns(maintenanceHost, "water_filter") || AquaOwns(maintenanceHost, "kotton_fabric"));
-                if (aqua) windowHeight += 44f;
-                GameItem currentFilter = maintenanceKind == 35 ? FilterSlots(maintenanceHost).FirstOrDefault()?.childItem : null;
-                ActionAvailability currentCapability = maintenanceKind == 31 ? BatteryCapability(maintenanceHost) : FilterCapability(maintenanceHost, currentFilter, FilterPath.Any);
-                if (!currentCapability.Allowed && currentCapability.ReasonKey != "f35.aqua_taken") windowHeight += 44f;
+                ActionAvailability currentCapability = maintenanceKind == 31 ? BatteryCapability(maintenanceHost) : FilterCapability(maintenanceHost, FilterPath.Any);
+                if (!currentCapability.Allowed) windowHeight += 44f;
                 else if (maintenanceKind == 35 && maintenanceHost.identifier == "water_pitcher" && currentCapability.Allowed)
                 {
-                    if (!FilterCapability(maintenanceHost, currentFilter, FilterPath.Transfer).Allowed) windowHeight += 44f;
-                    if (!FilterCapability(maintenanceHost, currentFilter, FilterPath.Added).Allowed) windowHeight += 44f;
+                    if (!FilterCapability(maintenanceHost, FilterPath.Transfer).Allowed) windowHeight += 44f;
+                    if (!FilterCapability(maintenanceHost, FilterPath.Added).Allowed) windowHeight += 44f;
                 }
             }
             float scrollPosition = maintenanceScroll?.GetComponentInParent<ScrollRect>()?.verticalNormalizedPosition ?? 1f;
@@ -472,20 +428,16 @@ namespace ShopAssist
             own.Rect.anchoredPosition = position;
             builder.BeginScrollFlexible(120);
             maintenanceScroll = builder.CurrentContainer;
-            if (maintenanceKind == 35 && maintenanceHost?.identifier == "water_pitcher" &&
-                (AquaOwns(maintenanceHost, "water_filter") || AquaOwns(maintenanceHost, "kotton_fabric")))
-                builder.AddLabel(ShopSettings.Text("f35.aqua"));
             if (maintenanceHost != null)
             {
                 if (maintenanceHost.uniqueId > 0 && AttentionBook.HasInspection(maintenanceKind == 31 ? "f31.open" : "f35.open", maintenanceHost.uniqueId))
                     builder.AddWarning(ShopSettings.Text(maintenanceKind == 31 ? "f31.inspect" : "f35.inspect"));
-                GameItem filter = maintenanceKind == 35 ? FilterSlots(maintenanceHost).FirstOrDefault()?.childItem : null;
-                ActionAvailability capability = maintenanceKind == 31 ? BatteryCapability(maintenanceHost) : FilterCapability(maintenanceHost, filter, FilterPath.Any);
-                if (!capability.Allowed && capability.ReasonKey != "f35.aqua_taken") builder.AddWarning(capability.Message);
+                ActionAvailability capability = maintenanceKind == 31 ? BatteryCapability(maintenanceHost) : FilterCapability(maintenanceHost, FilterPath.Any);
+                if (!capability.Allowed) builder.AddWarning(capability.Message);
                 else if (maintenanceKind == 35 && maintenanceHost.identifier == "water_pitcher" && capability.Allowed)
                 {
-                    ActionAvailability transfer = FilterCapability(maintenanceHost, filter, FilterPath.Transfer);
-                    ActionAvailability added = FilterCapability(maintenanceHost, filter, FilterPath.Added);
+                    ActionAvailability transfer = FilterCapability(maintenanceHost, FilterPath.Transfer);
+                    ActionAvailability added = FilterCapability(maintenanceHost, FilterPath.Added);
                     if (!transfer.Allowed) builder.AddWarning(ShopSettings.Text(transfer.Code == ActionUnavailableReason.Unsupported ? "f35.transfer_unsupported" : "f35.transfer_conflict"));
                     if (!added.Allowed) builder.AddWarning(ShopSettings.Text(added.Code == ActionUnavailableReason.Unsupported ? "f35.added_unsupported" : "f35.added_conflict"));
                 }
@@ -515,7 +467,7 @@ namespace ShopAssist
                 return;
             }
             builder.BeginRow();
-            VisualChoices.Location(builder, ShopSettings.Text("visual.source"), maintenanceSource, sources, source =>
+            VisualChoices.Location(builder, ShopSettings.Text("visual.source"), maintenanceSource, () => SameMaintenanceSession() ? MaintenanceSources() : new List<ShopInventory.Location>(), source =>
             {
                 if (!CurrentView() || !ShopInventory.TryRefresh(source, out ShopInventory.Location refreshed) ||
                     !IsMaintenanceSource(refreshed, maintenanceKind) || refreshed.Owner == maintenanceHost)
@@ -527,7 +479,7 @@ namespace ShopAssist
                 () =>
                 {
                     if (!CurrentView()) return;
-                    VisualChoices.ChooseItem(ShopSettings.Text("visual.machine"), hosts, maintenanceHost, host =>
+                    VisualChoices.ChooseItem(ShopSettings.Text("visual.machine"), () => SameMaintenanceSession() ? MaintenanceHosts(maintenanceKind) : new List<GameItem>(), maintenanceHost, host =>
                     {
                         if (!CurrentView() || !MaintenanceHosts(maintenanceKind).Contains(host))
                         { ShopNotice.Show(ShopSettings.Text("inv.changed")); return; }
@@ -539,6 +491,12 @@ namespace ShopAssist
             VisualChoices.Slot(builder, ShopSettings.Text("visual.installed"), installed, installed?.GetDisplayName(true), null, "installed");
             builder.End();
             if (sources.Count == 0) builder.AddLabel(ShopSettings.Text("maintenance.no_source"));
+            if (maintenanceSource?.Inventory is GameGridInventory spareGrid)
+            {
+                var counts = MaintenanceSpareCounts(maintenanceHost, spareGrid);
+                builder.AddLabel(counts.known ? ShopSettings.Format("maintenance.spare_count", counts.matching, counts.ready) :
+                    ShopSettings.Text("maintenance.spare_unknown"));
+            }
             if (maintenanceKind == 31)
             {
                 builder.AddLabel(ShopSettings.Text("f31.threshold") + " " + maintenanceThreshold + "%", "threshold_label");
@@ -563,16 +521,19 @@ namespace ShopAssist
                             if (!CurrentView()) return;
                             if (on) maintenanceMaterials |= bit; else maintenanceMaterials &= ~bit;
                             maintenanceWindow?.Get("enable")?.SetInteractable(CanSaveMaintenance());
+                            maintenanceDirty = true;
                         }, "allow_" + id);
                 }
                 builder.End().AddDropdown(new[] { ShopSettings.Text("f35.same"), ShopSettings.Text("f35.equivalent"), ShopSettings.Text("f35.any") },
-                    maintenanceGrade, index => { if (CurrentView()) maintenanceGrade = Mathf.Clamp(index, 0, 2); }, "grade");
+                    maintenanceGrade, index => { if (CurrentView()) { maintenanceGrade = Mathf.Clamp(index, 0, 2); maintenanceDirty = true; } }, "grade");
             }
             builder.BeginRow();
             builder.AddButton(ShopSettings.Text("maintenance.enable"), () => { if (CurrentView()) SaveMaintenance(); }, "enable");
             builder.Last.SetInteractable(CanSaveMaintenance());
             builder.AddButton(ShopSettings.Text("maintenance.disable"), () => { if (CurrentView()) RemoveMaintenance(); }, "disable");
             builder.Last.SetInteractable(saved != null);
+            if (saved != null)
+                builder.AddButton(ShopSettings.Text("maintenance.copy"), () => { if (CurrentView()) OpenMaintenanceCopy(); }, "copy");
             builder.End().End();
             CustomUIBuilder.RebuildLayout(own.ContentRoot);
             UiLayout.RestoreScroll(maintenanceScroll, scrollPosition);
@@ -581,28 +542,139 @@ namespace ShopAssist
         private bool CanSaveMaintenance() => maintenanceHost != null && maintenanceSource != null &&
             (maintenanceKind != 35 || maintenanceMaterials != 0);
 
+        private List<ShopInventory.Location> MaintenanceSources() => ShopInventory.OwnedLocations(false)
+            .Where(location => IsMaintenanceSource(location, maintenanceKind) && location.Owner != maintenanceHost).ToList();
+
+        private (bool known, int matching, int ready) MaintenanceSpareCounts(GameItem host, GameGridInventory source)
+        {
+            if (host == null || source == null) return (false, 0, 0);
+            var matches = new HashSet<GameItem>();
+            var ready = new HashSet<GameItem>();
+            if (maintenanceKind == 31)
+            {
+                GameSlotInventory seat = MachineHelper.GetBatterySlot(host);
+                GameItem old = seat?.childItem;
+                if (!OrdinaryBattery(old)) return (false, 0, 0);
+                int required = MachineryHelper.GetMachinePowerUsage(host);
+                bool capable = BatteryCapability(host).Allowed;
+                foreach (GameItem candidate in Ordered(source).Where(item => EligibleBattery(item, old, required)))
+                {
+                    matches.Add(candidate);
+                    if (capable && MaintenanceSwap.Ready(host, seat, source, old, candidate)) ready.Add(candidate);
+                }
+            }
+            else
+            {
+                var preview = new MaintenanceRule { kind = 35, materials = maintenanceMaterials, grade = maintenanceGrade };
+                var seats = FilterSlots(host).Where(seat => AllowsFilter(preview, seat?.childItem)).ToList();
+                if (seats.Count == 0) return (false, 0, 0);
+                foreach (GameSlotInventory seat in seats)
+                {
+                    GameItem old = seat.childItem;
+                    bool capable = FilterCapability(host, FilterPath.Any).Allowed;
+                    foreach (GameItem candidate in Ordered(source).Where(item => CompatibleFilter(preview, old, item)))
+                    {
+                        matches.Add(candidate);
+                        if (capable && MaintenanceSwap.Ready(host, seat, source, old, candidate, true)) ready.Add(candidate);
+                    }
+                }
+            }
+            return (true, matches.Count, ready.Count);
+        }
+
+        private void OpenMaintenanceCopy()
+        {
+            if (!SameMaintenanceSession() || maintenanceWindow?.IsAlive != true || maintenanceHost == null ||
+                maintenanceHost.uniqueId <= 0 || !ReadMaintenance(out MaintenanceData data)) return;
+            GameItem origin = maintenanceHost;
+            MaintenanceRule saved = data.rules.Find(rule => rule.kind == maintenanceKind && rule.host == origin.uniqueId);
+            if (saved == null) return;
+            string snapshot = ShopData.Encode(saved);
+            int kind = maintenanceKind; string run = maintenanceRun; int slot = maintenanceSlot;
+            var locations = ShopInventory.MachineLocations();
+            var targets = locations.Where(location => !location.IsMachine).SelectMany(location => location.Inventory.childItems)
+                .Where(item => item != null && item != origin && ShopInventory.Owned(item) &&
+                    (kind == 31 ? BatteryHost(item) : IsFilterHost(item))).Distinct().ToList();
+            if (targets.Count == 0) { ShopNotice.Show(ShopSettings.Text("maintenance.no_targets")); return; }
+            var selected = new HashSet<GameItem>();
+            var builder = UiLayout.Rebuild(ref maintenanceCopyWindow, ModEntry.Id + ".maintenance.copy",
+                ShopSettings.Text("maintenance.copy"), 580, 470);
+            CustomUIWindow own = maintenanceCopyWindow;
+            builder.OnClose(() => { if (ReferenceEquals(maintenanceCopyWindow, own)) maintenanceCopyWindow = null; });
+            builder.BeginScrollFlexible(120);
+            ItemGrid.Add(builder, targets.Select(item => new ItemGrid.Entry(item)
+            {
+                Caption = item.GetDisplayName(true),
+                Badge = data.rules.Any(rule => rule.kind == kind && rule.host == item.uniqueId && item.uniqueId > 0)
+                    ? ShopSettings.Text("maintenance.configured") : null
+            }), new ItemGrid.Options { Cards = true, Columns = 4, CardWidth = 130, CardHeight = 100,
+                OnClick = entry => { if (!selected.Add(entry.Item)) selected.Remove(entry.Item); entry.Selected = selected.Contains(entry.Item); } });
+            builder.End().AddButton(ShopSettings.Text("maintenance.copy_apply"), () =>
+            {
+                if (!ReferenceEquals(maintenanceCopyWindow, own) || !own.IsAlive) return;
+                CopyMaintenanceRules(origin, kind, run, slot, snapshot, selected);
+            }, "copy_apply").Show();
+        }
+
+        private void CopyMaintenanceRules(GameItem origin, int kind, string run, int slot, string snapshot, HashSet<GameItem> selected)
+        {
+            if (!SameMaintenanceSession() || maintenanceRun != run || maintenanceSlot != slot ||
+                !ReferenceEquals(maintenanceHost, origin) || !ShopInventory.Owned(origin) || selected == null || selected.Count == 0 ||
+                !ReadMaintenance(out MaintenanceData data)) return;
+            MaintenanceRule saved = data.rules.Find(rule => rule.kind == kind && rule.host == origin.uniqueId);
+            if (saved == null || ShopData.Encode(saved) != snapshot || ResolveMaintenanceSource(saved) == null)
+            { ShopNotice.Show(ShopSettings.Text("inv.changed")); return; }
+            List<ShopInventory.Location> locations = ShopInventory.MachineLocations();
+            int copied = 0, skipped = 0;
+            foreach (GameItem target in selected)
+            {
+                if (target == null || !ShopInventory.Owned(target) || !MachineAccessible(target, locations) ||
+                    !(kind == 31 ? BatteryHost(target) : IsFilterHost(target))) { skipped++; continue; }
+                int id = target.GetUniqueID();
+                if (id <= 0 || !ReferenceEquals(FindUniqueOwnedItem(id), target) || data.rules.Count >= 128 ||
+                    data.rules.Any(rule => rule.kind == kind && rule.host == id) ||
+                    AttentionBook.HasInspection(kind == 31 ? "f31.open" : "f35.open", id))
+                { skipped++; continue; }
+                data.rules.Add(new MaintenanceRule { kind = kind, host = id, location = saved.location,
+                    threshold = saved.threshold, priority = saved.priority, materials = saved.materials, grade = saved.grade });
+                copied++;
+            }
+            if (copied != 0 && !SaveMaintenanceData(data)) return;
+            CloseMaintenanceCopy(); machinesDirty = true; AttentionBook.Changed();
+            ShopNotice.Show(ShopSettings.Format("maintenance.copy_result", copied, skipped));
+        }
+
+        private void CloseMaintenanceCopy()
+        {
+            CustomUIWindow previous = maintenanceCopyWindow;
+            maintenanceCopyWindow = null;
+            previous?.Close();
+        }
+
         private void SaveMaintenance()
         {
             if (!SameMaintenanceSession() || maintenanceHost == null || !MaintenanceHosts(maintenanceKind).Contains(maintenanceHost) ||
                 maintenanceSource == null || !ShopInventory.TryRefresh(maintenanceSource, out ShopInventory.Location source) ||
                 !IsMaintenanceSource(source, maintenanceKind) || source.Owner == maintenanceHost || !ReadMaintenance(out MaintenanceData data)) return;
-            int hostId = maintenanceHost.GetUniqueID(), sourceId = source.Owner.GetUniqueID();
-            if (hostId <= 0 || sourceId <= 0) return;
+            int hostId = maintenanceHost.GetUniqueID();
+            string sourceKey = source.Key(true);
+            if (hostId <= 0 || !ReferenceEquals(FindUniqueOwnedItem(hostId), maintenanceHost) ||
+                !ParseMaintenanceSource(sourceKey, maintenanceKind, out _, out _, out _) ||
+                MaintenanceSources().Count(location => location.Key() == sourceKey) != 1)
+            { ShopNotice.Show(ShopSettings.Text("inv.changed")); return; }
             data.rules.RemoveAll(r => r.kind == maintenanceKind && r.host == hostId);
             if (data.rules.Count >= 128) return;
-            data.rules.Add(new MaintenanceRule { kind = maintenanceKind, host = hostId, source = sourceId, role = source.Role,
-                page = source.Page, threshold = maintenanceKind == 31 ? Mathf.Clamp(maintenanceThreshold, 0, 100) : 0,
+            data.rules.Add(new MaintenanceRule { kind = maintenanceKind, host = hostId, location = sourceKey,
+                threshold = maintenanceKind == 31 ? Mathf.Clamp(maintenanceThreshold, 0, 100) : 0,
                 priority = maintenanceKind == 31 && maintenancePriority == 1 ? 1 : 0,
                 materials = maintenanceKind == 35 ? maintenanceMaterials : (int?)null,
                 grade = maintenanceKind == 35 ? maintenanceGrade : (int?)null });
             try
             {
-                ModHelper.SetModData(ModEntry.Id, MaintenanceKey, ShopData.Encode(data));
-                GameItem filter = maintenanceKind == 35 ? FilterSlots(maintenanceHost).FirstOrDefault()?.childItem : null;
-                if (filter != null && (maintenanceMaterials & FilterBit(filter.identifier)) == 0) filter = null;
-                ActionAvailability capability = maintenanceKind == 31 ? BatteryCapability(maintenanceHost) : FilterCapability(maintenanceHost, filter, FilterPath.Any);
+                if (!SaveMaintenanceData(data)) return;
+                ActionAvailability capability = maintenanceKind == 31 ? BatteryCapability(maintenanceHost) : FilterCapability(maintenanceHost, FilterPath.Any);
                 bool partial = capability.Allowed && maintenanceKind == 35 && maintenanceHost.identifier == "water_pitcher" &&
-                    (!FilterCapability(maintenanceHost, filter, FilterPath.Transfer).Allowed || !FilterCapability(maintenanceHost, filter, FilterPath.Added).Allowed);
+                    (!FilterCapability(maintenanceHost, FilterPath.Transfer).Allowed || !FilterCapability(maintenanceHost, FilterPath.Added).Allowed);
                 CloseMaintenance(); AttentionBook.Changed(); machinesDirty = true;
                 ShopNotice.Show(ShopSettings.Text(!capability.Allowed ? "maintenance.saved_inactive" : partial ? "maintenance.saved_partial" : "maintenance.saved"));
             }
@@ -613,58 +685,96 @@ namespace ShopAssist
         {
             if (!SameMaintenanceSession() || maintenanceHost == null || !MaintenanceHosts(maintenanceKind).Contains(maintenanceHost) || maintenanceHost.uniqueId <= 0 || !ReadMaintenance(out MaintenanceData data)) return;
             data.rules.RemoveAll(r => r.kind == maintenanceKind && r.host == maintenanceHost.uniqueId);
-            try { ModHelper.SetModData(ModEntry.Id, MaintenanceKey, ShopData.Encode(data)); ClearMaintenanceFailure(maintenanceKind, maintenanceHost.uniqueId);
+            try { if (!SaveMaintenanceData(data)) return; ClearMaintenanceFailure(maintenanceKind, maintenanceHost.uniqueId);
                 CloseMaintenance(); AttentionBook.Changed(); machinesDirty = true; ShopNotice.Show(ShopSettings.Text("maintenance.removed")); }
             catch (Exception error) { log("Maintenance settings could not be removed: " + error); ShopNotice.Show(ShopSettings.Text("maintenance.failed")); }
         }
 
-        private bool ReadMaintenance(out MaintenanceData data)
+        private bool ReadMaintenance(out MaintenanceData data) =>
+            ReadMaintenanceState(out data, out _) == MachineRuleReadStatus.Valid;
+
+        private MachineRuleReadStatus ReadMaintenanceState(out MaintenanceData data, out string raw)
         {
-            data = null;
-            if (!ShopInventory.InStore || !Guid.TryParse(PlayerStore.Instance.runID, out Guid run) || run == Guid.Empty || PlayerStore.Instance.saveSlotId < 0) return false;
+            data = null; raw = null;
+            if (!ShopInventory.InStore || !Guid.TryParse(PlayerStore.Instance.runID, out Guid run) || run == Guid.Empty || PlayerStore.Instance.saveSlotId < 0)
+                return MachineRuleReadStatus.Unavailable;
+            if (HasResetAttempt(MaintenanceKey, PlayerStore.Instance.runID, PlayerStore.Instance.saveSlotId))
+                return MachineRuleReadStatus.ResetPending;
             try
             {
-                string raw = ModHelper.GetModData(ModEntry.Id, MaintenanceKey, null);
-                if (raw == null)
-                {
-                    data = new MaintenanceData { version = 2, run = run.ToString("N"), slot = PlayerStore.Instance.saveSlotId, rules = new List<MaintenanceRule>() };
-                    maintenanceReadError = null; return true;
-                }
-                data = ShopData.Decode<MaintenanceData>(raw, 65536);
-                if (data == null || (data.version != 1 && data.version != 2) || !Guid.TryParseExact(data.run, "N", out Guid stored) || stored != run ||
-                    data.slot != PlayerStore.Instance.saveSlotId || data.rules == null || data.rules.Count > 128 ||
-                    data.rules.Any(r => r == null || (r.kind != 31 && r.kind != 35) || r.host <= 0 || r.source <= 0 ||
-                        (r.role != "contents" && r.role != "storage" && (r.kind != 31 || r.role != "batteries")) ||
-                        r.page < -1 || r.page > 4 || r.threshold < 0 || r.threshold > 100 || r.priority < 0 || r.priority > 1 ||
-                        (r.kind == 35 && (r.threshold != 0 || r.priority != 0))) ||
-                    data.rules.GroupBy(r => r.kind + ":" + r.host).Any(g => g.Count() != 1)) throw new FormatException("Invalid maintenance data");
-                foreach (var rule in data.rules)
-                {
-                    if (data.version == 1 && rule.kind == 35) { rule.materials = 1; rule.grade = 0; }
-                    if (rule.kind == 35 && (!rule.materials.HasValue || rule.materials < 0 || rule.materials > 7 ||
-                        !rule.grade.HasValue || rule.grade < 0 || rule.grade > 2) ||
-                        rule.kind == 31 && (rule.materials.HasValue || rule.grade.HasValue)) throw new FormatException("Invalid filter preferences");
-                }
-                data.version = 2;
-                maintenanceReadError = null;
-                return true;
+                MachineRuleRecovery.ReadPending(ruleResetStore, MaintenanceKey, PlayerStore.Instance.runID,
+                    PlayerStore.Instance.saveSlotId, true, out MachineRuleResetJournal pending);
+                if (pending != null) return MachineRuleReadStatus.ResetPending;
+                raw = ruleResetStore.Read(MaintenanceKey);
             }
             catch (Exception error)
             {
-                data = null;
-                if (maintenanceReadError != error.Message) log("Maintenance settings were preserved: " + error.Message);
-                maintenanceReadError = error.Message; return false;
+                LogMaintenanceReadFailure(error);
+                return MachineRuleReadStatus.Unavailable;
             }
+            try { data = DecodeMaintenance(raw, run, PlayerStore.Instance.saveSlotId); maintenanceReadError = null; return MachineRuleReadStatus.Valid; }
+            catch (FormatException error) { LogMaintenanceReadFailure(error); return MachineRuleReadStatus.Invalid; }
+            catch (JsonException error) { LogMaintenanceReadFailure(error); return MachineRuleReadStatus.Invalid; }
+            catch (Exception error) { LogMaintenanceReadFailure(error); return MachineRuleReadStatus.Unavailable; }
+        }
+
+        private void LogMaintenanceReadFailure(Exception error)
+        {
+            if (maintenanceReadError != error.Message) log("Maintenance settings were preserved: " + error);
+            maintenanceReadError = error.Message;
+        }
+
+        private static MaintenanceData DecodeMaintenance(string raw, Guid run, int slot)
+        {
+            MaintenanceData data = raw == null ? new MaintenanceData { version = 3, run = run.ToString("N"), slot = slot,
+                rules = new List<MaintenanceRule>() } : ShopData.Decode<MaintenanceData>(raw, 65536);
+            if (data == null || data.version != 3 || !Guid.TryParseExact(data.run, "N", out Guid stored) || stored != run ||
+                data.slot != slot || data.rules == null || data.rules.Count > 128 ||
+                data.rules.Any(r => r == null || (r.kind != 31 && r.kind != 35) || r.host <= 0 ||
+                    r.threshold < 0 || r.threshold > 100 || r.priority < 0 || r.priority > 1 ||
+                    (r.kind == 35 && (r.threshold != 0 || r.priority != 0))) ||
+                data.rules.GroupBy(r => r.kind + ":" + r.host).Any(g => g.Count() != 1)) throw new FormatException("Invalid maintenance data");
+            foreach (var rule in data.rules)
+            {
+                if (!ParseMaintenanceSource(rule.location, rule.kind, out _, out _, out _))
+                    throw new FormatException("Invalid maintenance source");
+                if (rule.kind == 35 && (!rule.materials.HasValue || rule.materials < 0 || rule.materials > 7 ||
+                    !rule.grade.HasValue || rule.grade < 0 || rule.grade > 2) ||
+                    rule.kind == 31 && (rule.materials.HasValue || rule.grade.HasValue)) throw new FormatException("Invalid filter preferences");
+            }
+            return data;
+        }
+
+        private static bool ParseMaintenanceSource(string key, int kind, out int owner, out string role, out int page) =>
+            MaintenanceSourceKey.TryParse(key, kind, out owner, out role, out page);
+
+        private bool SaveMaintenanceData(MaintenanceData data)
+        {
+            try
+            {
+                if (!ShopInventory.InStore || data == null || !Guid.TryParse(PlayerStore.Instance.runID, out Guid run) ||
+                    data.run != run.ToString("N") || data.slot != PlayerStore.Instance.saveSlotId)
+                    throw new InvalidOperationException("Maintenance save identity changed.");
+                data.version = 3;
+                string raw = ShopData.Encode(data);
+                if (raw.Length > 65536) throw new InvalidOperationException("Maintenance data exceeds its size limit.");
+                ModHelper.SetModData(ModEntry.Id, MaintenanceKey, raw);
+                if (ModHelper.GetModData(ModEntry.Id, MaintenanceKey, null) != raw)
+                    throw new InvalidOperationException("Maintenance update was not retained.");
+                return true;
+            }
+            catch (Exception error) { log("Maintenance settings could not be saved: " + error); ShopNotice.Show(ShopSettings.Text("maintenance.failed")); return false; }
         }
 
         private GameGridInventory ResolveMaintenanceSource(MaintenanceRule rule, List<ShopInventory.Location> locations = null)
         {
             locations = locations ?? ShopInventory.OwnedLocations(false);
-            var matches = locations.Where(l => IsMaintenanceSource(l, rule.kind) && l.Owner.uniqueId == rule.source && l.Role == rule.role && l.Page == rule.page).ToArray();
+            if (!ParseMaintenanceSource(rule.location, rule.kind, out int sourceId, out string role, out int page)) return null;
+            var matches = locations.Where(l => IsMaintenanceSource(l, rule.kind) && l.Key() == rule.location).ToArray();
             if (matches.Length == 1) return matches[0].Inventory as GameGridInventory;
-            if (matches.Length != 0 || rule.kind != 31 || rule.role != "batteries" || rule.page != -1) return null;
+            if (matches.Length != 0 || rule.kind != 31 || role != "batteries" || page != -1) return null;
             var owners = locations.Where(l => !l.IsMachine).SelectMany(l => l.Inventory.childItems)
-                .Where(i => i != null && i.uniqueId == rule.source && i.identifier == "recharger" && ShopInventory.Owned(i)).Distinct().ToArray();
+                .Where(i => i != null && i.uniqueId == sourceId && i.identifier == "recharger" && ShopInventory.Owned(i)).Distinct().ToArray();
             if (owners.Length != 1 || owners[0].contentWindow == null || owners[0].contentWindow.isLocked ||
                 !(owners[0].contentWindow.childElement is MachineryPanelRow row)) return null;
             MachineryPanel panel = row.GetPanel("batteries");
@@ -676,9 +786,10 @@ namespace ShopAssist
         private void RebuildMaintenance() { if (maintenanceWindow?.IsAlive == true) RenderMaintenance(); }
         private void CloseMaintenance()
         {
+            CloseMaintenanceCopy();
             CustomUIWindow window = maintenanceWindow;
             maintenanceWindow = null; maintenanceScroll = null; maintenanceRun = null; maintenanceRevision++;
-            maintenanceHost = null; maintenanceSource = null;
+            maintenanceHost = null; maintenanceDraftHost = null; maintenanceSource = null; maintenanceDirty = false;
             window?.Close();
         }
         private void ResetMaintenance() { CloseMaintenance(); pendingFilters.Clear(); batteryAttemptDay.Clear(); maintenanceProblems.Clear(); maintenanceReadError = null; AttentionBook.Changed(); }

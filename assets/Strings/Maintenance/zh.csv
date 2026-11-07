@@ -1,5 +1,5 @@
 f31.enabled,自动更换水培机与打印机电池
-f31.tip,打开水培机或打印机的店铺工具，选择备件容器和电量阈值。夜间机器满足生产条件且已装普通电池低于阈值时，每台每天最多尝试一次：从来源换入同款、电量更高且够本轮使用的电池，并将旧电池放回来源。阈值为 0% 时不触发。
+f31.tip,在水培机或打印机窗口选择“备用电池”，设置备件来源和电量阈值。夜间机器满足生产条件且已装普通电池低于阈值时，每台每天最多尝试一次：从来源换入同款、电量更高且够本轮使用的电池，并将旧电池放回来源。阈值为 0% 时不触发。
 f31.open,设置机器备用电池
 f31.threshold,电池更换阈值
 f31.position,按容器位置选择备用电池
@@ -9,13 +9,20 @@ f31.inspect,请检查电池和交换缓冲区。
 f31.paused,自动换电已暂停。
 f31.next_attempt,备件已可用，等待下一次更换机会。
 f35.enabled,自动更换净水壶和养殖滤芯
-f35.tip,打开净水壶或养殖系统的店铺工具，选择备件容器、允许的滤芯种类和孔径规则。已勾选的滤芯在过滤时耗尽后，从来源优先换同款；也可允许其他已勾选种类按孔径替换。旧滤芯须能放回来源。AquaSense 接管净水壶时需关闭对应自动更换。
+f35.tip,在净水壶或养殖系统窗口选择“备用滤芯”，设置备件来源、允许的滤芯种类和孔径规则。已勾选的滤芯在过滤时耗尽后，从来源优先换同款；也可允许其他已勾选种类按孔径替换。旧滤芯须能放回来源。
 f35.open,设置备用滤芯
 f35.missing,所选容器中没有合适的滤芯。
 f35.pending,滤芯已耗尽并需要处理。
 f35.inspect,请检查滤芯和交换缓冲区。
 maintenance.no_host,请打开要设置的机器或净水壶。
 maintenance.no_source,请打开存放备件的自有容器。
+maintenance.spare_count,匹配备件 {0} 件 · 当前可交换 {1} 件
+maintenance.spare_unknown,安装需要更换的部件后可检查备件。
+maintenance.copy,复制已保存规则
+maintenance.copy_apply,复制到所选设备
+maintenance.configured,已有规则
+maintenance.no_targets,没有其他适用设备。
+maintenance.copy_result,已复制 {0} 台，跳过 {1} 台。
 maintenance.enable,保存
 maintenance.disable,移除规则
 maintenance.saved,更换规则已保存。
@@ -25,15 +32,22 @@ maintenance.saved_inactive,更换规则已保存，但当前无法运行。
 maintenance.saved_partial,更换规则已保存，部分处理方式当前无法自动更换。
 maintenance.host_unavailable,所选机器不可用。
 maintenance.invalid,无法读取自动更换设置。
+maintenance.read_failed,暂时无法读取设置，请稍后刷新。
+maintenance.reset,重新开始设置
+maintenance.reset_warning,重新开始将清除所有自动换电和换滤芯规则。原记录会保留。确认继续？
+maintenance.reset_confirm,清除规则并重新开始
+maintenance.reset_retry,重试重新开始
+maintenance.reset_cancel,停止重试
+maintenance.reset_cancelled,已停止重试，请检查当前设置。
+maintenance.reset_failed,重新开始未完成，请重试。
+maintenance.reset_done,自动更换规则已清空，可重新设置。
 maintenance.unsupported,当前游戏版本不支持自动更换。
 maintenance.conflict,其他模组修改了自动更换所需的操作。
 maintenance.swap_unavailable,备件或交换位置当前不可用。
-f35.aqua_taken,此滤芯由 AquaSense 自动更换接管。
 f35.transfer_unsupported,转移液体时无法自动更换滤芯：当前游戏版本不支持。
 f35.transfer_conflict,转移液体时无法自动更换滤芯：与其他模组冲突。
 f35.added_unsupported,直接加水时无法自动更换滤芯：当前游戏版本不支持。
 f35.added_conflict,直接加水时无法自动更换滤芯：与其他模组冲突。
-f35.aqua,AquaSense 的自动更换对净水壶优先。要按此处的来源更换，请在 AquaSense 齿轮中关闭对应耗材的自动更换。
 maintenance.source_missing,原备件来源不可用，选择新来源
 f35.same,只换同款滤芯
 f35.equivalent,优先同款；允许相同或更细孔径

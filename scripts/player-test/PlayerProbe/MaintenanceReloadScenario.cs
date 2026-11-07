@@ -43,7 +43,7 @@ public sealed class MaintenanceReloadScenario
             Need(machine?.identifier == "hydroponic" && pitcher?.identifier == "water_pitcher" && source != null &&
                 battery != null && MachineHelper.GetBatterySlot(machine)?.childItem == battery && oldFilter != null && filterSlot?.childItem == oldFilter &&
                 !string.IsNullOrEmpty(rules) && rules.Contains("\"host\":" + context[4]) && rules.Contains("\"host\":" + context[5]) &&
-                rules.Contains("\"source\":" + context[6]), "Rules or exact exchanged items did not survive the native save and reload");
+                rules.Contains("\"location\":\"item:" + context[6] + ":contents:-1\""), "Rules or exact exchanged items did not survive the native save and reload");
             var calendar = AdvCalendarUIManager.Instance;
             if (calendar?.UIPanel != null && calendar.UIPanel.activeSelf) StoreUIManager.Instance.storeCalendar.OnClick();
             DurabilityHelper.SetCurrentDurability(oldFilter, 0);
