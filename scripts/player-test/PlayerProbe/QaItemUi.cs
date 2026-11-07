@@ -27,23 +27,26 @@ internal static class QaItemUi
         ExecuteEvents.Execute(hit.gameObject, pointer, ExecuteEvents.pointerClickHandler);
     }
     internal static void Click(CustomUIWindow window, GameItem item) => Click(Hit(window.root, item));
+    internal static MachineryButton WindowAction(PixelWindow window, string key) =>
+        window?.handler?.transform.Find("ShopAssist_Action_" + key.Replace('.', '_'))
+            ?.GetComponent<TreeNodeRender>()?.element as MachineryButton;
+
+    internal static bool OpenAttention()
+    {
+        var button = WindowAction(EmporiumEntry.Instance?.invWindow, "attention");
+        if (button == null || button.isDisabled) return false;
+        button.Select();
+        var attention = CustomUIManager.Instance.GetWindow("starswhere.shopassist.attention");
+        if (attention?.IsAlive != true) throw new InvalidOperationException("Direct attention action did not open its list");
+        return true;
+    }
+
     internal static CustomUIWindow OpenOperationDetails()
     {
         const string mod = "starswhere.shopassist";
-        var options = StoreUIManager.Instance.gameOptionUIManager;
-        options.OpenUI();
-        var launcher = CustomUIManager.Instance.GetWindow("game_options")?.Get(mod + ":tools")?.button;
-        if (launcher == null || !launcher.interactable) throw new InvalidOperationException("Shop tools are unavailable for operation details");
-        launcher.onClick.Invoke();
-        var tools = CustomUIManager.Instance.GetWindow(mod + ".tools");
-        var attention = tools?.Get("attention")?.button;
-        if (attention == null || !attention.interactable) throw new InvalidOperationException("Needs-attention entry is unavailable");
-        attention.onClick.Invoke();
-        var issues = CustomUIManager.Instance.GetWindow(mod + ".attention");
-        var details = issues?.Get("last_result")?.button;
-        if (details == null || !details.interactable) throw new InvalidOperationException("Latest operation details are unavailable");
-        details.onClick.Invoke();
-        issues.Close(); tools?.Close(); options.CloseUI();
+        var assembly = ModLoader.Mods.First(value => value.Manifest?.ID == mod).Instance.GetType().Assembly;
+        assembly.GetType("ShopAssist.ShopNotice", true).GetMethod("OpenLastResult", BindingFlags.Static | BindingFlags.NonPublic)
+            .Invoke(null, null);
         var result = CustomUIManager.Instance.GetWindow(mod + ".operation");
         if (result?.IsAlive != true || !result.root.activeInHierarchy) throw new InvalidOperationException("Operation details did not remain visible");
         return result;

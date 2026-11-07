@@ -83,11 +83,7 @@ public sealed class BatchAScenario
                 context.runB = run.ToString("N"); context.slotB = player.saveSlotId;
                 Require(ModHelper.GetModData(ModId, "todo", null) == null, "New QA run inherited the first checklist");
                 CloseCalendar();
-                var options = StoreUIManager.Instance.gameOptionUIManager;
-                options.OpenUI();
-                var action = ToolsAction("f17.open");
-                Require(action?.button != null && action.button.interactable, "Checklist action unavailable in second QA run");
-                action.button.onClick.Invoke();
+                RoutingScenario.RunFeatureAction("f17.open");
                 var book = TodoWindow();
                 book.Get("task_text").SetString(context.textB, true);
                 book.Get("task_save").button.onClick.Invoke();
@@ -129,19 +125,15 @@ public sealed class BatchAScenario
         var window = CustomUIManager.Instance.GetWindow("game_options");
         var toggle = window?.Get(ModId + ":f17.enabled");
         var apply = window?.Get("apply");
-        Require(toggle != null && window?.Get(ModId + ":tools")?.button != null && apply?.button != null, "F17 native controls are absent");
+        Require(toggle != null && apply?.button != null, "F17 native controls are absent");
         if (entry.Value) { toggle.SetBool(false, true); apply.button.onClick.Invoke(); }
-        var action = ToolsAction("f17.open");
-        Require(action?.button != null, "F17 tools control is absent");
-        Require(!entry.Value && !action.button.interactable, "F17 was not disabled after Apply");
+        Require(!entry.Value && !QaFeatureGallery.CanRun("f17.open"), "F17 was not disabled after Apply");
         toggle.SetBool(true, true);
-        Require(!entry.Value && !action.button.interactable, "F17 draft took effect before Apply");
-        action.button.onClick.Invoke();
+        Require(!entry.Value && !QaFeatureGallery.CanRun("f17.open"), "F17 draft took effect before Apply");
         Require(CustomUIManager.Instance.GetWindow(WindowId) == null, "Disabled checklist opened before Apply");
         apply.button.onClick.Invoke();
-        action = ToolsAction("f17.open");
-        Require(entry.Value && action.button.interactable, "F17 Apply did not enable its action");
-        action.button.onClick.Invoke();
+        Require(entry.Value && QaFeatureGallery.CanRun("f17.open"), "F17 Apply did not enable its action");
+        RoutingScenario.RunFeatureAction("f17.open");
         var book = TodoWindow();
         book.Get("task_text").SetString(context.textA, true);
         Require(book.Get("task_text").GetString() == context.textA, "Checklist input rejected the test text");
@@ -197,31 +189,8 @@ public sealed class BatchAScenario
 
     internal static void OpenTodoAndCheck(string rowId, bool expected)
     {
-        var options = StoreUIManager.Instance.gameOptionUIManager;
-        options.OpenUI();
-        var action = ToolsAction("f17.open");
-        Require(action?.button != null && action.button.interactable, "Checklist action unavailable");
-        action.button.onClick.Invoke();
+        RoutingScenario.RunFeatureAction("f17.open");
         Require(TodoWindow().Get("done_" + rowId).GetBool() == expected, "Checklist control does not reflect saved completion");
-    }
-
-    internal static CustomUIElement ToolsAction(string key)
-    {
-        var options = CustomUIManager.Instance.GetWindow("game_options");
-        var open = options?.Get(ModId + ":tools")?.button;
-        Require(open != null && open.interactable, "Shop tools entry is unavailable");
-        open.onClick.Invoke();
-        var tools = CustomUIManager.Instance.GetWindow(ModId + ".tools");
-        Require(tools?.IsAlive == true, "Shop tools panel did not open");
-        tools.Get("show_disabled").SetBool(true, true);
-        for (int category = 0; category < 4; category++)
-        {
-            tools.Get("category_" + category).button.onClick.Invoke();
-            tools = CustomUIManager.Instance.GetWindow(ModId + ".tools");
-            CustomUIElement action = tools?.Get(ModId + ":" + key);
-            if (action != null) return action;
-        }
-        return null;
     }
 
     private static bool StoreReady() => PlayerStore.HasInstance && EmporiumEntry.Instance != null &&
