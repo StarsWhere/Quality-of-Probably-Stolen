@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -31,12 +32,60 @@ public sealed class SettingsFinderScenario
         if (step == 1)
         {
             var w = Find(); Need(w?.IsAlive == true, "Main-menu settings finder did not open");
-            Need(w.Get("tier").dropdown.options.Count == 6, "Fast playback is missing its top-level category");
-            w.Get("tier").SetIndex(5, true);
+            Need(w.Get("tier").dropdown.options.Count == 4, "Finder must contain all levels and three tier filters");
+            var f11 = ModConfig.Find(Mod)?.Get("f11.enabled") as ConfigEntry<bool>;
+            var f11Toggle = native.Get(Mod + ":f11.enabled");
+            var keyEntry = GameOptionRegistry.Sections.SelectMany(section => section.entries)
+                .FirstOrDefault(value => value.id == Mod + ":f11.key");
+            var keyControl = native.Get(Mod + ":f11.key");
+            Need(f11 != null && f11Toggle?.toggle != null && keyEntry?.getKey != null && keyControl?.root != null,
+                "F11's actual switch or native key binding is missing");
+            bool enabled = f11.Value, draftEnabled = f11Toggle.GetBool();
+            KeyCode binding = keyEntry.getKey();
+            string preference = Mod + ".f11.key";
+            bool hasPreference = PlayerPrefs.HasKey(preference);
+            int savedPreference = PlayerPrefs.GetInt(preference, -1);
+            var assembly = ModLoader.Mods.First(value => value.Manifest?.ID == Mod).Instance.GetType().Assembly;
+            var catalog = assembly.GetType("ShopAssist.FeatureCatalog", true);
+            var defaultToggle = catalog.GetMethod("ToggleDefault", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+            Need(defaultToggle != null && !(bool)defaultToggle.Invoke(null, new object[] { "f11.enabled", true }),
+                "F11 is not disabled by default");
+            w.Get("tier").SetIndex(0, true); w.Get("only").SetBool(false, true);
+            foreach (string query in new[] { "找货", "库存找货", "Find goods", "Stock search", "F11" })
+            {
+                w.Get("query").SetString(query, true);
+                Need(Visible("f11.enabled") && Visible("f11.key"), "F11 switch or binding is missing for search: " + query);
+            }
+            foreach (string key in new[] { "f11.enabled", "f11.key" })
+            {
+                w.Get("jump_" + key).button.onClick.Invoke();
+                var control = native.Get(Mod + ":" + key);
+                var rect = control.root.transform as RectTransform;
+                var scroll = rect?.GetComponentInParent<ScrollRect>();
+                Canvas.ForceUpdateCanvases();
+                Need((Find() == null || !Find().IsAlive) && scroll?.viewport != null &&
+                    scroll.viewport.rect.Contains(scroll.viewport.InverseTransformPoint(rect.TransformPoint(rect.rect.center))),
+                    "F11 search did not focus the actual native option: " + key);
+                Need(f11.Value == enabled && f11Toggle.GetBool() == draftEnabled && keyEntry.getKey() == binding &&
+                    PlayerPrefs.HasKey(preference) == hasPreference && PlayerPrefs.GetInt(preference, -1) == savedPreference,
+                    "Finding an F11 control changed its switch or key binding");
+                native.Get(Mod + ":settings.find").button.onClick.Invoke();
+                w = Find(); Need(w?.IsAlive == true, "Settings finder did not reopen");
+                w.Get("query").SetString("F11", true);
+            }
+            w.Get("tier").SetIndex(1, true);
+            w.Get("query").SetString("f42", true);
             Need(Visible("f42.enabled") && Visible("f42.mode") && Visible("f42.speed") && Visible("f42.key") && !Visible("f15.enabled"),
-                "Playback category does not contain its own settings and shortcut");
-            w.Get("tier").SetIndex(4, true);
-            Need(!Visible("f42.enabled"), "Playback is still inside calendar settings");
+                "Essentials tier does not contain playback settings and shortcut");
+            w.Get("tier").SetIndex(2, true);
+            Need(!Visible("f42.enabled"), "Playback appeared in the rules tier");
+            w.Get("query").SetString("f05.auto_insert", true);
+            Need(Visible("f05.auto_insert") && Find().Get("jump_f05.auto_insert").GetText().Contains(ModHelper.GetLocalized(Mod, "f05.enabled")),
+                "Cross-tier auto-arrange lost its parent or rules placement");
+            w.Get("tier").SetIndex(3, true);
+            w.Get("query").SetString("f04.unseen", true);
+            Need(Visible("f04.unseen") && Find().Get("jump_f04.unseen").GetText().Contains(ModHelper.GetLocalized(Mod, "f04.enabled")),
+                "Cross-tier hidden-risk option lost its parent or planning placement");
             w.Get("tier").SetIndex(0, true);
             var input = w.Get("query").input;
             w.Get("query").SetString("本周和下周", true);
@@ -55,6 +104,17 @@ public sealed class SettingsFinderScenario
                 "Enabled filter coupled independent ordinary and wholesale purchase switches");
             native.Get(Mod + ":f01.enabled").SetBool(purchase, true);
             native.Get(Mod + ":f01.wholesale").SetBool(wholesale, true);
+            bool arrange = native.Get(Mod + ":f05.enabled").GetBool(), auto = native.Get(Mod + ":f05.auto_insert").GetBool();
+            native.Get(Mod + ":f05.enabled").SetBool(false, true);
+            native.Get(Mod + ":f05.auto_insert").SetBool(true, true);
+            Find().Get("query").SetString("f05.auto_insert", true);
+            Need(!Visible("f05.auto_insert"), "Auto-arrange ignored its disabled parent");
+            native.Get(Mod + ":f05.enabled").SetBool(true, true);
+            Need(Visible("f05.auto_insert"), "Auto-arrange was hidden despite both switches being enabled");
+            native.Get(Mod + ":f05.auto_insert").SetBool(false, true);
+            Need(!Visible("f05.auto_insert"), "Auto-arrange ignored its own disabled switch");
+            native.Get(Mod + ":f05.enabled").SetBool(arrange, true);
+            native.Get(Mod + ":f05.auto_insert").SetBool(auto, true);
             string[] related = { "f07.enabled", "f08.enabled", "f09.enabled", "f10.enabled", "f12.enabled" };
             bool[] draft = related.Select(key => native.Get(Mod + ":" + key).GetBool()).ToArray();
             native.Get(Mod + ":f07.enabled").SetBool(false, true);

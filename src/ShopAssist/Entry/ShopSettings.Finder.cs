@@ -42,7 +42,6 @@ namespace ShopAssist
         private string ResultKind(string key)
         {
             if (shortcutKeys.Contains(key)) return Text("settings.kind.key");
-            if (commands.Any(command => command.Label == key)) return Text("settings.kind.action");
             if (PrimaryOption(key)) return Text("settings.kind.feature");
             if (choiceLabels.ContainsKey(key)) return Text("settings.kind.choice");
             return Text(config.Get(key)?.ValueType == typeof(bool) ? "settings.kind.toggle" : "settings.kind.value");
@@ -53,8 +52,12 @@ namespace ShopAssist
             string query = search.Trim();
             string group = FeatureCatalog.GroupKey(FeatureCatalog.For(key));
             return query.Length == 0 || key.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                (key == "f11.enabled" || key == "f11.key") &&
+                    "找货|库存找货|Find goods|Stock search|F11".IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0 ||
                 Text(key).IndexOf(query, StringComparison.CurrentCultureIgnoreCase) >= 0 ||
                 Description(key).IndexOf(query, StringComparison.CurrentCultureIgnoreCase) >= 0 ||
+                TierTitle(Level(key)).IndexOf(query, StringComparison.CurrentCultureIgnoreCase) >= 0 ||
+                Text(FeatureCatalog.CategoryKey(FeatureCatalog.For(key).Category)).IndexOf(query, StringComparison.CurrentCultureIgnoreCase) >= 0 ||
                 Text(FeatureCatalog.For(key).SettingKey).IndexOf(query, StringComparison.CurrentCultureIgnoreCase) >= 0 ||
                 group != null && Text(group).IndexOf(query, StringComparison.CurrentCultureIgnoreCase) >= 0;
         }
@@ -77,7 +80,7 @@ namespace ShopAssist
                 CustomUIWindow own = finder;
                 b.OnClose(() => { if (ReferenceEquals(finder, own)) { finder = null; ClearFinderViews(); } });
                 b.AddInput(Text("settings.query"), search, ChangeSearch, "query", ChangeSearch);
-                b.BeginRow().AddDropdown(new[] { Text("settings.any") }.Concat(Enumerable.Range(0, Sections.Length).Select(SectionLabel)).ToList(),
+                b.BeginRow().AddDropdown(new[] { Text("settings.any") }.Concat(Enumerable.Range(0, Sections.Length).Select(TierTitle)).ToList(),
                     searchTier, i => { searchTier = i; searchPage = 0; RenderFinder(); }, "tier")
                     .AddToggle(Text("settings.only"), onlyEnabled, v => { onlyEnabled = v; searchPage = 0; RenderFinder(); }, "only").End();
                 b.BeginScrollFlexible(130);
@@ -107,13 +110,12 @@ namespace ShopAssist
                 }
                 finally { finderBuilding = false; }
             }
-            var commandKeys = new HashSet<string>(commands.Select(command => command.Label));
-            var list = config.Entries.Where(e => e.Key != "f19.pinned").Select(e => e.Key).Concat(shortcutKeys).Concat(commands.Select(c => c.Label)).Distinct()
+            var list = config.Entries.Where(e => e.Key != "f19.pinned").Select(e => e.Key).Concat(shortcutKeys).Distinct()
                 .Where(key => key.Length > 3 && key[0] == 'f' && key[3] == '.' &&
-                    (commandKeys.Contains(key) || options.Get(ModEntry.Id + ":" + key)?.root != null) &&
+                    options.Get(ModEntry.Id + ":" + key)?.root != null &&
                     (searchTier == 0 || Level(key) == searchTier - 1) && (!onlyEnabled || EnabledInOptions(options, key)) &&
                     SearchMatches(key))
-                .OrderBy(OptionOrder).ToList();
+                .OrderBy(Level).ThenBy(OptionOrder).ToList();
             const int perPage = 12;
             finderCount = list.Count;
             searchPage = Math.Max(0, Math.Min(searchPage, (list.Count - 1) / perPage));
@@ -125,9 +127,9 @@ namespace ShopAssist
             int order = 1;
             foreach (var key in visible)
             {
-                string context = Text(FeatureCatalog.CategoryKey(FeatureCatalog.For(key).Category)) + " · " + ResultKind(key);
-                if (!PrimaryOption(key)) context += " · " + Text(FeatureCatalog.For(key).SettingKey);
-                var availability = commands.Any(c => c.Label == key) ? Evaluate(key) : ActionAvailability.Ready;
+                string context = TierTitle(Level(key)) + " · " + Text(FeatureCatalog.CategoryKey(FeatureCatalog.For(key).Category)) + " · " + ResultKind(key);
+                if (!PrimaryOption(key) || key == "f04.unseen" || key == "f05.auto_insert")
+                    context += " · " + Text(FeatureCatalog.For(key).SettingKey);
                 if (!finderRows.TryGetValue(key, out CustomUIElement row))
                 {
                     var resultBuilder = new CustomUIBuilder(CustomUIManager.Instance, finder, finderResults);
@@ -145,8 +147,8 @@ namespace ShopAssist
                 }
                 string title = "<b>" + Text(key) + "</b>\n<size=80%>" + context + "</size>";
                 if (row.GetText() != title) row.SetText(title);
-                row.SetTooltip(Description(key) + (availability.Allowed ? "" : "\n" + availability.Message));
-                row.SetInteractable(availability.Allowed || availability.SettingKey != null);
+                row.SetTooltip(Description(key));
+                row.SetInteractable(true);
                 if (!row.root.activeSelf) row.SetVisible(true);
                 if (row.root.transform.GetSiblingIndex() != order) row.root.transform.SetSiblingIndex(order);
                 order++;
@@ -175,33 +177,10 @@ namespace ShopAssist
         private void LocateOption(CustomUIWindow options, string key)
         {
             if (!options.IsAlive || CustomUIManager.Instance.GetWindow("game_options") != options) { CloseFinder(); return; }
-            if (commands.Any(c => c.Label == key))
-            {
-                var availability = Evaluate(key);
-                CloseFinder();
-                if (availability.SettingKey != null) OpenSetting(availability.SettingKey); else Run(key);
-                return;
-            }
             var control = options.Get(ModEntry.Id + ":" + key);
             if (control?.root == null) return;
             CloseFinder();
             FocusControl(control);
-        }
-
-        internal void OpenSetting(string key)
-        {
-            toolsWindow?.Close(); toolsWindow = null;
-            var options = CustomUIManager.Instance?.GetWindow("game_options");
-            if (options?.IsAlive == true && options.IsVisible)
-            {
-                LocateOption(options, key);
-                return;
-            }
-            var mod = ModLoader.Mods.Find(value => value.Manifest?.ID == ModEntry.Id);
-            if (mod == null) return;
-            var window = ModConfigWindow.Open(mod);
-            var control = window?.Get(key);
-            if (control?.root != null) FocusControl(control);
         }
 
         private static void FocusControl(CustomUIElement control)
@@ -228,6 +207,10 @@ namespace ShopAssist
         private void CloseFinder() { if (finder != null && finder.IsAlive) finder.Close(); finder = null; ClearFinderViews(); }
 
         [HarmonyPatch(typeof(GameOptionUIManager), nameof(GameOptionUIManager.CloseUI))]
-        private static class OptionsClosed { private static void Postfix() => attached?.CloseFinder(); }
+        private static class OptionsClosed
+        {
+            private static void Postfix(GameOptionUIManager __instance)
+            { if (!__instance.IsOpen) attached?.CloseFinder(); }
+        }
     }
 }

@@ -15,13 +15,22 @@ namespace ShopAssist
 
         // Keep saved keys and values stable; grouping changes only their presentation.
         private static bool PrimaryOption(string key) => key.EndsWith(".enabled", StringComparison.Ordinal) ||
-            key == "f04.unseen" || key == "f01.wholesale";
+            key == "f04.unseen" || key == "f05.auto_insert" || key == "f01.wholesale";
 
         private static int OptionOrder(string key) => FeatureCatalog.Order(key);
 
-        private static string SectionLabel(int tier)
+        private static string TierTitle(int tier) => Text(FeatureCatalog.TierKey((FeatureTier)(tier + 1)));
+        private static string TierDescription(int tier) => Text(FeatureCatalog.TierDescriptionKey((FeatureTier)(tier + 1)));
+        private static string SectionLabel(int tier) => Format("settings.tier_heading", TierTitle(tier), TierDescription(tier));
+
+        private static bool FirstInCategory(string key)
         {
-            return Text(FeatureCatalog.CategoryKey((FeatureCategory)tier));
+            if (attached == null) return false;
+            FeatureDescriptor feature = FeatureCatalog.For(key);
+            string first = attached.config.Entries.Where(entry => entry.Key != "f19.pinned" &&
+                Level(entry.Key) == Level(key) && FeatureCatalog.For(entry.Key).Category == feature.Category)
+                .OrderBy(entry => OptionOrder(entry.Key)).Select(entry => entry.Key).FirstOrDefault();
+            return first == key;
         }
 
         private string Description(string key)
@@ -48,7 +57,11 @@ namespace ShopAssist
             row.childForceExpandWidth = false;
             row.childForceExpandHeight = false;
             label.text.fontStyle = primary ? FontStyles.Bold : FontStyles.Normal;
+            if (key == "f04.unseen" || key == "f05.auto_insert")
+                label.text.text += "\n<size=80%>" + Format("settings.parent_required", Text(feature.SettingKey)) + "</size>";
             if (groupHead) label.text.text = "<size=80%>" + Text(FeatureCatalog.GroupKey(feature)) + "</size>\n" + label.text.text;
+            if (FirstInCategory(key))
+                label.text.text = "<size=80%>" + Text(FeatureCatalog.CategoryKey(feature.Category)) + "</size>\n" + label.text.text;
             label.text.enableWordWrapping = true;
             label.text.overflowMode = TextOverflowModes.Overflow;
             var layout = label.root.GetComponent<LayoutElement>() ?? label.root.AddComponent<LayoutElement>();
@@ -69,8 +82,41 @@ namespace ShopAssist
             private static void Postfix(CustomUIBuilder builder, GameOptionRegistry.Entry entry)
             {
                 if (attached == null || entry.source != ModEntry.Id) return;
-                StyleOption(builder.GetWindow(), entry.id, entry.id.Substring(ModEntry.Id.Length + 1));
+                StyleOption(UiLayout.Window(builder), entry.id, entry.id.Substring(ModEntry.Id.Length + 1));
+                if (entry.id == ModEntry.Id + ":f42.enabled") AddPlaybackKeyJump(builder);
             }
+        }
+
+        private sealed class PlaybackKeyStatus : MonoBehaviour
+        {
+            internal CustomUIElement Button;
+            private void LateUpdate()
+            {
+                if (Button?.IsAlive != true) { Destroy(this); return; }
+                var key = (KeyCode)PlayerPrefs.GetInt(ModEntry.Id + ".f42.key", (int)KeyCode.None);
+                string name = key == KeyCode.None ? Text("settings.key_unbound") : KeyBindHelper.KeyName(key);
+                string label = Format("settings.playback_key", name);
+                if (Button.GetText() != label) Button.SetText(label);
+            }
+        }
+
+        private static void AddPlaybackKeyJump(CustomUIBuilder builder)
+        {
+            CustomUIWindow owner = UiLayout.Window(builder);
+            builder.AddButton("", () =>
+            {
+                if (owner?.IsAlive != true) return;
+                var options = GameOptionUIManager.Instance ?? Resources.FindObjectsOfTypeAll<GameOptionUIManager>()
+                    .FirstOrDefault(value => value.gameObject.scene.IsValid());
+                if (options == null) { ShopNotice.Show(Text("availability.unknown")); return; }
+                if (!options.IsOpen) options.OpenUI();
+                var window = CustomUIManager.Instance?.GetWindow("game_options");
+                var control = window?.Get(ModEntry.Id + ":f42.key");
+                if (control?.root != null) FocusControl(control);
+                else ShopNotice.Show(Text("availability.unknown"));
+            }, ModEntry.Id + ":f42.key.jump");
+            var button = builder.Last;
+            button.root.AddComponent<PlaybackKeyStatus>().Button = button;
         }
 
         private static bool OwnChoice(ConfigEntry entry, out string[] labels)
@@ -105,7 +151,7 @@ namespace ShopAssist
             private static void Postfix(CustomUIBuilder b, ModConfig config, ConfigEntry entry)
             {
                 if (attached == null || config.ModId != ModEntry.Id || entry.Key == "f19.pinned") return;
-                var window = b.GetWindow();
+                var window = UiLayout.Window(b);
                 var control = window.Get(entry.Key);
                 if (entry.ValueType == typeof(int) && control?.slider != null)
                 {
@@ -120,6 +166,7 @@ namespace ShopAssist
                     control.slider.onValueChanged.AddListener(value => number.SetText(Mathf.RoundToInt(value).ToString()));
                 }
                 StyleOption(window, entry.Key, entry.Key);
+                if (entry.Key == "f42.enabled") AddPlaybackKeyJump(b);
             }
         }
 
@@ -158,9 +205,21 @@ namespace ShopAssist
         [HarmonyPatch(typeof(ModConfigWindow), nameof(ModConfigWindow.Open))]
         private static class ConfigGroups
         {
-            private static void Postfix(LoadedMod mod, CustomUIWindow __result)
+            private static bool Prefix(LoadedMod mod, ref CustomUIWindow __result, ref bool __state)
             {
-                if (attached == null || mod?.Manifest?.ID != ModEntry.Id || __result == null) return;
+                if (attached != null && mod?.Manifest?.ID == ModEntry.Id)
+                {
+                    var existing = CustomUIManager.Instance?.GetWindow("mod_config:" + ModEntry.Id);
+                    if (existing?.IsAlive == true)
+                    { existing.Show(); existing.BringToFront(); __result = existing; return false; }
+                }
+                __state = true;
+                return true;
+            }
+
+            private static void Postfix(LoadedMod mod, CustomUIWindow __result, bool __state)
+            {
+                if (!__state || attached == null || mod?.Manifest?.ID != ModEntry.Id || __result == null) return;
                 __result.SetTitle(Text("settings.title"));
                 for (int tier = 0; tier < GearSections.Length; tier++)
                 {
@@ -173,6 +232,7 @@ namespace ShopAssist
                     for (int i = 0; i < ordered.Length; i++) ordered[i].Row.SetSiblingIndex(positions[i]);
                 }
                 Canvas.ForceUpdateCanvases();
+                attached.WatchDraft(__result, false, true);
             }
         }
     }
