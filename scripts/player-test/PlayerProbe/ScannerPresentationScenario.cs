@@ -362,7 +362,7 @@ public sealed class ScannerPresentationScenario
         if (step == 4)
         {
             var ui = WaterScannerUIManager.Instance; var root = Root(ui.panel);
-            RoutingScenario.OpenOptionAction("f19.choose");
+            RoutingScenario.RunFeatureAction("f19.choose");
             var picker = CustomUIManager.Instance.GetWindow(Mod + ".f19.pin");
             var clear = picker?.root.GetComponentsInChildren<Button>(true).FirstOrDefault(button =>
                 button.GetComponentInChildren<TMP_Text>(true)?.text == ModHelper.GetLocalized(Mod, "f19.none"));

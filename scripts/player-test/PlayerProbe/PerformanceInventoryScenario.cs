@@ -450,7 +450,7 @@ public class PerformanceInventoryScenario
         if (kind == 3)
         {
             ItemMouseDoubleClickHandler.current.OpenContentAction(machine, new Vector2(260, 90));
-            RoutingScenario.OpenOptionAction("f10.open");
+            RoutingScenario.RunFeatureAction("f10.open");
             if (Search() == null) throw new InvalidOperationException("Module search control unavailable");
         }
     }
@@ -492,7 +492,7 @@ public class PerformanceInventoryScenario
     private void OpenRoutingPreview()
     {
         RoutingScenario.SetSelection(goods[0].Take(20).ToArray());
-        RoutingScenario.OpenOptionAction("f08.open");
+        RoutingScenario.RunFeatureAction("f08.open");
         if (CustomUIManager.Instance.GetWindow(Mod + ".route_preview") == null)
             throw new InvalidOperationException("Routing preview did not open");
     }

@@ -45,7 +45,7 @@ public sealed class ScannerUxScenario
 
     private static void ResetPins()
     {
-        RoutingScenario.OpenOptionAction("f19.choose");
+        RoutingScenario.RunFeatureAction("f19.choose");
         var picker = CustomUIManager.Instance.GetWindow(Mod + ".f19.pin");
         Button clear = picker?.root.GetComponentsInChildren<Button>(true).FirstOrDefault(button =>
             button.GetComponentInChildren<TMP_Text>(true)?.text == ModHelper.GetLocalized(Mod, "f19.none"));

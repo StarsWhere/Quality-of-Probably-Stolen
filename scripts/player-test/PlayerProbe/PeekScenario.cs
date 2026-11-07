@@ -63,6 +63,8 @@ public sealed class PeekScenario
                 var options = CustomUIManager.Instance.GetWindow("game_options");
                 options.Get(ModId + ":f20.enabled").SetBool(true, true);
                 options.Get(ModId + ":f20.delay").SetFloat(100, true);
+                foreach (string key in new[] { "f02.enabled", "f15.enabled", "f17.enabled", "f21.enabled" })
+                    options.Get(ModId + ":" + key).SetBool(false, true);
                 options.Get("apply").button.onClick.Invoke();
                 Require((ModConfig.Find(ModId).Get("f20.enabled") as ConfigEntry<bool>)?.Value == true, "F20 native option did not apply");
                 StoreUIManager.Instance.gameOptionUIManager.CloseUI();
