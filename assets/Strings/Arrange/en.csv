@@ -1,14 +1,12 @@
 f05.enabled,Arrange container items from the context menu
-f05.tip,Right-click a storage grid or an item in it to arrange. A selection limits the operation to selected items; you can keep containers in place.
+f05.tip,Right-click a storage grid or an item in it to arrange. Selected items are arranged when present; otherwise all items are arranged. Pinned items stay in place.
 f05.rotate,Allow item rotation during arrangement
 f05.rotate.tip,Let Smart Arrange rotate eligible items to pack them more tightly.
 f05.key,Arrange current container
-f05.key.tip,Arrange the accessible container under the pointer, or the most recently focused accessible container when the pointer is not over one. With Smart Inventory Arrange enabled, bind the shortcut in its settings.
+f05.key.tip,Arrange the accessible container under the pointer, or the most recently focused accessible container when the pointer is not over one.
 f05.open,Smart arrange
 f05.all,Smart arrange all
 f05.selected,Smart arrange selection
-f05.preserve_all,Arrange all and keep containers
-f05.preserve_selected,Arrange selection and keep containers
 f05.undo,Undo arrangement
 f05.undone,Undid the last arrangement.
 f05.undo_stale,The items or container changed; the arrangement cannot be undone.
@@ -26,7 +24,3 @@ f05.applied,Organized {0} items.
 f05.changed,The items or grid changed. Choose Smart Arrange again.
 f05.restored,The layout could not be applied and was restored.
 f05.inspect,Organizing was interrupted. Check the container's contents.
-f06.enabled,Temporarily hold item positions while arranging
-f06.tip,Use an item's context menu to hold its position during arrangement; use it again to release the item. Closing that container window clears the temporary hold without changing permanent pins.
-f06.hold,Hold position while organizing
-f06.release,Release held position

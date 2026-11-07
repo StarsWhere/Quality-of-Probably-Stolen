@@ -52,6 +52,7 @@ public sealed class AutoArrangeInputScenario
                     Need(resident.modifiedShape.globalWidth == 1 && resident.modifiedShape.globalHeight == 2, "Native resident footprint changed");
                     PutAt(target, resident, x, target.inventoryShape.height - 2); residents.Add(resident);
                 }
+                ItemPinHelper.SetPinned(residents[0], true);
                 single = New("wine_yeast");
                 Need(single.modifiedShape.globalWidth == 1 && single.modifiedShape.globalHeight == 2 && single.unitCount == 1, "Native dragged fixture changed");
                 Put(stock, single); singleBefore = single.modifiedShape.Clone();
@@ -86,12 +87,16 @@ public sealed class AutoArrangeInputScenario
                     else { TradeScenario.SetOptions(true, "f05.auto_insert"); pass = 2; }
                     Next(2, 2); return false;
                 }
-                Need(single.parentInventory == target && residents.Any(item => !Same(item.modifiedShape, targetBefore[item])),
+                Need(single.parentInventory == target && ItemPinHelper.IsPinned(residents[0]) &&
+                    Same(residents[0].modifiedShape, targetBefore[residents[0]]) &&
+                    residents.Skip(1).Any(item => !Same(item.modifiedShape, targetBefore[item])),
                     "Ordinary stock-to-backpack drag did not automatically make room: " + GuardDiagnostics());
                 RightDown(EmptyCell(target)); Next(6); return false;
             case 6:
                 ClearInput(); menu = Window("sortWindow"); Need(menu?.IsVisible() == true, "Auto undo grid menu did not open");
-                input.Mouse = ButtonPoint(menu, "ShopAssist_f05_undo_grid"); Next(7, 2); return false;
+                Need(!menu.handler.GetComponentsInChildren<Transform>(true).Any(node =>
+                    node.name == "ShopAssist_f05_undo_grid" && node.gameObject.activeInHierarchy), "Duplicate grid undo row remains");
+                input.Mouse = NativeUndoPoint(); Next(7, 2); return false;
             case 7:
                 PressLeft(); Next(8); return false;
             case 8:
@@ -119,7 +124,7 @@ public sealed class AutoArrangeInputScenario
                 ClearInput();
                 Need(single.parentInventory == directGrid && single.unitCount == 1 && directGrid.childItems.Count == 1 && TargetOriginal(),
                     "Native direct placement changed when auto insertion was enabled");
-                directWindow.Hide(); PrepareGroup(); Next(10, 5); return false;
+                directWindow.Hide(); ItemPinHelper.SetPinned(residents[0], false); PrepareGroup(); Next(10, 5); return false;
             case 10:
                 Need(sourceWindow.IsVisible(), "Group source backpack did not open");
                 sourceWindow.ToFront(); input.Mouse = Cell(groupSource, 0, 0); PressLeft(); Next(11); return false;
@@ -143,6 +148,10 @@ public sealed class AutoArrangeInputScenario
                 Need(nativePartial && groupFirst.parentInventory == target && groupSecond.parentInventory == target,
                     "Group drop did not include both a native partial transfer and automatic insertion: nativePartial=" + nativePartial +
                     ", first=" + Parent(groupFirst) + ", second=" + Parent(groupSecond) + ", " + GuardDiagnostics());
+                for (int y = 0; y < target.inventoryShape.height; y++)
+                    for (int x = 0; x < target.inventoryShape.width; x++)
+                        Need(target.childItems.Any(item => item.modifiedShape.Intersects(x, y)), "Group target was not completely full");
+                Need(InventorySortHelper.MayUndo(target), "Full target has no reversible automatic insertion");
                 RightDown(ItemCell(target, groupFirst)); Next(17); return false;
             case 17:
                 ClearInput(); menu = Window("contextWindow"); Need(menu?.IsVisible() == true, "Group undo item menu did not open");
@@ -162,7 +171,7 @@ public sealed class AutoArrangeInputScenario
                     Same(groupFirst.modifiedShape, groupFirstBefore) && Same(groupSecond.modifiedShape, groupSecondBefore) && TargetOriginal(),
                     "One group undo did not restore native and automatic transfers together");
                 observer?.UnpatchAll("qa.auto-arrange-observer"); active = null; input.Dispose(); input = null;
-                result = "PASS auto-insert default and disabled, native direct placement, native single/group input, native partial transfer and whole-operation undo";
+                result = "PASS auto-insert defaults, pinned obstacle, native single/group input, native grid undo and whole-operation undo";
                 return true;
             default: throw new InvalidOperationException("Unknown auto arrange input step");
         }
@@ -355,6 +364,17 @@ public sealed class AutoArrangeInputScenario
         Canvas.ForceUpdateCanvases();
         Transform node = window.handler.GetComponentsInChildren<Transform>(true).FirstOrDefault(value => value.name == name && value.gameObject.activeInHierarchy);
         var button = node?.GetComponent<TreeNodeRender>()?.element as RichTextElement;
+        return ButtonPoint(button, name);
+    }
+    private static Vector2 NativeUndoPoint()
+    {
+        var button = typeof(ItemContextHandler).GetField("buttonSortUndo", Fields)?.GetValue(ItemContextHandler.current) as RichTextElement;
+        Need(button?.handler != null && button.handler.gameObject.activeInHierarchy, "Native grid undo row is missing");
+        return ButtonPoint(button, "native grid undo");
+    }
+    private static Vector2 ButtonPoint(RichTextElement button, string name)
+    {
+        Canvas.ForceUpdateCanvases();
         var background = button == null ? null : typeof(RichTextElement).GetField("background", Fields)?.GetValue(button) as TreeNodeRender;
         Need(background != null, "Missing auto undo row " + name);
         Canvas canvas = ItemContextHandler.current.overlayCanvas;

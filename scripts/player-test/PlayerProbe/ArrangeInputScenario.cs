@@ -14,7 +14,7 @@ public sealed class ArrangeInputScenario
     private QaSyntheticInput input;
     private GameItemElement bag, first, second, container, nested;
     private GameGridInventory grid;
-    private GridShape firstBefore, secondBefore, containerBefore;
+    private GridShape firstBefore, secondBefore, containerBefore, selectedBefore, otherBefore, selectionContainerBefore;
     private int step, readyFrame;
     private float since = Time.realtimeSinceStartup;
     private PixelWindow menu;
@@ -31,7 +31,7 @@ public sealed class ArrangeInputScenario
                 Next(1); return false;
             case 1:
                 if (EmporiumEntry.Instance?.invElement == null || ItemContextHandler.current == null || ItemMouseDoubleClickHandler.current == null) return false;
-                TradeScenario.SetOptions(true, "f05.enabled", "f05.keep_menu");
+                TradeScenario.SetOptions(true, "f05.enabled", "f05.keep_menu", "f08.enabled", "f09.enabled");
                 TradeScenario.SetOptions(false, "f05.auto_insert", "f05.rotate");
                 bag = New("backpack_large"); Put(EmporiumEntry.Instance.invElement, bag);
                 grid = bag.contentWindow?.childElement as GameGridInventory;
@@ -51,11 +51,13 @@ public sealed class ArrangeInputScenario
                 Next(2, 5); return false;
             case 2:
                 Need(bag.contentWindow.IsVisible(), "Backpack did not open");
+                RoutingScenario.SetSelection(nested);
                 RightDown(EmptyCell()); Next(3); return false;
             case 3:
                 ClearDown(); menu = Window("sortWindow");
                 Need(menu?.IsVisible() == true, "Right-click did not open the native grid menu");
                 CheckChrome(menu, "ShopAssist_SortMenu");
+                CheckArrangeRows(menu, "ShopAssist_SortMenu", "f05.all");
                 capture.Start("qa-arrange-grid-menu.png"); Next(300, 4); return false;
             case 300:
                 if (!capture.Ready()) return false;
@@ -78,7 +80,7 @@ public sealed class ArrangeInputScenario
                 RightDown(EmptyCell()); Next(70); return false;
             case 70:
                 ClearDown(); menu = Window("sortWindow"); Need(menu?.IsVisible() == true, "Arrange undo menu did not open");
-                input.Mouse = ButtonPoint(menu, "ShopAssist_f05_undo_grid"); Next(71, 2); return false;
+                input.Mouse = NativeUndoPoint(); Next(71, 2); return false;
             case 71:
                 LeftDown(); Next(72); return false;
             case 72:
@@ -128,18 +130,18 @@ public sealed class ArrangeInputScenario
                 TradeScenario.SetOptions(true, "f05.keep_menu");
                 RightDown(EmptyCell()); Next(150); return false;
             case 150:
-                ClearDown(); menu = Window("sortWindow"); Need(menu?.IsVisible() == true, "Preserve-container menu did not open");
-                input.Mouse = ButtonPoint(menu, "ShopAssist_f05_preserve"); Next(151, 2); return false;
+                ClearDown(); menu = Window("sortWindow"); Need(menu?.IsVisible() == true, "Arrange menu did not open");
+                input.Mouse = ButtonPoint(menu, "ShopAssist_SortMenu"); Next(151, 2); return false;
             case 151:
                 LeftDown(); Next(152); return false;
             case 152:
                 LeftUp(); Next(153, 2); return false;
             case 153:
                 ClearUp();
-                Need(Same(containerBefore, container.modifiedShape) && nested.parentInventory == container.contentWindow.childElement &&
+                Need(!Same(containerBefore, container.modifiedShape) && nested.parentInventory == container.contentWindow.childElement &&
                     (!Same(firstBefore, first.modifiedShape) || !Same(secondBefore, second.modifiedShape)),
-                    "Preserve-container arrange did not keep the container while sorting other items");
-                Need(InventorySortHelper.MayUndo(grid), "Preserve-container sort did not create an undo before the stale check");
+                    "Arrange did not move the unpinned container and the other items");
+                Need(InventorySortHelper.MayUndo(grid), "Arrange did not create an undo before the stale check");
                 GridShape sorted = first.modifiedShape.Clone();
                 SlotMarker away = OtherSlot(grid, first);
                 Need(away != null && away.TryAcceptOnce(first.unitCount) == first.unitCount, "Native move away failed");
@@ -147,18 +149,83 @@ public sealed class ArrangeInputScenario
                 Need(back != null && back.numTransfer >= first.unitCount && back.TryAcceptOnce(first.unitCount) == first.unitCount && Same(sorted, first.modifiedShape),
                     "Native move back failed");
                 Need(!InventorySortHelper.MayUndo(grid), "A native move away and back incorrectly revived the old undo");
+                SlotMarker selectionSlot = OtherSlot(grid, first);
+                Need(selectionSlot != null && selectionSlot.TryAcceptOnce(first.unitCount) == first.unitCount, "Selection fixture move failed");
+                selectedBefore = first.modifiedShape.Clone(); otherBefore = second.modifiedShape.Clone();
+                selectionContainerBefore = container.modifiedShape.Clone();
+                RoutingScenario.SetSelection(first);
+                RightDown(EmptyCell()); Next(154); return false;
+            case 154:
+                ClearDown(); menu = Window("sortWindow");
+                Need(menu?.IsVisible() == true, "Selected grid menu did not open");
+                CheckArrangeRows(menu, "ShopAssist_SortMenu", "f05.selected");
+                input.Mouse = ButtonPoint(menu, "ShopAssist_SortMenu"); Next(155, 2); return false;
+            case 155:
+                LeftDown(); Next(156); return false;
+            case 156:
+                LeftUp(); Next(157, 2); return false;
+            case 157:
+                ClearUp();
+                Need(!Same(selectedBefore, first.modifiedShape) && Same(otherBefore, second.modifiedShape) &&
+                    Same(selectionContainerBefore, container.modifiedShape), "Selected arrange changed an unselected item or failed to move the selection");
+                RoutingScenario.SetSelection(first);
                 RightDown(ItemCell(first)); Next(16); return false;
             case 16:
                 ClearDown(); menu = Window("contextWindow");
                 Need(menu?.IsVisible() == true, "Right-click did not open the item menu");
                 CheckChrome(menu, "ShopAssist_f05_item");
+                CheckArrangeRows(menu, "ShopAssist_f05_item", "f05.selected");
+                Need(Button(menu, "ShopAssist_f05_undo_item") != null, "Available item undo row is missing");
                 capture.Start("qa-arrange-item-menu.png"); Next(160, 4); return false;
             case 160:
                 if (!capture.Ready()) return false;
                 Need(menu?.IsVisible() == true, "Arrange item menu closed during capture");
                 CheckChrome(menu, "ShopAssist_f05_item");
-                ItemContextHandler.current.Stop(); input.Dispose(); input = null;
-                result = "PASS virtual input, right-click, native menu chrome, return from outside, click, outside close, Escape, switch and item menu";
+                ItemContextHandler.current.Stop();
+                SlotMarker invalidate = OtherSlot(grid, first);
+                Need(invalidate != null && invalidate.TryAcceptOnce(first.unitCount) == first.unitCount, "Could not invalidate item undo");
+                RightDown(ItemCell(first)); Next(161); return false;
+            case 161:
+                ClearDown(); menu = Window("contextWindow");
+                Need(menu?.IsVisible() == true && Button(menu, "ShopAssist_f05_undo_item") == null,
+                    "Item undo row remained without a reversible operation");
+                ItemContextHandler.current.Stop();
+                RoutingScenario.SetSelection(second);
+                RightDown(EmptyCell()); Next(162); return false;
+            case 162:
+                ClearDown(); menu = Window("sortWindow");
+                Need(menu?.IsVisible() == true, "Stale-selection menu did not open");
+                CheckArrangeRows(menu, "ShopAssist_SortMenu", "f05.selected");
+                var destination = EmporiumEntry.Instance.invElement.TryFindOneValidInventorySlot(second);
+                Need(destination != null && destination.targetItem == null && destination.TryAcceptOnce(second.unitCount) == second.unitCount &&
+                    second.parentInventory == EmporiumEntry.Instance.invElement, "Could not move the selected item after opening the menu");
+                otherBefore = first.modifiedShape.Clone(); selectionContainerBefore = container.modifiedShape.Clone();
+                input.Mouse = ButtonPoint(menu, "ShopAssist_SortMenu"); Next(163, 2); return false;
+            case 163:
+                LeftDown(); Next(164); return false;
+            case 164:
+                LeftUp(); Next(165, 2); return false;
+            case 165:
+                ClearUp();
+                Need(second.parentInventory == EmporiumEntry.Instance.invElement && Same(otherBefore, first.modifiedShape) &&
+                    Same(selectionContainerBefore, container.modifiedShape), "A stale selection caused an unrelated full-grid sort");
+                RoutingScenario.SetSelection(first);
+                RightDown(ItemCell(first)); Next(166); return false;
+            case 166:
+                ClearDown(); menu = Window("contextWindow");
+                Need(menu?.IsVisible() == true && Button(menu, "ShopAssist_f08_context") != null,
+                    "The selected item's routing action is missing from its native menu");
+                input.Mouse = ButtonPoint(menu, "ShopAssist_f08_context"); Next(167, 2); return false;
+            case 167:
+                LeftDown(); Next(168); return false;
+            case 168:
+                LeftUp(); Next(169, 2); return false;
+            case 169:
+                ClearUp();
+                Need(CustomUIManager.Instance.GetWindow(Mod + ".route_preview")?.IsAlive == true,
+                    "Routing did not retain the selected item when the menu closed");
+                input.Dispose(); input = null;
+                result = "PASS grid/item arrange entries, selection and stale refusal, native and item undo, and selected-item routing from the native menu";
                 return true;
             default: throw new InvalidOperationException("Unknown arrange input step");
         }
@@ -247,11 +314,32 @@ public sealed class ArrangeInputScenario
     private static Vector2 ButtonPoint(PixelWindow window, string name)
     {
         RichTextElement button = Button(window, name);
+        return ButtonPoint(button, name);
+    }
+    private static Vector2 NativeUndoPoint()
+    {
+        var button = typeof(ItemContextHandler).GetField("buttonSortUndo", Fields)?.GetValue(ItemContextHandler.current) as RichTextElement;
+        Need(button?.handler != null && button.handler.gameObject.activeInHierarchy, "Native grid undo row is missing");
+        return ButtonPoint(button, "native grid undo");
+    }
+    private static Vector2 ButtonPoint(RichTextElement button, string name)
+    {
         TreeNodeRender background = button == null ? null : Background(button, typeof(RichTextElement));
         Need(background != null, "Missing arrange row " + name);
         Canvas canvas = ItemContextHandler.current.overlayCanvas;
         Camera camera = canvas.renderMode == RenderMode.ScreenSpaceOverlay ? null : canvas.worldCamera;
         return RectTransformUtility.WorldToScreenPoint(camera, background.rectTransform.TransformPoint(background.rectTransform.rect.center));
+    }
+    private static void CheckArrangeRows(PixelWindow window, string expectedNode, string expectedLabel)
+    {
+        var active = window.handler.GetComponentsInChildren<Transform>(true).Where(node => node.gameObject.activeInHierarchy).ToArray();
+        string actual = Button(window, expectedNode)?.GetText()?.text?.text;
+        string expected = ModHelper.GetLocalized(Mod, expectedLabel);
+        Need(active.Count(node => node.name == expectedNode) == 1 && actual == expected,
+            "Smart arrange row does not match this grid's selection: node=" + expectedNode + ", actual=" + actual + ", expected=" + expected);
+        foreach (string obsolete in new[] { "ShopAssist_f05_all_grid", "ShopAssist_f05_all_item", "ShopAssist_f05_preserve",
+            "ShopAssist_f05_preserve_item", "ShopAssist_f05_preserve_all_grid", "ShopAssist_f05_preserve_all_item", "ShopAssist_f05_undo_grid", "ShopAssist_HoldMenu" })
+            Need(!active.Any(node => node.name == obsolete), "Obsolete context row remains: " + obsolete);
     }
     private static void CheckChrome(PixelWindow window, string name)
     {

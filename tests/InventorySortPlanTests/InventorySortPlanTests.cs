@@ -53,7 +53,11 @@ internal static class InventorySortPlanTests
         Check(!plan.StillValid(), "a newly pinned or locked item invalidates the plan");
         moving.movable = true;
         Check(InventorySortPlan.Create(grid, selected, new HashSet<GameItem> { moving }, true, false) == null,
-            "temporary holds exclude the same instance without touching the native pin");
+            "reserved items are excluded without touching native pins");
+        var noSelection = InventorySortPlan.Create(grid, new HashSet<GameItem>(), new HashSet<GameItem> { unselected }, true, false);
+        Check(noSelection != null && noSelection.Placements.Count == 1 && ReferenceEquals(noSelection.Placements[0].Item, moving) &&
+            !noSelection.Placements[0].After.Intersects(anchored.modifiedShape) && !noSelection.Placements[0].After.Intersects(unselected.modifiedShape),
+            "an empty selection arranges all eligible items around pinned and reserved obstacles");
 
         var groups = Grid(5, 2);
         var a1 = Add(groups, "a", 4, 1);
@@ -102,6 +106,7 @@ internal static class InventorySortPlanTests
         var irregularGrid = Grid(4, 3);
         var container = Add(irregularGrid, "container", 0, 2);
         container.contentWindow = new object();
+        container.movable = false;
         var irregular = Add(irregularGrid, "a", 2, 1);
         irregular.modifiedShape = new GridShapeBuilder(2, 2, 1, 0, 1, 1).SetPosition(2, 1);
         irregular.shape = irregular.modifiedShape.Clone();
@@ -109,7 +114,7 @@ internal static class InventorySortPlanTests
         var irregularPlan = InventorySortPlan.Create(irregularGrid, null, null, true, false);
         Check(irregularPlan != null && irregularPlan.Placements.Count == 2 &&
             !irregularPlan.Placements.Any(p => ReferenceEquals(p.Item, container)),
-            "containers remain fixed obstacles even when their item is otherwise movable");
+            "a pinned container remains a fixed obstacle");
         Check(Apply(irregularPlan, irregularGrid, out _) == InventorySortPlan.ApplyResult.Applied && container.modifiedShape.minX == 0 &&
             container.modifiedShape.minY == 2 && container.validations == 0 && irregular.modifiedShape.GetLocal(1, 0) == 0 &&
             irregular.modifiedShape.GetLocal(0, 1) == 1 && !irregular.modifiedShape.Intersects(plain.modifiedShape) &&
@@ -159,7 +164,7 @@ internal static class InventorySortPlanTests
         var containerGrid = Grid(4, 2);
         var movableContainer = Add(containerGrid, "bag", 3, 1);
         movableContainer.contentWindow = new object();
-        var includeContainers = InventorySortPlan.Create(containerGrid, null, null, true, false, preserveContainers: false);
+        var includeContainers = InventorySortPlan.Create(containerGrid, null, null, true, false);
         InventoryArrangeTransaction containerTransaction = null;
         Check(includeContainers != null && Apply(includeContainers, containerGrid, out containerTransaction) == InventorySortPlan.ApplyResult.Applied && movableContainer.modifiedShape.minX == 0,
             "ordinary arrange can include a safe container");
