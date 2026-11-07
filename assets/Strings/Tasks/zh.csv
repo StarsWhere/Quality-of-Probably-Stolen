@@ -20,7 +20,15 @@ f17.empty,本时段还没有待办。
 f17.enter,请输入 1–96 个字符。
 f17.limit,本档已保存 64 项，请先删除已结束的事项。
 f17.invalid,本档的待办数据无法读取，原数据已保留。
+f17.retry,重新读取
+f17.reset,重新开始待办
+f17.reset_warning,重新开始会清除无法读取的待办列表。确认前请核对仍需完成的事项。
+f17.reset_confirm,确认重新开始
+f17.reset_done,已重新开始待办。
+f17.reset_failed,无法确认重建待办，请重试。
 f17.save_failed,待办未能保存，输入已保留，请重试。
 f17.reminders,昼夜切换时提示未完成待办
 f17.reminders.tip,切换到新的白天或夜间时，提示该时段尚未勾选的待办。
 f17.reminder,待办 {0} 项 · {1}
+f17.clear_completed,清理已完成的一次性事项（{0}）
+f17.confirm_clear,确认清理 {0} 项

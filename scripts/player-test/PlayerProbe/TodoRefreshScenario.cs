@@ -87,7 +87,7 @@ public sealed class TodoRefreshScenario
     private void ExerciseSaveFailures()
     {
         onceName = "QA retry once " + token; dailyName = "QA retry daily " + token;
-        RoutingScenario.OpenOptionAction("f17.open");
+        RoutingScenario.RunFeatureAction("f17.open");
         SetDraft(onceName, 0);
         string before = Raw();
         SaveWithFault(1);

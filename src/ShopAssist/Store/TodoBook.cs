@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Newtonsoft.Json;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -25,6 +26,7 @@ namespace ShopAssist
         internal static event Action DoorChanged;
         private const string WindowId = ModEntry.Id + ".todo";
         private const string DataKey = "todo";
+        private const string RecoveryKey = "todoUnreadableBackup";
         private const int MaxRows = 64, MaxText = 96;
 
         // Numeric values are part of the stored schema.
@@ -54,6 +56,10 @@ namespace ShopAssist
         private string run;
         private int slot, day;
         private bool night, allPhases, confirmingDelete;
+        private bool reorderPending;
+        private bool confirmingReset;
+        private string unreadableRaw;
+        private HashSet<string> clearIds;
         private string reminderRun;
         private int reminderSlot, reminderDay;
         private bool reminderNight;
@@ -99,6 +105,10 @@ namespace ShopAssist
             {
                 if (!window.IsAlive || !SameRun()) { Close(); return; }
                 if (day != StoreStation.GetDayCounter() || night != IsNight()) Render();
+                else if (reorderPending && !StoreUIManager.IsAnyTyping() && !UIDragHandler.isDraggingAnyUI &&
+                    !Input.GetMouseButton(0) && !Input.GetMouseButton(1) && !Input.GetMouseButton(2) &&
+                    !Input.GetMouseButtonUp(0) && !Input.GetMouseButtonUp(1) && !Input.GetMouseButtonUp(2))
+                { reorderPending = false; Render(); }
             }
             if (!enabled.Value || key() == KeyCode.None || !Input.GetKeyDown(key()) || !ShopInput.Ready()) return;
             if (window != null) Close();
@@ -149,6 +159,7 @@ namespace ShopAssist
                         row.checkedDay > 0 && (row.repeat == Repeat.Once || row.checkedDay == today),
                         PlayerStore.Instance.runID, PlayerStore.Instance.saveSlotId, today, isNight));
                 }
+                rows = rows.OrderBy(row => row.Done).ToList();
                 owner.doorReadError = null;
                 return true;
             }
@@ -213,6 +224,7 @@ namespace ShopAssist
             catch (Exception error)
             {
                 book = null;
+                unreadableRaw = cachedRun == run && cachedSlot == slot && cachedReadError != null ? cachedRaw : null;
                 log("F17 kept unreadable task data in slot " + slot + ": " + error.Message);
             }
             Render();
@@ -275,6 +287,61 @@ namespace ShopAssist
         }
 
         private bool IsDone(TaskRow row) => row.checkedDay > 0 && (row.repeat == Repeat.Once || row.checkedDay == day);
+
+        private void RetryUnreadable()
+        {
+            if (!SameRun()) return;
+            confirmingReset = false;
+            try { book = ReadBook(); unreadableRaw = null; }
+            catch (Exception error)
+            {
+                book = null;
+                unreadableRaw = cachedRun == run && cachedSlot == slot && cachedReadError != null ? cachedRaw : null;
+                log("F17 retry could not read the task book: " + error.Message);
+            }
+            Render();
+        }
+
+        private void ResetUnreadable()
+        {
+            if (!SameRun() || !confirmingReset || book != null || unreadableRaw == null) return;
+            string original = unreadableRaw;
+            bool attemptedWrite = false;
+            try
+            {
+                if (ModHelper.GetModData(ModEntry.Id, DataKey, null) != original)
+                { ShopNotice.Show(ShopSettings.Text("inv.changed")); RetryUnreadable(); return; }
+                ModHelper.SetModData(ModEntry.Id, RecoveryKey, original);
+                if (ModHelper.GetModData(ModEntry.Id, RecoveryKey, null) != original)
+                    throw new InvalidOperationException("Task backup was not retained.");
+                if (ModHelper.GetModData(ModEntry.Id, DataKey, null) != original)
+                { ShopNotice.Show(ShopSettings.Text("inv.changed")); RetryUnreadable(); return; }
+                var replacement = new Book();
+                attemptedWrite = true;
+                WriteBook(replacement);
+                book = replacement; unreadableRaw = null; confirmingReset = false;
+                DoorChanged?.Invoke();
+                ShopNotice.Show(ShopSettings.Text("f17.reset_done"));
+            }
+            catch (Exception error)
+            {
+                log("F17 could not confirm the task reset: " + error);
+                if (attemptedWrite)
+                {
+                    try
+                    {
+                        ModHelper.SetModData(ModEntry.Id, DataKey, original);
+                        if (ModHelper.GetModData(ModEntry.Id, DataKey, null) != original) throw new InvalidOperationException("Original task data was not retained.");
+                    }
+                    catch (Exception restoreError) { unreadableRaw = null; log("F17 could not confirm restoring task data: " + restoreError); }
+                }
+                cachedBook = null; cachedRaw = cachedRun = null; cachedReadError = null;
+                book = null;
+                if (unreadableRaw == null) confirmingReset = false;
+                ShopNotice.Show(ShopSettings.Text("f17.reset_failed"));
+            }
+            Render();
+        }
         private bool Visible(TaskRow row) => allPhases || row.repeat == Repeat.Once || row.repeat == Repeat.Daily ||
             row.repeat == (night ? Repeat.Night : Repeat.Day);
 
@@ -287,11 +354,26 @@ namespace ShopAssist
             var builder = CustomUIManager.Window(WindowId, ShopSettings.Text("f17.enabled"), CustomUIManager.LAYER_META)
                 .SetSize(540, 410).SetDraggable(true).SetCloseOnEscape(true);
             window = builder.GetWindow();
+            reorderPending = false;
             var thisView = window;
             builder.OnClose(() => { if (ReferenceEquals(window, thisView)) window = null; });
             if (book == null)
             {
-                builder.AddLabel(ShopSettings.Text("f17.invalid")).Show();
+                builder.AddLabel(ShopSettings.Text("f17.invalid"));
+                if (confirmingReset)
+                {
+                    builder.AddLabel(ShopSettings.Text("f17.reset_warning"));
+                    builder.BeginRow().AddButton(ShopSettings.Text("f17.reset_confirm"), ResetUnreadable, "task_reset_confirm")
+                        .AddButton(ShopSettings.Text("f17.cancel"), () => { confirmingReset = false; Render(); }, "task_reset_cancel").End();
+                }
+                else
+                {
+                    builder.BeginRow().AddButton(ShopSettings.Text("f17.retry"), RetryUnreadable, "task_retry");
+                    if (unreadableRaw != null)
+                        builder.AddButton(ShopSettings.Text("f17.reset"), () => { confirmingReset = true; Render(); }, "task_reset");
+                    builder.End();
+                }
+                builder.Show();
                 return;
             }
             string[] kinds = { ShopSettings.Text("f17.once"), ShopSettings.Text("f17.daily"),
@@ -311,9 +393,18 @@ namespace ShopAssist
             {
                 allPhases = value;
                 Render();
-            }).End().AddLabel("", "feedback").BeginScrollFlexible(110);
+            }).End();
+            int completedOnce = book.rows.Count(row => row.repeat == Repeat.Once && row.checkedDay > 0);
+            if (completedOnce > 0 || clearIds != null)
+            {
+                builder.BeginRow().AddButton(clearIds == null ? ShopSettings.Format("f17.clear_completed", completedOnce) :
+                    ShopSettings.Format("f17.confirm_clear", clearIds.Count), ClearCompleted, "task_clear_completed");
+                if (clearIds != null) builder.AddButton(ShopSettings.Text("f17.cancel"), () => { clearIds = null; Render(); }, "task_cancel_clear");
+                builder.End();
+            }
+            builder.AddLabel("", "feedback").BeginScrollFlexible(110);
             bool any = false;
-            foreach (var row in book.rows)
+            foreach (var row in book.rows.OrderBy(IsDone))
             {
                 if (!Visible(row)) continue;
                 any = true;
@@ -326,7 +417,7 @@ namespace ShopAssist
                         if (changed != null)
                         {
                             changed.checkedDay = value ? day : 0;
-                            if (Persist(next)) { row.checkedDay = changed.checkedDay; return; }
+                            if (Persist(next)) { row.checkedDay = changed.checkedDay; reorderPending = true; return; }
                         }
                     }
                     window.Get("done_" + row.id).SetBool(IsDone(row), false);
@@ -390,6 +481,34 @@ namespace ShopAssist
             Render();
         }
 
+        private void ClearCompleted()
+        {
+            if (!SameRun()) { Close(); return; }
+            if (!TryEdit(out Book next)) return;
+            if (clearIds == null)
+            {
+                clearIds = new HashSet<string>(next.rows.Where(row => row.repeat == Repeat.Once && row.checkedDay > 0).Select(row => row.id));
+                if (clearIds.Count == 0) { clearIds = null; book = next; Render(); return; }
+                book = next;
+                Render();
+                return;
+            }
+            next.rows.RemoveAll(row => clearIds.Contains(row.id) && row.repeat == Repeat.Once && row.checkedDay > 0);
+            if (!Persist(next))
+            {
+                // Verification can fail after the write. Read the authoritative copy
+                // before showing the list again and retain the same confirmation IDs.
+                try { book = ReadBook(); DoorChanged?.Invoke(); }
+                catch (Exception error) { log("F17 could not reload tasks after clearing: " + error); return; }
+                Render();
+                Feedback("f17.save_failed");
+                return;
+            }
+            if (editId != null && clearIds.Contains(editId) && !next.rows.Any(row => row.id == editId)) ClearDraft();
+            clearIds = null;
+            Render();
+        }
+
         private void Feedback(string key) => window.Get("feedback").SetText(ShopSettings.Text(key));
         private bool Persist(Book next)
         {
@@ -407,7 +526,8 @@ namespace ShopAssist
             book = null;
             run = null;
             allPhases = false;
-            ClearDraft();
+            clearIds = null; reorderPending = false;
+            ClearDraft(); confirmingReset = false; unreadableRaw = null;
         }
 
         private void Reset() { Close(); cachedBook = null; cachedRaw = cachedRun = null; cachedReadError = null; }

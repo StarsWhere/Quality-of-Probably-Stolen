@@ -20,7 +20,15 @@ f17.empty,No tasks for this shift yet.
 f17.enter,Enter a name of 1–96 characters.
 f17.limit,This run has 64 tasks. Remove an old task first.
 f17.invalid,The saved checklist could not be read. Its data has been kept.
+f17.retry,Retry reading
+f17.reset,Restart checklist
+f17.reset_warning,Restarting clears the unreadable checklist. Check your outstanding tasks before confirming.
+f17.reset_confirm,Confirm restart
+f17.reset_done,Checklist restarted.
+f17.reset_failed,Could not confirm restarting the checklist. Please retry.
 f17.save_failed,Could not save the checklist. Your input has been kept. Please retry.
 f17.reminders,Remind about tasks at day and night changes
 f17.reminders.tip,When the day or night phase changes, show tasks for the new phase that are still unchecked.
 f17.reminder,{0} unfinished · {1}
+f17.clear_completed,Clear completed one-off tasks ({0})
+f17.confirm_clear,Confirm clearing {0} tasks
