@@ -32,7 +32,6 @@ namespace ShopAssist
         private readonly HashSet<GameItemElement> seenItems = new HashSet<GameItemElement>();
         private readonly HashSet<PixelWindow> seenWindows = new HashSet<PixelWindow>();
         private readonly List<TreeNodeRender> nodes = new List<TreeNodeRender>();
-        private readonly List<TMP_Text> textNodes = new List<TMP_Text>();
         private readonly List<GameItemElement> itemCleanup = new List<GameItemElement>();
         private readonly List<PixelWindow> windowCleanup = new List<PixelWindow>();
         private bool started;
@@ -48,13 +47,6 @@ namespace ShopAssist
             background = settings.Toggle("f02.background", "f02.background.tip", false);
             upper = settings.Toggle("f02.upper", "f02.upper.tip", false);
             fontSize = settings.Integer("f02.font_size", "f02.font_size.tip", 14, 6, 24);
-            if (PlayerPrefs.GetInt(ModEntry.Id + ".f02.visualStyle", 0) < 1)
-            {
-                background.Set(false); upper.Set(false);
-                if (fontSize.Value == 10) fontSize.Set(14);
-                PlayerPrefs.SetInt(ModEntry.Id + ".f02.visualStyle", 1);
-                PlayerPrefs.Save();
-            }
         }
 
         public void Start()
@@ -327,37 +319,11 @@ namespace ShopAssist
             label.Root.rectTransform.SetAsLastSibling();
         }
 
-        private bool OtherModShowsName(GameItemElement item, string name, TMP_Text own)
-        {
-            if (item?.handler == null) return false;
-            bool Shows(Transform node)
-            {
-                if (!node.gameObject.activeInHierarchy) return false;
-                textNodes.Clear();
-                node.gameObject.GetComponents(textNodes);
-                foreach (TMP_Text text in textNodes)
-                    if (text != null && !ReferenceEquals(text, own) && text.isActiveAndEnabled &&
-                        AreaLabelPolicy.SameRenderedName(text.text, name)) return true;
-                return false;
-            }
-            // Item Details draws direct children; Show Item Names draws a
-            // text child of SND_Label. Native stack counts live under middle.
-            Transform root = item.handler.transform;
-            for (int i = 0; i < root.childCount; i++)
-            {
-                Transform child = root.GetChild(i);
-                if (Shows(child)) return true;
-                if (child.gameObject.name != "SND_Label") continue;
-                for (int j = 0; j < child.childCount; j++) if (Shows(child.GetChild(j))) return true;
-            }
-            return false;
-        }
-
         private void SyncItem(GameItemElement item, Label label, bool itemVisible)
         {
             if (label.Root == null || label.Text == null) return;
             bool visible = itemVisible && item.background != null && item.background.image != null &&
-                item.background.image.enabled && !OtherModShowsName(item, label.Text.text.text, label.Text.text);
+                item.background.image.enabled;
             if (label.Root.gameObject.activeSelf != visible) label.Root.gameObject.SetActive(visible);
             if (visible) label.Text.text.enabled = true;
         }

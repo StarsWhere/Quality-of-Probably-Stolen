@@ -6,10 +6,6 @@ namespace ShopAssist
     // the same rules for custom names and the optional vanilla fallback.
     internal static class AreaLabelPolicy
     {
-        internal static bool SameRenderedName(string left, string right) =>
-            left != null && right != null && (string.Equals(left, right, StringComparison.Ordinal) ||
-                string.Equals(left.Replace("\r", "").Replace("\n", ""), right.Replace("\r", "").Replace("\n", ""), StringComparison.Ordinal));
-
         internal static string Name(string customName, string defaultName, bool showDefault)
         {
             if (!string.IsNullOrWhiteSpace(customName)) return customName;

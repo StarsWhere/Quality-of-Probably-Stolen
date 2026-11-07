@@ -38,11 +38,6 @@ internal static class AreaLabelTests
         Check(AreaLabelPolicy.Name(null, "Storage", true) == "Storage", "vanilla fallback must be opt-in");
         Check(AreaLabelPolicy.Heading("工具", "工具") == "工具", "identical context must not repeat");
         Check(AreaLabelPolicy.Heading("工具", "备件") == "工具 · 备件", "distinct page must be shown");
-        Check(AreaLabelPolicy.SameRenderedName("AA Ba\ng 803\r\n75b", "AA Bag 80375b"),
-            "peer-inserted hard wraps must not cause duplicate area names");
-        Check(!AreaLabelPolicy.SameRenderedName("AB", "A B") && !AreaLabelPolicy.SameRenderedName("Parts", "Spare parts"),
-            "meaningful spaces and distinct names must not be suppressed");
-        Check(!AreaLabelPolicy.SameRenderedName(null, "Parts"), "missing peer text must not hide an area name");
         Check(!AreaLabelPolicy.ItemLayout(16, 16, true, true, 10, out _, out _, out _), "tiny counter needs unobstructed space");
         Check(AreaLabelPolicy.ItemLayout(64, 48, true, true, 10, out float width, out float height, out float y), "normal area should fit");
         Check(width <= 48 && y + height / 2 < -2 && y - height / 2 > -46, "label must stay inside the middle band");
@@ -161,7 +156,7 @@ internal static class AreaLabelTests
         Check(Heading(content) == null, "the original title is not covered or duplicated");
     }
 
-    private static void OtherModAndLifecycle()
+    private static void Lifecycle()
     {
         ResetGame();
         var settings = new ShopSettings();
@@ -170,30 +165,8 @@ internal static class AreaLabelTests
         labels.Start();
         PixelWindow window = VisibleWindow();
         var item = new GameItemElement(window, "Labeled");
-        var other = TreeNodeRender.Instantiate().SetParent(item.handler);
-        other.gameObject.name = "SND_Label";
-        var otherText = TreeNodeRender.InstantiateText().SetParent(other);
-        otherText.text.text = "Labeled";
         labels.Tick();
-        Check(!ItemLabel(item).gameObject.activeSelf, "visible label from the other mod suppresses the duplicate");
-        UnityEngine.Object.Destroy(other.gameObject);
-        labels.Tick();
-        Check(ItemLabel(item).gameObject.activeSelf, "the name returns when the other mod stops showing it");
-        var detailText = TreeNodeRender.InstantiateText().SetParent(item.handler);
-        detailText.text.text = "Labeled";
-        labels.Tick();
-        Check(!ItemLabel(item).gameObject.activeSelf, "an unnamed visible Item Details label also suppresses duplication");
-        detailText.text.enabled = false;
-        labels.Tick();
-        Check(ItemLabel(item).gameObject.activeSelf, "disabling a peer's label restores the helper label");
-        var secondText = detailText.gameObject.Add(new TMPro.TMP_Text { text = "Labeled" });
-        labels.Tick();
-        Check(!ItemLabel(item).gameObject.activeSelf, "all text components on a direct peer child are checked");
-        secondText.enabled = false;
-        var nativeCounter = TreeNodeRender.InstantiateText().SetParent(item.middle);
-        nativeCounter.text.text = "Labeled";
-        labels.Tick();
-        Check(ItemLabel(item).gameObject.activeSelf, "a native counter is not mistaken for a peer name label");
+        Check(ItemLabel(item).gameObject.activeSelf, "the area name is visible");
         SceneManager.Change();
         Check(ItemLabel(item) == null, "changing scene clears owned objects");
         labels.Tick();
@@ -250,7 +223,7 @@ internal static class AreaLabelTests
         VisibilityAndSettings();
         RenameDragAndViews();
         NativePageAndHeader();
-        OtherModAndLifecycle();
+        Lifecycle();
         PublicLabelChanges();
         Console.WriteLine($"Area labels: {assertions} assertions passed.");
     }

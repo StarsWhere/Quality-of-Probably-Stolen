@@ -311,6 +311,12 @@ public sealed class GameSlotInventory : GameInventory
     public bool UncheckedAccept(GameItem item) => true;
     public bool Expel(GameItem item) => true;
 }
+public sealed class SlotMarker
+{
+    public GameInventory inventory;
+    public GameItem targetItem;
+    public int numTransfer;
+}
 public static class MachineHelper { public const string STANDARD_MACHINE_TAG = "STANDARD_MACHINE_TAG"; }
 
 public class GameItem
@@ -320,6 +326,9 @@ public class GameItem
     public bool isDebugMenu;
     public string customText, customName, name = "Storage", identifier = "item";
     public int unitCount = 1;
+    public int removeLimit = int.MaxValue;
+    public int stackRoom = int.MaxValue;
+    public bool stackAllowed = true;
     public bool machineTag;
     public bool safeToOpen = true;
     public bool hiddenAcceptance;
@@ -333,7 +342,9 @@ public class GameItem
     public bool IsTag(string tag) => tag == MachineHelper.STANDARD_MACHINE_TAG ? machineTag : tags.Contains(tag);
     public string GetDisplayName() => name;
     public string GetDisplayName(bool includeCustom) => name;
-    public int MaxNumRemove() => unitCount;
+    public int MaxNumRemove() => Math.Min(unitCount, removeLimit);
+    public SlotMarker GetStackSlot(GameItem item) => !stackAllowed || item == null ? null :
+        new SlotMarker { inventory = parentInventory, targetItem = this, numTransfer = stackRoom };
     public List<string> GetGameItemType() => types;
     public TagState GetTagReadonly(string tag) => new TagState(tagValues.TryGetValue(tag, out string v) ? v : "");
     public void ValidateShapeState() { }
@@ -517,6 +528,10 @@ namespace ShopAssist
         internal static readonly List<Location> Locations = new List<Location>();
         internal static List<Location> OwnedLocations(bool onlyOpen) => Locations;
         internal static List<Location> CustomerLocations() => Locations;
+        internal static Func<GameInventory, bool> SearchableLock = null;
+        internal static bool SearchableGoods(Location location) => location?.Inventory != null && !location.IsMachine &&
+            SearchableLock?.Invoke(location.Inventory) != true && (location.Ordinary || location.Owner == null &&
+                (location.Role == "counter" || location.Role == "showcase" || location.Role == "front"));
         internal static bool Owned(GameItem item) => item != null && item.isOwned &&
             !item.IsTag("ITEM_HIDDEN_TAG") && !item.IsTag("ITEM_BEHIND_LOCK_TAG");
         internal static bool Movable(GameItem item) => Owned(item);

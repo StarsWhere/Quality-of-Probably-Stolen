@@ -2,6 +2,8 @@ inv.stock,主仓
 inv.counter,后柜台
 inv.showcase,展示柜
 inv.front,前柜台
+inv.search,搜索名称
 inv.changed,物品位置或操作权限已变，请重新选择。
+inv.cannot_place,此位置无法放入该物品。
 inv.noSpace,目标没有能完整放下该件货物的空位。
 inv.inspect,转移结果异常，已停止。请检查来源和目标位置。

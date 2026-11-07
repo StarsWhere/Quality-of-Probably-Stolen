@@ -2,6 +2,8 @@ inv.stock,Main stock
 inv.counter,Back counter
 inv.showcase,Display case
 inv.front,Front counter
+inv.search,Search names
 inv.changed,The item or its permissions changed. Select it again.
+inv.cannot_place,This item cannot be placed here.
 inv.noSpace,No empty placement fits the entire item.
 inv.inspect,Transfer stopped. Check both inventory locations.

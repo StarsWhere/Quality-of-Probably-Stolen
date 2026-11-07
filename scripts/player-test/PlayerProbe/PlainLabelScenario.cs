@@ -55,7 +55,7 @@ public sealed class PlainLabelScenario
         {
             var options = StoreUIManager.Instance.gameOptionUIManager; options.OpenUI();
             var native = CustomUIManager.Instance.GetWindow("game_options");
-            options.CloseUI(); RoutingScenario.OpenOptionAction("f22.open");
+            options.CloseUI(); RoutingScenario.RunFeatureAction("f22.open");
             var preview = CustomUIManager.Instance.GetWindow(Mod + ".label");
             Need(preview?.Get("apply")?.button != null, "Ordinary batch control not available");
             QaItemUi.Click(preview, first); QaItemUi.Click(preview, second);
