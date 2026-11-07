@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Linq;
 using HarmonyLib;
 using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
 using UnityEngine;
 using UnityEngine.UI;
 using Object = UnityEngine.Object;
@@ -20,6 +19,7 @@ namespace ShopAssist
         }
 
         private const string DataKey = "requests";
+        private const string RecoveryKey = "requestsUnreadableBackup";
         private const string WindowId = ModEntry.Id + ".requests";
         private static RequestBook active;
         private readonly ConfigEntry<bool> tracking, reminders;
@@ -30,9 +30,14 @@ namespace ShopAssist
         private readonly List<GameObject> buttons = new List<GameObject>();
         private Save data;
         private string run;
+        private string unreadableRaw;
         private int slot, page;
         private StoreRequest showing;
         private CustomUIWindow window;
+        private CustomUIWindow recoveryWindow;
+        private int selectedReservationId;
+        private bool viewDirty, migrationPreview;
+        private float refreshAt;
 
         [Serializable]
         private sealed class Save
@@ -45,7 +50,6 @@ namespace ShopAssist
         private sealed class Reservation
         {
             [JsonRequired] public int id;
-            [JsonProperty(Required = Required.AllowNull)] public string legacyDestination = null;
         }
 
         [Serializable]
@@ -61,25 +65,6 @@ namespace ShopAssist
             public bool Matches(StoreRequest r, int today) =>
                 r != null && r.id == id && r.sourceEventId == source && r.requiredItem == item &&
                 r.requesterName == requester && r.requiredItemCount == quantity && today + r.duration == expires;
-        }
-
-        [Serializable]
-        private sealed class LegacySave
-        {
-            [JsonRequired] public int version = 1;
-            [JsonRequired] public List<LegacyOrder> orders = new List<LegacyOrder>();
-        }
-
-        [Serializable]
-        private sealed class LegacyOrder
-        {
-            [JsonProperty(Required = Required.AllowNull)] public string id = null;
-            [JsonProperty(Required = Required.AllowNull)] public string source = null;
-            [JsonRequired] public string item = null;
-            [JsonProperty(Required = Required.AllowNull)] public string requester = null;
-            [JsonProperty(Required = Required.AllowNull)] public string destination = null;
-            [JsonRequired] public int quantity = 0, expires = 0;
-            [JsonRequired] public List<int> reserved = new List<int>();
         }
 
         private sealed class ReservedMove
@@ -105,8 +90,32 @@ namespace ShopAssist
             active = this;
             AttentionBook.Register("f27", PendingReservations);
             settings.Changed += SettingsChanged;
+            VisibleInventoryViews.Changed += InvalidateView;
+            VisibleInventoryViews.ItemChanged += ItemChanged;
             ModHook.OnGameLoadedInit += Reset;
             ModHook.OnLeavingStoreEarly += Close;
+        }
+
+        private void InvalidateView()
+        {
+            if (viewDirty) return;
+            viewDirty = true;
+            refreshAt = Time.unscaledTime + .2f;
+        }
+
+        private void ItemChanged(GameItemElement _) => InvalidateView();
+
+        internal void Tick()
+        {
+            if (window?.IsAlive != true) { window = null; viewDirty = false; return; }
+            if (!tracking.Value || !ShopInventory.InStore || run != PlayerStore.Instance.runID || slot != PlayerStore.Instance.saveSlotId)
+            { Close(); return; }
+            if (!viewDirty || migrationPreview || Time.unscaledTime < refreshAt || StoreUIManager.IsAnyTyping() ||
+                KeyBindHelper.IsCapturing || UIDragHandler.isDraggingAnyUI || ItemGrid.DragActive ||
+                Input.GetMouseButton(0) || Input.GetMouseButton(1) || Input.GetMouseButton(2) ||
+                Input.GetMouseButtonUp(0) || Input.GetMouseButtonUp(1) || Input.GetMouseButtonUp(2)) return;
+            viewDirty = false;
+            Draw(showing);
         }
 
         private bool Load()
@@ -118,54 +127,29 @@ namespace ShopAssist
             Reset();
             slot = store.saveSlotId;
             run = store.runID;
+            string raw = null;
+            bool read = false;
             try
             {
-                var raw = ModHelper.GetModData(ModEntry.Id, DataKey, null);
+                raw = ModHelper.GetModData(ModEntry.Id, DataKey, null);
+                read = true;
                 if (raw != null && raw.Length > 65536) throw new FormatException("Tracked orders exceed the save limit.");
-                bool migrate = raw != null && (int?)JObject.Parse(raw)["version"] == 1;
-                data = raw == null ? new Save() : migrate ? Migrate(ShopData.Decode<LegacySave>(raw, 65536)) : ShopData.Decode<Save>(raw, 65536);
+                data = raw == null ? new Save() : ShopData.Decode<Save>(raw, 65536);
                 if (data == null || data.version != 2 || data.orders == null || data.orders.Count > 128 ||
                     data.orders.Any(o => o == null || string.IsNullOrEmpty(o.item) || o.quantity < 1 ||
                     o.expires < 1 || o.reserved == null || o.reserved.Count > 256 ||
                     o.reserved.Any(r => r == null || r.id <= 0) || o.reserved.Select(r => r.id).Distinct().Count() != o.reserved.Count))
                     throw new FormatException("Invalid tracked orders");
-                if (migrate) SaveData();
+                unreadableRaw = null;
                 return true;
             }
             catch (Exception ex)
             {
                 data = null;
+                unreadableRaw = read ? raw : null;
                 log("F27 kept unreadable orders: " + ex.Message);
                 return false;
             }
-        }
-
-        private static Save Migrate(LegacySave old)
-        {
-            if (old == null || old.version != 1 || old.orders == null || old.orders.Count > 128 ||
-                old.orders.Any(o => o == null || string.IsNullOrEmpty(o.item) || o.quantity < 1 || o.expires < 1 ||
-                    o.reserved == null || o.reserved.Count > 256 || o.reserved.Any(id => id <= 0)))
-                throw new FormatException("Invalid legacy orders");
-            var locations = ShopInventory.OwnedLocations(false);
-            var next = new Save();
-            foreach (LegacyOrder previous in old.orders)
-            {
-                var order = new Order { id = previous.id, source = previous.source, item = previous.item,
-                    requester = previous.requester, destination = previous.destination, quantity = previous.quantity, expires = previous.expires };
-                if (!string.IsNullOrEmpty(previous.destination))
-                {
-                    var matches = locations.Where(l => l.Ordinary && l.Key() == previous.destination).ToList();
-                    foreach (int id in previous.reserved.Distinct())
-                    {
-                        if (matches.Count != 1)
-                            order.reserved.Add(new Reservation { id = id, legacyDestination = previous.destination });
-                        else if (matches[0].Inventory.childItems.Any(item => item.uniqueId == id))
-                            order.reserved.Add(new Reservation { id = id });
-                    }
-                }
-                next.orders.Add(order);
-            }
-            return next;
         }
 
         private List<StoreRequest> Current => PlayerStore.Instance.storeRequests;
@@ -183,6 +167,27 @@ namespace ShopAssist
             VisibleInventoryViews.NotifyChanged();
             AttentionBook.Changed();
         }
+
+        private void SaveFailed(string operation, Exception error)
+        {
+            string expectedRun = run;
+            int expectedSlot = slot;
+            StoreRequest request = showing;
+            bool reopen = window?.IsAlive == true;
+            log("F27 could not confirm " + operation + ": " + error);
+            // A write may have succeeded even if its verification read failed.
+            data = null; run = null;
+            VisibleInventoryViews.NotifyChanged();
+            AttentionBook.Changed();
+            ShopNotice.Show(ShopSettings.Text("f27.save_failed"));
+            if (!ShopInventory.InStore || PlayerStore.Instance.runID != expectedRun || PlayerStore.Instance.saveSlotId != expectedSlot)
+            { Close(); return; }
+            if (!Load()) { ShopNotice.Show(ShopSettings.Text("f27.unreadable")); return; }
+            if (reopen && tracking.Value) Draw(request != null && Unique(request) ? request : null);
+        }
+
+        private static bool NeedsInspection(int itemId) =>
+            AttentionBook.HasInspection("f27.prepare", itemId) || AttentionBook.HasInspection("f27.migrate", itemId);
 
         internal static bool TryDoorDeadlines(out List<DoorDeadline> result)
         {
@@ -252,27 +257,68 @@ namespace ShopAssist
             if (!tracking.Value || !ShopInventory.InStore) yield break;
             if (!Load())
             {
+                string invalid = unreadableRaw, expectedRun = run;
+                int expectedSlot = slot;
                 yield return new AttentionItem { Key = "f27:unreadable", Feature = "f27.open", Title = ShopSettings.Text("f27.open"),
-                    ReasonKey = "f27.unreadable", NeedsInspection = true, Retry = RetryLoad };
+                    ReasonKey = "f27.unreadable", NeedsInspection = true, Retry = RetryLoad,
+                    ResolveLabelKey = "f27.reset", Resolve = invalid == null ? null : () => ConfirmReset(invalid, expectedRun, expectedSlot) };
                 yield break;
             }
-            if (!data.orders.Any(order => order.reserved.Any(reservation => !string.IsNullOrEmpty(reservation.legacyDestination)))) yield break;
-            var visibleItems = ShopInventory.OwnedLocations(false).Where(location => location.Inventory != null)
-                .SelectMany(location => location.Inventory.childItems).Where(item => item != null && item.uniqueId > 0 && ShopInventory.Owned(item))
-                .GroupBy(item => item.uniqueId).ToDictionary(group => group.Key, group => group.First());
-            foreach (Order order in data.orders)
+        }
+
+        private void ConfirmReset(string invalid, string expectedRun, int expectedSlot)
+        {
+            if (!ShopInventory.InStore || CustomUIManager.Instance == null || run != expectedRun || slot != expectedSlot ||
+                PlayerStore.Instance.runID != expectedRun || PlayerStore.Instance.saveSlotId != expectedSlot ||
+                data != null || unreadableRaw != invalid) return;
+            var builder = UiLayout.Rebuild(ref recoveryWindow, ModEntry.Id + ".requests_reset",
+                ShopSettings.Text("f27.reset"), 480, 220);
+            var own = recoveryWindow;
+            builder.OnClose(() => { if (ReferenceEquals(recoveryWindow, own)) recoveryWindow = null; });
+            builder.AddLabel(ShopSettings.Text("f27.reset_warning"))
+                .BeginRow().AddButton(ShopSettings.Text("f27.reset_confirm"), () => ResetUnreadable(invalid, expectedRun, expectedSlot), "confirm")
+                .AddButton(ShopSettings.Text("f34.back"), () => own.Close(), "cancel").End().Show();
+        }
+
+        private void ResetUnreadable(string invalid, string expectedRun, int expectedSlot)
+        {
+            if (!ShopInventory.InStore || run != expectedRun || slot != expectedSlot ||
+                PlayerStore.Instance.runID != expectedRun || PlayerStore.Instance.saveSlotId != expectedSlot ||
+                data != null || unreadableRaw != invalid) return;
+            bool attemptedWrite = false;
+            try
             {
-                StoreRequest request = Current.Find(r => order.Matches(r, Day));
-                if (request == null) continue;
-                foreach (Reservation reservation in order.reserved.Where(r => !string.IsNullOrEmpty(r.legacyDestination)).ToArray())
+                if (ModHelper.GetModData(ModEntry.Id, DataKey, null) != invalid)
+                { Reset(); AttentionBook.Changed(); ShopNotice.Show(ShopSettings.Text("inv.changed")); return; }
+                ModHelper.SetModData(ModEntry.Id, RecoveryKey, invalid);
+                if (ModHelper.GetModData(ModEntry.Id, RecoveryKey, null) != invalid)
+                    throw new InvalidOperationException("Reservation backup was not retained.");
+                if (ModHelper.GetModData(ModEntry.Id, DataKey, null) != invalid)
+                { Reset(); AttentionBook.Changed(); ShopNotice.Show(ShopSettings.Text("inv.changed")); return; }
+                var replacement = new Save();
+                string raw = ShopData.Encode(replacement);
+                attemptedWrite = true;
+                ModHelper.SetModData(ModEntry.Id, DataKey, raw);
+                if (ModHelper.GetModData(ModEntry.Id, DataKey, null) != raw) throw new InvalidOperationException("Reservation reset was not retained.");
+                data = replacement; unreadableRaw = null;
+                recoveryWindow?.Close(); recoveryWindow = null;
+                VisibleInventoryViews.NotifyChanged(); AttentionBook.Changed();
+                ShopNotice.Show(ShopSettings.Text("f27.reset_done"));
+            }
+            catch (Exception error)
+            {
+                log("F27 could not confirm the reservation reset: " + error);
+                if (attemptedWrite)
                 {
-                    string itemName = visibleItems.TryGetValue(reservation.id, out GameItem item) ? item.GetDisplayName(true) : "#" + reservation.id;
-                    yield return new AttentionItem { Key = "f27:" + (order.id ?? "") + ":" + reservation.id,
-                        Feature = "f27.open", Title = request.title + " · " + itemName, Location = DescribeLegacyLocation(reservation.legacyDestination),
-                        ReasonKey = "f27.verify_needed", ItemId = reservation.id, NeedsInspection = true,
-                        Retry = () => ResolveLegacy(order, reservation), ActionLabelKey = "f27.verify", ResolveLabelKey = "f27.release_item",
-                        Resolve = () => RemoveReservation(order, reservation) };
+                    try
+                    {
+                        ModHelper.SetModData(ModEntry.Id, DataKey, invalid);
+                        if (ModHelper.GetModData(ModEntry.Id, DataKey, null) != invalid) throw new InvalidOperationException("Original reservation data was not retained.");
+                    }
+                    catch (Exception restoreError) { unreadableRaw = null; log("F27 could not confirm restoring reservation data: " + restoreError); }
                 }
+                AttentionBook.Changed();
+                ShopNotice.Show(ShopSettings.Text("f27.reset_failed"));
             }
         }
 
@@ -284,50 +330,24 @@ namespace ShopAssist
             AttentionBook.Changed();
         }
 
-        private static string DescribeLegacyLocation(string key)
-        {
-            string[] parts = (key ?? "").Split(':');
-            if (parts.Length == 4 && parts[0] == "item" && int.TryParse(parts[1], out int id) && id > 0)
-                foreach (var location in ShopInventory.OwnedLocations(false))
-                {
-                    GameItem owner = location.Inventory?.childItems.Find(item => item != null && item.uniqueId == id);
-                    if (owner != null) return location.Name + " › " + owner.GetDisplayName(true);
-                }
-            return ShopSettings.Text("f27.old_area");
-        }
-
-        private void ResolveLegacy(Order order, Reservation reservation)
-        {
-            if (!Load() || !data.orders.Contains(order) || !order.reserved.Contains(reservation) ||
-                string.IsNullOrEmpty(reservation.legacyDestination)) return;
-            var locations = ShopInventory.OwnedLocations(false).Where(l => l.Ordinary && l.Key() == reservation.legacyDestination).ToList();
-            if (locations.Count != 1) { ShopNotice.Show(ShopSettings.Text("f27.verify_needed")); return; }
-            int index = order.reserved.IndexOf(reservation);
-            string previous = reservation.legacyDestination;
-            if (locations[0].Inventory.childItems.Any(item => item.uniqueId == reservation.id)) reservation.legacyDestination = null;
-            else order.reserved.RemoveAt(index);
-            try { SaveData(); }
-            catch (Exception error)
-            {
-                if (!order.reserved.Contains(reservation)) order.reserved.Insert(index, reservation);
-                reservation.legacyDestination = previous;
-                log("F27 could not save verified reservation: " + error); ShopNotice.Show(ShopSettings.Text("f27.save_failed")); return;
-            }
-            if (showing != null && Tracked(showing) == order) Draw(showing);
-        }
-
         private void RemoveReservation(Order order, Reservation reservation)
         {
             if (!Load() || !data.orders.Contains(order)) return;
             int index = order.reserved.IndexOf(reservation);
             if (index < 0) return;
+            if (NeedsInspection(reservation.id))
+            {
+                ShopNotice.Show(ShopSettings.Text("f27.inspect_first"));
+                AttentionBook.Open();
+                return;
+            }
             order.reserved.RemoveAt(index);
             try { SaveData(); }
             catch (Exception error)
             {
-                order.reserved.Insert(index, reservation);
-                log("F27 could not release reservation: " + error); ShopNotice.Show(ShopSettings.Text("f27.save_failed")); return;
+                SaveFailed("reservation release", error); return;
             }
+            selectedReservationId = 0;
             if (showing != null && Tracked(showing) == order) Draw(showing);
         }
 
@@ -369,9 +389,11 @@ namespace ShopAssist
         {
             if (!tracking.Value || CustomUIManager.Instance == null) return;
             if (!Load()) { ShopNotice.Show(ShopSettings.Text("f27.unreadable")); return; }
+            migrationPreview = false;
+            viewDirty = false;
             var b = UiLayout.Rebuild(ref window, WindowId, ShopSettings.Text("f27.open"), 600, 470);
             b.OnClose(() => window = null);
-            if (!ReferenceEquals(showing, request)) { selected.Clear(); page = 0; }
+            if (!ReferenceEquals(showing, request)) { selected.Clear(); selectedReservationId = 0; page = 0; }
             showing = request;
             if (request == null)
             {
@@ -410,7 +432,7 @@ namespace ShopAssist
                         quantity = request.requiredItemCount, requester = request.requesterName, expires = Day + request.duration });
                     try { SaveData(); }
                     catch (Exception error)
-                    { data.orders = before; log("F27 could not track request: " + error); ShopNotice.Show(ShopSettings.Text("f27.save_failed")); return; }
+                    { SaveFailed("request tracking", error); return; }
                     Draw(request);
                 }, "track").Show();
                 return;
@@ -418,49 +440,53 @@ namespace ShopAssist
             var locations = ShopInventory.OwnedLocations(true);
             var all = ShopInventory.OwnedLocations(false);
             var reservedItems = ReservedItems(locations);
-            var destinations = locations.FindAll(l => l.Ordinary && l.Owner != null && !l.Inventory.IsInsertLocked());
             var dest = string.IsNullOrEmpty(order.destination) ? null : all.Find(l => l.Ordinary && l.Key() == order.destination);
-            VisualChoices.Location(b, ShopSettings.Text("visual.target"), dest, destinations, location =>
+            IList<ShopInventory.Location> Destinations() => tracking.Value && ShopInventory.InStore &&
+                run == PlayerStore.Instance.runID && slot == PlayerStore.Instance.saveSlotId && ReferenceEquals(showing, request) &&
+                data != null && data.orders.Contains(order)
+                ? ShopInventory.OwnedLocations(true).FindAll(l => l.Ordinary && l.Owner != null && !l.Inventory.IsInsertLocked())
+                : new List<ShopInventory.Location>();
+            VisualChoices.Location(b, ShopSettings.Text("visual.target"), dest, Destinations, location =>
             {
                 if (!Load() || !Unique(request) || Tracked(request) != order) return;
-                string next = location.Key(true);
-                string previous = order.destination;
-                order.destination = next;
+                if (!ShopInventory.TryRefresh(location, ShopInventory.OwnedLocations(true), out var live) ||
+                    !live.Ordinary || live.Owner == null || live.Inventory.IsInsertLocked())
+                { ShopNotice.Show(ShopSettings.Text("inv.changed")); return; }
+                order.destination = live.Key(true);
                 try { SaveData(); }
                 catch (Exception error)
-                { order.destination = previous; log("F27 could not save destination: " + error); ShopNotice.Show(ShopSettings.Text("f27.save_failed")); return; }
+                { SaveFailed("destination", error); return; }
                 Draw(request);
             }, "destination");
             var reserved = all.Where(l => l.Inventory != null).SelectMany(l => l.Inventory.childItems.Select(it => (l, it)))
                 .Where(x => ShopInventory.Owned(x.it) && order.reserved.Any(r => r.id == x.it.uniqueId)).ToList();
-            int ready = reserved.Count(x => order.reserved.Any(r => r.id == x.it.uniqueId && string.IsNullOrEmpty(r.legacyDestination)) &&
-                request.CanThisItemFillRequest(x.it));
+            int ready = reserved.Count(x => request.CanThisItemFillRequest(x.it));
             int atTarget = dest == null ? 0 : reserved.Count(x => x.l.Inventory == dest.Inventory &&
-                order.reserved.Any(r => r.id == x.it.uniqueId && string.IsNullOrEmpty(r.legacyDestination)) && request.CanThisItemFillRequest(x.it));
+                request.CanThisItemFillRequest(x.it));
             b.AddLabel(ShopSettings.Format("f27.count_location", ready, request.requiredItemCount, atTarget));
             var candidates = locations.Where(l => l.Ordinary).SelectMany(l => l.Inventory.childItems.Select(it => (l, it)))
                 .Where(x => request.CanThisItemFillRequest(x.it) && ShopInventory.Movable(x.it) && !reservedItems.Contains(x.it)).ToList();
             page = Math.Max(0, Math.Min(page, (candidates.Count - 1) / 20));
             b.BeginScrollFlexible(110);
-            ItemGrid.Add(b, reserved.Select(pair => new ItemGrid.Entry(pair.it)
-                { Badge = ShopSettings.Text(order.reserved.Any(r => r.id == pair.it.uniqueId && !string.IsNullOrEmpty(r.legacyDestination)) ?
-                    "f27.verify_short" : "f27.ready"), Reason = pair.l.Name, Selectable = false }),
-                new ItemGrid.Options { Cards = true, Columns = 4, CardWidth = 135, CardHeight = 95 });
-            foreach (Reservation pending in order.reserved.Where(r => !string.IsNullOrEmpty(r.legacyDestination) ||
-                !reserved.Any(pair => pair.it.uniqueId == r.id)).ToArray())
+            ItemGrid.Add(b, reserved.Select(pair => new ItemGrid.Entry(pair.it) {
+                Badge = ShopSettings.Text(dest != null && pair.l.Inventory == dest.Inventory ? "f27.ready" : "f27.awaiting_move"),
+                Reason = pair.l.Name, Selected = selectedReservationId == pair.it.uniqueId
+            }), new ItemGrid.Options { Cards = true, Columns = 4, CardWidth = 135, CardHeight = 95,
+                OnClick = entry => { selectedReservationId = selectedReservationId == entry.Item.uniqueId ? 0 : entry.Item.uniqueId; Draw(request); } });
+            Reservation selectedReservation = order.reserved.Find(r => r.id == selectedReservationId);
+            if (selectedReservation != null && reserved.Any(pair => pair.it.uniqueId == selectedReservation.id))
+                b.AddButton(ShopSettings.Text("f27.release_item"), () => RemoveReservation(order, selectedReservation), "release_selected");
+            foreach (Reservation pending in order.reserved.Where(r => !reserved.Any(pair => pair.it.uniqueId == r.id)).ToArray())
             {
-                b.BeginRow().AddLabel(string.IsNullOrEmpty(pending.legacyDestination) ?
-                    ShopSettings.Format("f27.missing_item", pending.id) :
-                    ShopSettings.Format("f27.missing_legacy", pending.id, DescribeLegacyLocation(pending.legacyDestination)));
+                b.BeginRow().AddLabel(ShopSettings.Format("f27.missing_item", pending.id));
                 if (b.Last.text != null) b.Last.text.richText = false;
-                if (!string.IsNullOrEmpty(pending.legacyDestination))
-                    b.AddButton(ShopSettings.Text("f27.verify"), () => ResolveLegacy(order, pending));
                 b.AddButton(ShopSettings.Text("f27.release_item"), () => RemoveReservation(order, pending)).End();
             }
             ItemGrid.Add(b, candidates.Skip(page * 20).Take(20).Select(pair => new ItemGrid.Entry(pair.it)
             { Selected = selected.Contains(pair.it), Reason = pair.l.Name }),
                 new ItemGrid.Options { Cards = true, Columns = 4, CardWidth = 135, CardHeight = 95,
                     OnClick = entry => { if (!selected.Add(entry.Item)) selected.Remove(entry.Item); entry.Selected = selected.Contains(entry.Item); } });
+            if (candidates.Count == 0 && ready < request.requiredItemCount) b.AddLabel(ShopSettings.Text("f27.open_sources"));
             b.End();
             UiLayout.Pager(b, page, candidates.Count, 20, next => { page = next; Draw(request); });
             b.BeginRow().AddButton(ShopSettings.Text("f27.prepare"), () => Prepare(request), "prepare")
@@ -470,10 +496,12 @@ namespace ShopAssist
                     if (!Load() || !Unique(request)) return;
                     int index = data.orders.IndexOf(order);
                     if (index < 0) return;
+                    if (order.reserved.Any(reservation => NeedsInspection(reservation.id)))
+                    { ShopNotice.Show(ShopSettings.Text("f27.inspect_first")); AttentionBook.Open(); return; }
                     data.orders.RemoveAt(index);
                     try { SaveData(); }
                     catch (Exception error)
-                    { data.orders.Insert(index, order); log("F27 could not release request: " + error); ShopNotice.Show(ShopSettings.Text("f27.save_failed")); return; }
+                    { SaveFailed("request release", error); return; }
                     selected.Clear(); Draw(null);
                 }).End().Show();
         }
@@ -494,7 +522,7 @@ namespace ShopAssist
             var target = locations.Find(l => l.Ordinary && l.Owner != null && !string.IsNullOrEmpty(destination) && l.Key() == destination);
             if (target == null) { ShopNotice.Show(ShopSettings.Text("f27.choose")); return; }
             int ready = ShopInventory.OwnedLocations(false).Where(l => l.Inventory != null).SelectMany(l => l.Inventory.childItems)
-                .Count(it => ShopInventory.Owned(it) && order.reserved.Any(r => r.id == it.uniqueId && string.IsNullOrEmpty(r.legacyDestination)) && request.CanThisItemFillRequest(it));
+                .Count(it => ShopInventory.Owned(it) && order.reserved.Any(r => r.id == it.uniqueId) && request.CanThisItemFillRequest(it));
             var result = new OperationResult("f27.prepare");
             bool stopped = false;
             foreach (var item in selected.ToArray())
@@ -509,6 +537,8 @@ namespace ShopAssist
                     !source.Ordinary || !liveTarget.Ordinary || item.parentInventory != source.Inventory ||
                     !request.CanThisItemFillRequest(item) || Reserved(item) || !ShopInventory.Movable(item))
                 { result.Skip(item, item.unitCount, "inv.changed", from?.Name); continue; }
+                if (NeedsInspection(item.uniqueId))
+                { result.Skip(item, item.unitCount, "f27.inspect_first", from?.Name); stopped = true; continue; }
                 if (order.reserved.Count >= 256)
                 { result.Skip(item, item.unitCount, "f27.limit", from?.Name); continue; }
                 int id = item.GetUniqueID();
@@ -519,12 +549,7 @@ namespace ShopAssist
                 try { SaveData(); }
                 catch (Exception error)
                 {
-                    order.reserved.Remove(reservation);
-                    // The write may have succeeded even if verification failed.
-                    // Reload the authoritative copy before exposing the book again.
-                    if (ShopInventory.InStore && PlayerStore.Instance.runID == expectedRun && PlayerStore.Instance.saveSlotId == expectedSlot)
-                    { data = null; run = null; }
-                    log("F27 could not save reservation before moving goods: " + error);
+                    SaveFailed("reservation before moving goods", error);
                     result.Skip(item, item.unitCount, "f27.save_failed", from?.Name);
                     stopped = true;
                     continue;
@@ -565,13 +590,14 @@ namespace ShopAssist
                 locations.Find(l => l.Ordinary && l.Owner != null && l.Key() == order.destination);
             if (target == null) { ShopNotice.Show(ShopSettings.Text("f27.choose")); return; }
             var moves = new List<ReservedMove>();
-            foreach (Reservation reservation in order.reserved.Where(r => string.IsNullOrEmpty(r.legacyDestination)))
+            foreach (Reservation reservation in order.reserved)
             {
                 var from = locations.Find(l => l.Inventory.childItems.Any(item => item.uniqueId == reservation.id));
                 GameItem item = from?.Inventory.childItems.Find(i => i.uniqueId == reservation.id);
                 if (item == null || item.parentInventory == target.Inventory || item.modifiedShape == null) continue;
                 moves.Add(new ReservedMove { Item = item, Source = from, Shape = item.modifiedShape.Clone(), Count = item.unitCount });
             }
+            migrationPreview = true;
             var b = UiLayout.Rebuild(ref window, WindowId, ShopSettings.Text("f27.migrate"), 600, 470);
             b.OnClose(() => window = null);
             b.AddLabel(target.Name);
@@ -604,10 +630,12 @@ namespace ShopAssist
                 var locations = ShopInventory.OwnedLocations(false);
                 if (!ShopInventory.TryRefresh(expectedTarget, locations, out var target) || !target.Ordinary)
                 { result.Skip(move.Item, move.Count, "inv.changed", path); stopped = true; continue; }
-                if (!order.reserved.Any(r => r.id == move.Item.uniqueId && string.IsNullOrEmpty(r.legacyDestination)) ||
+                if (!order.reserved.Any(r => r.id == move.Item.uniqueId) ||
                     !ShopInventory.TryRefresh(move.Source, locations, out var source) || move.Item.parentInventory != source.Inventory ||
                     move.Item.unitCount != move.Count || !InventorySortPlan.SameShape(move.Item.modifiedShape, move.Shape))
                 { result.Skip(move.Item, move.Count, "inv.changed", path); continue; }
+                if (NeedsInspection(move.Item.uniqueId))
+                { result.Skip(move.Item, move.Count, "f27.inspect_first", path); stopped = true; continue; }
                 if (!ShopInventory.TryMoveIntact(move.Item, source, target, out string reason))
                 {
                     result.Skip(move.Item, move.Count, reason, path, reason == "inv.inspect");
@@ -626,14 +654,19 @@ namespace ShopAssist
         private void Close()
         {
             if (window != null && window.IsAlive) window.Close();
-            window = null; selected.Clear(); showing = null;
+            if (recoveryWindow != null && recoveryWindow.IsAlive) recoveryWindow.Close();
+            recoveryWindow = null;
+            window = null; selected.Clear(); selectedReservationId = 0; showing = null;
+            migrationPreview = viewDirty = false;
         }
-        private void Reset() { Close(); run = null; data = null; }
+        private void Reset() { Close(); run = null; data = null; unreadableRaw = null; }
         public void Dispose()
         {
             active = null;
             AttentionBook.Unregister("f27");
             settings.Changed -= SettingsChanged;
+            VisibleInventoryViews.Changed -= InvalidateView;
+            VisibleInventoryViews.ItemChanged -= ItemChanged;
             ModHook.OnGameLoadedInit -= Reset;
             ModHook.OnLeavingStoreEarly -= Close;
             foreach (var button in buttons) if (button != null) Object.Destroy(button);

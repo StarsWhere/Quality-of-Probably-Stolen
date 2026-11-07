@@ -56,7 +56,7 @@ namespace ShopAssist
             var ledger = new ShopLedger(settings, warn);
             Add("F16/F28", ledger.Start, ledger.Tick, ledger.Dispose);
             var requests = new RequestBook(settings, warn);
-            Add("F21/F27", requests.Start, null, requests.Dispose);
+            Add("F21/F27", requests.Start, requests.Tick, requests.Dispose);
             var yeast = new YeastReturn(settings, warn);
             Add("F37", yeast.Start, null, yeast.Dispose);
             var machines = new MachineTools(settings, warn);
@@ -86,7 +86,7 @@ namespace ShopAssist
             var sheet = new AppraisalWorksheet(settings, warn);
             Add("F23", sheet.Start, sheet.Tick, sheet.Dispose);
             var organizer = new InventoryOrganizer(settings, warn);
-            Add("F05/F06", organizer.Start, organizer.Tick, organizer.Dispose);
+            Add("F05", organizer.Start, organizer.Tick, organizer.Dispose);
             var routes = new InventoryRoutes(settings, clues, warn);
             Add("F07/F08/F09", routes.Start, routes.Tick, routes.Dispose);
             var groupRotate = settings.Toggle("f40.enabled", "f40.tip", true);

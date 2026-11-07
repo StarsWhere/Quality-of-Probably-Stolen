@@ -17,19 +17,19 @@ f27.trackButton,Prepare
 f27.market,Open the market requests page and select a posted request.
 f27.expired,This request expired or cannot be identified uniquely.
 f27.unreadable,Could not read this save's request reservations. Check the save.
+f27.reset,Restart request reservations
+f27.reset_warning,Check current requests and reserved goods first. Restarting clears the unreadable reservation record. It does not move goods or clear other inspection items.
+f27.reset_confirm,Confirm restart
+f27.reset_done,Request reservations restarted.
+f27.reset_failed,Could not confirm restarting reservations. Please retry.
 f27.recovered,Request reservations loaded again.
-f27.save_failed,Could not save request reservations. Try again.
+f27.save_failed,Could not confirm the reservation was saved. Check its current state and retry.
 f27.limit,The request or reservation limit has been reached.
 f27.track,Track request
 f27.choose,Choose an open storage container
 f27.count,Reserved {0} of {1} items
 f27.count_location,Reserved {0} of {1} items · {2} in destination
-f27.old_area,Original preparation area unavailable
-f27.verify_needed,Open the original preparation area to check this reservation.
-f27.verify_short,Check
-f27.verify,Check original area
 f27.missing_item,Reserved item #{0} is not currently visible
-f27.missing_legacy,Reserved item #{0} · {1}
 f27.release_item,Release reservation
 f27.select,Select goods to prepare first.
 f27.enough,Enough items are already reserved
@@ -39,3 +39,6 @@ f27.migrate_apply,Move goods
 f27.back,Back to request
 f27.prepare,Pack selected items
 f27.release,Stop tracking and release reservations
+f27.awaiting_move,Needs moving
+f27.open_sources,Open a source container to select goods.
+f27.inspect_first,Check the goods in Attention first.

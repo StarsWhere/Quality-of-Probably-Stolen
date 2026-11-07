@@ -72,7 +72,7 @@ public sealed class DisplaySplitScenario
             var settings = CustomUIManager.Instance.GetWindow("game_options");
             settings.Get(Mod + ":f29.goal").SetFloat(4, true); settings.Get(Mod + ":f29.keep").SetFloat(2, true);
             settings.Get("apply").button.onClick.Invoke(); options.CloseUI();
-            RoutingScenario.OpenOptionAction("f29.open");
+            RoutingScenario.RunFeatureAction("f29.open");
             QaItemUi.Choose(Window(), "type", goods.GetDisplayName(true));
             Window().Get("add").button.onClick.Invoke(); Window().Get("preview").button.onClick.Invoke();
             Need(QaItemUi.Hit(Window().root, goods) != null && goods.unitCount == 10 && goods.parentInventory == e.invElement,
@@ -257,15 +257,15 @@ public sealed class RejectingDisplayGrid : GameGridInventory
     public override bool UncheckedAccept(GameItem item) => !refuse && base.UncheckedAccept(item);
 }
 
-public sealed class ReservationMigrationScenario
+public sealed class ReservationMoveScenario
 {
     private const string Mod = "starswhere.shopassist";
     private readonly QaNewRun start = new QaNewRun();
     private readonly float deadline = Time.realtimeSinceStartup + 100;
     private readonly string name = "QA reservation " + Guid.NewGuid().ToString("N").Substring(0, 6);
-    private GameItem first, second, stale, unknown, oldBox, newBox;
+    private GameItem first, second, oldBox, newBox;
     private StoreRequest request;
-    private int step, firstId, secondId, unknownId, newBoxId;
+    private int step, firstId, secondId, newBoxId;
     private QaLoadSlot load;
     private static void Need(bool ok, string message) { if (!ok) throw new InvalidOperationException(message); }
     private static CustomUIWindow Window() => CustomUIManager.Instance.GetWindow(Mod + ".requests");
@@ -301,12 +301,9 @@ public sealed class ReservationMigrationScenario
             var grid = box?.contentWindow?.childElement as GameGridInventory;
             var a = grid?.childItems.SingleOrDefault(i => i.uniqueId == firstId);
             var b = grid?.childItems.SingleOrDefault(i => i.uniqueId == secondId);
-            var pending = root.childItems.SingleOrDefault(i => i.uniqueId == unknownId);
-            Need(a != null && b != null && pending != null && RequestColdReloadScenario.Reserved(a) &&
-                RequestColdReloadScenario.Reserved(b) && RequestColdReloadScenario.Reserved(pending) &&
-                ModHelper.GetModData(Mod, "requests", "").Contains("item:999999999:contents:-1"),
-                "Cold reload lost migrated or unresolved reservations");
-            result = "PASS F27 legacy verification, unresolved reservation, target change, partial migration, retry and cold reload";
+            Need(a != null && b != null && RequestColdReloadScenario.Reserved(a) && RequestColdReloadScenario.Reserved(b),
+                "Cold reload lost the moved reservations");
+            result = "PASS F27 current reservations, target change, partial move, retry and cold reload";
             return true;
         }
         var e = EmporiumEntry.Instance; var p = PlayerStore.Instance;
@@ -319,28 +316,19 @@ public sealed class ReservationMigrationScenario
             var oldGrid = oldBox.contentWindow.childElement as GameGridInventory;
             Need(oldGrid != null && newBox.contentWindow.childElement is GameGridInventory, "Missing storage grids");
             first = New("wine_yeast_red", oldGrid); second = New("wine_yeast_red", oldGrid);
-            stale = New("wine_yeast_red", e.invElement); unknown = New("wine_yeast_red", e.invElement);
             ItemMouseDoubleClickHandler.current.OpenContentAction(oldBox, new Vector2(Screen.width * .6f, Screen.height * .7f));
             ItemMouseDoubleClickHandler.current.OpenContentAction(newBox, new Vector2(Screen.width * .8f, Screen.height * .7f));
             request = new StoreRequest { title = name, id = name, sourceEventId = name, requiredItem = first.identifier,
                 requiredItemCount = 2, requesterName = "QA", duration = 2 };
-            var unresolved = new StoreRequest { title = name + " pending", id = name + " pending", sourceEventId = name,
-                requiredItem = first.identifier, requiredItemCount = 1, requesterName = "QA", duration = 2 };
-            p.storeRequests.Add(request); p.storeRequests.Add(unresolved);
-            int expires = StoreStation.GetDayCounter() + 2;
-            string oldKey = "item:" + oldBox.GetUniqueID() + ":contents:-1";
-            string missingKey = "item:999999999:contents:-1";
-            string row(string id, int quantity, string dest, string ids) => "{\"id\":\"" + id + "\",\"source\":\"" + name +
-                "\",\"item\":\"wine_yeast_red\",\"requester\":\"QA\",\"destination\":\"" + dest + "\",\"quantity\":" +
-                quantity + ",\"expires\":" + expires + ",\"reserved\":[" + ids + "]}";
-            string raw = "{\"version\":1,\"orders\":[" + row(name, 2, oldKey,
-                first.GetUniqueID() + "," + second.GetUniqueID() + "," + stale.GetUniqueID()) + "," +
-                row(name + " pending", 1, missingKey, unknown.GetUniqueID().ToString()) + "]}";
-            ModHelper.SetModData(Mod, "requests", raw); var book = Book(); Call(book, "Reset"); Call(book, "Draw", request);
+            p.storeRequests.Add(request);
+            var book = Book(); Call(book, "Draw", request);
+            Window().Get("track").button.onClick.Invoke();
+            QaItemUi.Choose(Window(), "destination", name + " old");
+            QaItemUi.Click(Window(), first); QaItemUi.Click(Window(), second);
+            Window().Get("prepare").button.onClick.Invoke();
             Need(RequestColdReloadScenario.Reserved(first) && RequestColdReloadScenario.Reserved(second) &&
-                !RequestColdReloadScenario.Reserved(stale) && RequestColdReloadScenario.Reserved(unknown) &&
-                ModHelper.GetModData(Mod, "requests", "").Contains("\"version\":2"),
-                "Legacy conversion did not preserve verified and unresolved reservations or discard the stale ID");
+                first.parentInventory == oldGrid && second.parentInventory == oldGrid,
+                "The current request did not reserve both selected items");
             QaItemUi.Choose(Window(), "destination", name + " new");
             Need(RequestColdReloadScenario.Reserved(first) && RequestColdReloadScenario.Reserved(second) && first.parentInventory == oldGrid,
                 "Changing destination released or moved reserved goods");
@@ -358,9 +346,8 @@ public sealed class ReservationMigrationScenario
                 "Retry included already migrated goods or omitted the remainder");
             Window().Get("migrate_apply").button.onClick.Invoke();
             Need(first.parentInventory == target && second.parentInventory == target && RequestColdReloadScenario.Reserved(first) &&
-                RequestColdReloadScenario.Reserved(second) && RequestColdReloadScenario.Reserved(unknown),
-                "Retry did not retain the migrated and unresolved reservations");
-            firstId = first.uniqueId; secondId = second.uniqueId; unknownId = unknown.uniqueId; newBoxId = newBox.uniqueId;
+                RequestColdReloadScenario.Reserved(second), "Retry did not retain the moved reservations");
+            firstId = first.uniqueId; secondId = second.uniqueId; newBoxId = newBox.uniqueId;
             int slot = p.saveSlotId; string run = p.runID; p.SaveGame();
             StoreUIManager.Instance.escapeUIManager.OnMainMenu();
             load = new QaLoadSlot(slot, Guid.Parse(run)); step = 2;
@@ -394,15 +381,26 @@ public sealed class ReservationCorruptScenario
         MethodInfo reset = type.GetMethod("Reset", BindingFlags.Instance | BindingFlags.NonPublic);
         MethodInfo load = type.GetMethod("Load", BindingFlags.Instance | BindingFlags.NonPublic);
         int expires = StoreStation.GetDayCounter() + 2;
-        foreach (int version in new[] { 1, 2 })
-        {
-            string raw = "{\"version\":" + version + ",\"orders\":[{\"id\":null,\"source\":null," +
-                "\"item\":\"wine_yeast_red\",\"requester\":null,\"destination\":null,\"quantity\":1,\"expires\":" + expires + "}]}";
-            ModHelper.SetModData(Mod, "requests", raw); reset.Invoke(book, null);
-            Need(!(bool)load.Invoke(book, null) && ModHelper.GetModData(Mod, "requests", null) == raw &&
-                RequestColdReloadScenario.Reserved(item), "Missing reserved list was accepted, overwritten, or failed open for v" + version);
-        }
-        result = "PASS F27 v1/v2 missing reservation data is retained and owned goods fail closed";
+        string raw = "{\"version\":2,\"orders\":[{\"id\":null,\"source\":null," +
+            "\"item\":\"wine_yeast_red\",\"requester\":null,\"destination\":null,\"quantity\":1,\"expires\":" + expires + "}]}";
+        ModHelper.SetModData(Mod, "requests", raw); reset.Invoke(book, null);
+        Need(!(bool)load.Invoke(book, null) && ModHelper.GetModData(Mod, "requests", null) == raw &&
+            RequestColdReloadScenario.Reserved(item), "Missing current reservation list was accepted, overwritten, or failed open");
+        Type attention = mod.Instance.GetType().Assembly.GetType("ShopAssist.AttentionBook", true);
+        attention.GetMethod("Open", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, null);
+        var list = CustomUIManager.Instance.GetWindow(Mod + ".attention");
+        var recover = RoutingScenario.Button(list, "f27.reset");
+        Need(recover != null && recover.interactable, "Unreadable reservations did not offer a visible recovery action");
+        recover.onClick.Invoke();
+        var prompt = CustomUIManager.Instance.GetWindow(Mod + ".requests_reset");
+        Need(prompt?.IsAlive == true && ModHelper.GetModData(Mod, "requests", null) == raw && RequestColdReloadScenario.Reserved(item),
+            "Opening recovery changed data or failed to retain the reservation block");
+        Need(prompt.Get("confirm")?.button != null, "Recovery prompt has no confirmation");
+        prompt.Get("confirm").button.onClick.Invoke();
+        Need(!RequestColdReloadScenario.Reserved(item) && item.parentInventory == e.invElement &&
+            ModHelper.GetModData(Mod, "requestsUnreadableBackup", null) == raw,
+            "Confirmed recovery did not preserve the source data or changed the goods");
+        result = "PASS F27 malformed reservations block goods until confirmed recovery, with original data backed up";
         return true;
     }
 }

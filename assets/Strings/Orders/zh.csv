@@ -17,19 +17,19 @@ f27.trackButton,备货
 f27.market,请打开市场委托页并选择一份公开委托。
 f27.expired,这个委托已失效或无法唯一识别。
 f27.unreadable,无法读取本档委托预留，请检查存档。
+f27.reset,重新开始委托预留
+f27.reset_warning,请先核对现有委托和预留货物。重新开始会清除无法读取的委托预留记录，不会移动物品或清除其他待核对事项。
+f27.reset_confirm,确认重新开始
+f27.reset_done,已重新开始委托预留。
+f27.reset_failed,无法确认重建委托预留，请重试。
 f27.recovered,已重新读取委托预留。
-f27.save_failed,无法保存委托预留，请重试。
+f27.save_failed,无法确认委托预留是否保存，请核对当前状态后重试。
 f27.limit,委托或预留数量已达到上限。
 f27.track,跟踪委托
 f27.choose,选择一个已打开的备货箱
 f27.count,已备 {0} / {1} 件
 f27.count_location,已预留 {0} / {1} 件 · 目标内 {2} 件
-f27.old_area,原备货区暂不可用
-f27.verify_needed,请先打开原备货区，再核对预留。
-f27.verify_short,待核对
-f27.verify,核对原备货区
 f27.missing_item,预留物品 #{0} 暂不可见
-f27.missing_legacy,预留物品 #{0} · {1}
 f27.release_item,解除此预留
 f27.select,请先选择要备货的物品。
 f27.enough,预留数量已足够
@@ -39,3 +39,6 @@ f27.migrate_apply,确认迁移
 f27.back,返回委托
 f27.prepare,放入选中货物
 f27.release,停止跟踪并解除预留
+f27.awaiting_move,待迁移
+f27.open_sources,打开货源容器以选择货物。
+f27.inspect_first,请先在待处理事项中核对货物。
