@@ -1,3 +1,11 @@
 f10.context,模组柜
 f11.context,找货
-settings.key_conflict,{0} 正用于「{1}」。请在选项的按键绑定中为经营助手改键。
+f11.demand_context,顾客需求
+f13.context,收起窗口
+f30.context,机器状态
+f31.context,备用电池
+f32.context,自动补种
+f33.context,熔炉生产
+f35.context,备用滤芯
+f36.context,拾荒装包
+settings.key_conflict,{0} 正用于「{1}」。请在选项的按键绑定中为「更好的体验」改键。

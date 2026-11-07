@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.IO;
 using System.Reflection;
 using TMPro;
 using UnityEngine;
@@ -30,7 +29,7 @@ public sealed class ContextToolsScenario
                     ItemMouseDoubleClickHandler.current == null || EventSystem.current == null ||
                     StoreUIManager.Instance.blackscreen?.gameObject.activeInHierarchy == true) return false;
                 if (StoreUIManager.Instance.controlHintOverlay?.activeSelf == true) StoreUIManager.Instance.ToggleControlHintOverlay();
-                TradeScenario.SetOptions(true, "f05.enabled", "f10.enabled", "f24.enabled", "f31.enabled", "f32.enabled");
+                TradeScenario.SetOptions(true, "f05.enabled", "f10.enabled", "f24.enabled", "f30.enabled", "f31.enabled", "f32.enabled");
                 TradeScenario.SetOptions(false, "f15.enabled", "f17.enabled", "f21.enabled");
                 first = NewItem("hydroponic", "QA Context A"); second = NewItem("hydroponic", "QA Context B");
                 bag = NewItem("backpack_medium", "QA Receipt Box");
@@ -40,67 +39,54 @@ public sealed class ContextToolsScenario
                 Advance(2); return false;
             case 2:
             {
-                MachineryButton firstButton = ToolButton(first.contentWindow);
-                if (firstButton == null || ToolButton(second.contentWindow) == null || ToolButton(EmporiumEntry.Instance.invWindow) == null) return false;
+                MachineryButton firstButton = ToolButton(first.contentWindow, "f32.open");
+                if (firstButton == null || ToolButton(second.contentWindow, "f31.open") == null ||
+                    ToolButton(EmporiumEntry.Instance.invWindow, "f30.open") == null) return false;
                 first.contentWindow.ToFront();
-                Capture("qa-context-precheck.png"); after = Time.realtimeSinceStartup + 0.3f; Advance(19); return false;
+                after = Time.realtimeSinceStartup + .3f; Advance(19); return false;
             }
             case 19:
             {
                 if (Time.realtimeSinceStartup < after) return false;
-                MachineryButton firstButton = ToolButton(first.contentWindow);
-                Need(firstButton != null, "Machine title tools button disappeared");
-                Need(HitMachine(firstButton), "Machine title tools button is not reachable");
+                MachineryButton firstButton = ToolButton(first.contentWindow, "f32.open");
+                Need(firstButton != null, "Direct replant button disappeared");
+                Need(HitMachine(firstButton), "Direct replant button is not reachable");
                 firstButton.Select();
-                var card = Card();
-                Need(card.Get("f32.open")?.button != null && card.Get("f31.open")?.button != null,
-                    "Hydroponic card lacks its actual supported controls");
-                Capture("qa-context-machine.png"); after = Time.realtimeSinceStartup + 0.5f; Advance(20); return false;
-            }
-            case 20:
-            {
-                if (Time.realtimeSinceStartup < after) return false;
-                Card().Get("f32.open").button.onClick.Invoke();
                 var replant = CustomUIManager.Instance.GetWindow(Mod + ".f32");
                 Need(replant?.IsAlive == true && Text(replant).Contains(first.GetDisplayName(true)),
-                    "Machine card opened replant for a different machine");
+                    "Direct replant action opened a different machine");
                 replant.Close();
                 second.contentWindow.ToFront(); Advance(3); return false;
             }
             case 3:
             {
-                MachineryButton secondButton = ToolButton(second.contentWindow);
-                Need(secondButton != null && HitMachine(secondButton), "Second machine title tools button is not reachable");
+                MachineryButton secondButton = ToolButton(second.contentWindow, "f31.open");
+                Need(secondButton != null && HitMachine(secondButton), "Direct maintenance button is not reachable");
                 secondButton.Select();
-                Card().Get("f31.open").button.onClick.Invoke();
                 var maintenance = CustomUIManager.Instance.GetWindow(Mod + ".maintenance");
                 Need(maintenance?.IsAlive == true && Text(maintenance).Contains(second.GetDisplayName(true)),
-                    "Machine card opened maintenance for a different machine");
+                    "Direct maintenance action opened a different machine");
                 maintenance.Close();
                 EmporiumEntry.Instance.invWindow.ToFront(); Advance(4); return false;
             }
             case 4:
             {
-                MachineryButton stock = ToolButton(EmporiumEntry.Instance.invWindow);
-                Need(stock != null && HitMachine(stock), "Warehouse title tools button is not reachable");
-                stock.Select(); Need(Card().Get("f05.open")?.button != null, "Warehouse card lacks arrange action");
-                Capture("qa-context-warehouse.png"); after = Time.realtimeSinceStartup + 0.5f; Advance(40); return false;
-            }
-            case 40:
-            {
-                if (Time.realtimeSinceStartup < after) return false;
-                Card().Close();
+                MachineryButton stock = ToolButton(EmporiumEntry.Instance.invWindow, "f30.open");
+                Need(stock != null && HitMachine(stock), "Direct warehouse overview button is not reachable");
+                stock.Select();
+                Need(CustomUIManager.Instance.GetWindow(Mod + ".f30")?.IsAlive == true, "Warehouse overview did not open");
+                CustomUIManager.Instance.GetWindow(Mod + ".f30").Close();
                 StoreUIManager.Instance.gameOptionUIManager.OpenUI(); Advance(5); return false;
             }
             case 5:
             {
-                MachineryButton stock = ToolButton(EmporiumEntry.Instance.invWindow);
+                MachineryButton stock = ToolButton(EmporiumEntry.Instance.invWindow, "f30.open");
                 if (stock == null || !stock.isDisabled) return false;
                 StoreUIManager.Instance.gameOptionUIManager.CloseUI(); Advance(6); return false;
             }
             case 6:
             {
-                var stock = ToolButton(EmporiumEntry.Instance.invWindow);
+                var stock = ToolButton(EmporiumEntry.Instance.invWindow, "f30.open");
                 if (stock == null || stock.isDisabled) return false;
                 var menu = OpenItemMenu(bag);
                 var node = QaItemUi.Descendant(menu.handler.transform, "ShopAssist_f24_choose");
@@ -112,7 +98,7 @@ public sealed class ContextToolsScenario
                 string raw = ModHelper.GetModData(Mod, "f24.target", "");
                 Need(bag.uniqueId > 0 && raw.Contains("\"owner\":" + bag.uniqueId),
                     "Receipt context action did not bind the selected container");
-                result = "PASS native warehouse and machine title raycasts, per-machine replant and battery targeting, modal blocking, and container receipt context action";
+                result = "PASS direct warehouse and machine actions, native raycasts, modal blocking, and container receipt context action";
                 return true;
             }
             default: throw new InvalidOperationException("Unknown context tools step");
@@ -131,9 +117,7 @@ public sealed class ContextToolsScenario
         Need(marker != null && marker.TryAcceptOnce(item.unitCount) == item.unitCount && item.parentInventory == inventory,
             "Could not place context fixture");
     }
-    private static MachineryButton ToolButton(PixelWindow window) =>
-        window?.handler?.transform.Find("ShopAssist_WindowTools")?.GetComponent<TreeNodeRender>()?.element as MachineryButton;
-    private static CustomUIWindow Card() => CustomUIManager.Instance.GetWindow(Mod + ".context") ?? throw new InvalidOperationException("Context card is closed");
+    private static MachineryButton ToolButton(PixelWindow window, string key) => QaItemUi.WindowAction(window, key);
     private static string Text(CustomUIWindow window) => string.Join(" ", window.root.GetComponentsInChildren<TMP_Text>(true).Select(text => text.text));
     private static bool HitMachine(MachineryButton button)
     {
@@ -170,11 +154,6 @@ public sealed class ContextToolsScenario
         menu.Validate(); menu.Show(new Vector2(Screen.width / 2, Screen.height / 2), Vector2.zero);
         type.GetMethod("OnEventPress", flags).Invoke(handler, new object[] { new HashSet<KeyCode>() });
         return menu;
-    }
-    private static void Capture(string filename)
-    {
-        if (SystemInfo.graphicsDeviceType != UnityEngine.Rendering.GraphicsDeviceType.Null)
-            ScreenCapture.CaptureScreenshot(Path.Combine(Application.persistentDataPath, filename));
     }
     private void Advance(int next) { step = next; since = Time.realtimeSinceStartup; }
     private static void Need(bool value, string message) { if (!value) throw new InvalidOperationException(message); }

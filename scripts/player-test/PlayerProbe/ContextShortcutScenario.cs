@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
+using HarmonyLib;
 using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -14,6 +16,8 @@ public sealed class ContextShortcutScenario
     private GameItem first, second;
     private int step;
     private float since = Time.realtimeSinceStartup;
+    private static string notice;
+    private static void RecordNotice(string message) { notice = message; }
 
     public bool Tick(out string result)
     {
@@ -107,11 +111,25 @@ public sealed class ContextShortcutScenario
                 Advance(9); return false;
             }
             case 9:
-                if (CustomerButton() != null) return false;
+            {
+                Button button = CustomerButton();
+                if (button == null || !button.interactable) return false;
+                const string patchId = "qa.customer-no-demand";
+                var harmony = new Harmony(patchId); notice = null;
+                try
+                {
+                    var show = AccessTools.TypeByName("ShopAssist.ShopNotice")?.GetMethod("Show", BindingFlags.Static | BindingFlags.NonPublic);
+                    Require(show != null, "Notice handler is unavailable");
+                    harmony.Patch(show, prefix: new HarmonyMethod(typeof(ContextShortcutScenario).GetMethod(nameof(RecordNotice), BindingFlags.Static | BindingFlags.NonPublic)));
+                    button.onClick.Invoke();
+                }
+                finally { harmony.UnpatchAll(patchId); }
+                Require(notice == ModHelper.GetLocalized(Mod, "f11.no_demand"), "Customer shortcut did not explain the missing demand");
                 PlayerStore.Instance.currentClientInstance = StoreClientInstance.CreateClientInstance(StoreClientList.CreateSpacerClientFood());
                 PlayerStore.Instance.isClientArrived = true;
                 NegociationUIManager.Instance.OpenUI();
                 Advance(10); return false;
+            }
             case 10:
                 if (CustomerButton() == null) return false;
                 TradeScenario.SetOptions(false, "f11.enabled");
@@ -140,7 +158,7 @@ public sealed class ContextShortcutScenario
     }
     private static MachineryButton MachineButton(GameItem item)
     {
-        var node = item?.contentWindow?.handler?.transform.Find("ShopAssist_MachineModules");
+        var node = item?.contentWindow?.handler?.transform.Find("ShopAssist_Action_f10_open");
         if (node == null || !node.gameObject.activeInHierarchy) return null;
         return node.GetComponent<TreeNodeRender>()?.element as MachineryButton;
     }

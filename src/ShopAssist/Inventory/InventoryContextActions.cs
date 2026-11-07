@@ -15,13 +15,16 @@ namespace ShopAssist
             internal string Id;
             internal bool Grid;
             internal Func<GameItem, string> ItemLabel;
+            internal Func<GameItem, bool> ItemApplies;
             internal Func<GameItem, ActionAvailability> ItemAvailable;
             internal Action<GameItem> ItemAction;
             internal Func<GameGridInventory, string> GridLabel;
+            internal Func<GameGridInventory, bool> GridApplies;
             internal Func<GameGridInventory, ActionAvailability> GridAvailable;
             internal Action<GameGridInventory> GridAction;
             internal RichTextElement Button;
             internal PixelWindow Parent;
+            internal string DisplayedLabel;
         }
 
         private sealed class Layout
@@ -62,20 +65,21 @@ namespace ShopAssist
         internal static void RegisterItem(string id, Func<GameItem, string> label, Func<GameItem, bool> canOpen, Action<GameItem> open)
         {
             if (canOpen == null) throw new ArgumentNullException(nameof(canOpen));
-            RegisterItem(id, label, item => Legacy(id, () => canOpen(item)), open);
+            RegisterItem(id, label, canOpen, item => ContextAvailability(id, () => canOpen(item)), open);
         }
-        internal static void RegisterItem(string id, Func<GameItem, string> label, Func<GameItem, ActionAvailability> availability, Action<GameItem> open) =>
-            Add(new Entry { Id = id, ItemLabel = label, ItemAvailable = availability, ItemAction = open });
+        internal static void RegisterItem(string id, Func<GameItem, string> label, Func<GameItem, bool> applies,
+            Func<GameItem, ActionAvailability> availability, Action<GameItem> open) =>
+            Add(new Entry { Id = id, ItemLabel = label, ItemApplies = applies, ItemAvailable = availability, ItemAction = open });
         internal static void RegisterGrid(string id, Func<GameGridInventory, string> label,
             Func<GameGridInventory, bool> canOpen, Action<GameGridInventory> open)
         {
             if (canOpen == null) throw new ArgumentNullException(nameof(canOpen));
-            RegisterGrid(id, label, grid => Legacy(id, () => canOpen(grid)), open);
+            RegisterGrid(id, label, canOpen, grid => ContextAvailability(id, () => canOpen(grid)), open);
         }
         internal static void RegisterGrid(string id, Func<GameGridInventory, string> label,
-            Func<GameGridInventory, ActionAvailability> availability, Action<GameGridInventory> open) =>
-            Add(new Entry { Id = id, Grid = true, GridLabel = label, GridAvailable = availability, GridAction = open });
-        private static ActionAvailability Legacy(string id, Func<bool> available)
+            Func<GameGridInventory, bool> applies, Func<GameGridInventory, ActionAvailability> availability, Action<GameGridInventory> open) =>
+            Add(new Entry { Id = id, Grid = true, GridLabel = label, GridApplies = applies, GridAvailable = availability, GridAction = open });
+        private static ActionAvailability ContextAvailability(string id, Func<bool> available)
         {
             var feature = ShopSettings.ContextFeatureAvailability(id);
             if (!feature.Allowed) return feature;
@@ -85,8 +89,8 @@ namespace ShopAssist
         private static void Add(Entry entry)
         {
             if (string.IsNullOrEmpty(entry.Id) || entries.Exists(other => other.Id == entry.Id) ||
-                (entry.Grid ? entry.GridLabel == null || entry.GridAvailable == null || entry.GridAction == null :
-                    entry.ItemLabel == null || entry.ItemAvailable == null || entry.ItemAction == null))
+                (entry.Grid ? entry.GridLabel == null || entry.GridApplies == null || entry.GridAvailable == null || entry.GridAction == null :
+                    entry.ItemLabel == null || entry.ItemApplies == null || entry.ItemAvailable == null || entry.ItemAction == null))
                 throw new ArgumentException("Invalid or duplicate inventory menu action.");
             entries.Add(entry);
         }
@@ -94,7 +98,13 @@ namespace ShopAssist
         {
             Entry entry = entries.Find(candidate => candidate.Grid && candidate.Id == id);
             if (entry == null) return ActionAvailability.Blocked(ActionUnavailableReason.Unsupported, "availability.unsupported");
-            try { return entry.GridAvailable(grid); }
+            try
+            {
+                var feature = ShopSettings.ContextFeatureAvailability(id);
+                if (!feature.Allowed) return feature;
+                if (!entry.GridApplies(grid)) return ActionAvailability.Blocked(ActionUnavailableReason.MissingObject, "availability.object");
+                return entry.GridAvailable(grid);
+            }
             catch (Exception error)
             {
                 Debug.LogError("[ShopAssist] Context action " + id + " availability failed: " + error);
@@ -145,7 +155,7 @@ namespace ShopAssist
                 if (ReferenceEquals(entry.Parent, layout?.Window)) { entry.Button = null; entry.Parent = null; }
         }
         private static string NodeName(string id) => id == "f05.open" ? "ShopAssist_SortMenu" :
-            id == "f06.hold" ? "ShopAssist_HoldMenu" : id == "f07.open" ? "ShopAssist_RouteMenu" : "ShopAssist_" + id.Replace('.', '_');
+            id == "f07.open" ? "ShopAssist_RouteMenu" : "ShopAssist_" + id.Replace('.', '_');
 
         private static void Render(bool gridMenu, PixelWindow menu, GameItem item, GameGridInventory grid, bool opened)
         {
@@ -160,8 +170,11 @@ namespace ShopAssist
                 if (entry.Grid != gridMenu) continue;
                 try
                 {
-                    if (!(gridMenu ? entry.GridAvailable(grid) : entry.ItemAvailable(item)).Allowed) continue;
+                    if (!ShopSettings.ContextFeatureAvailability(entry.Id).Allowed ||
+                        !(gridMenu ? entry.GridApplies(grid) : entry.ItemApplies(item))) continue;
+                    ActionAvailability availability = gridMenu ? entry.GridAvailable(grid) : entry.ItemAvailable(item);
                     string label = gridMenu ? entry.GridLabel(grid) : entry.ItemLabel(item);
+                    if (!availability.Allowed && !string.IsNullOrWhiteSpace(label)) label += " · " + availability.Message;
                     if (!string.IsNullOrWhiteSpace(label)) visible.Add((entry, label));
                 }
                 catch (Exception error) { Debug.LogError("[ShopAssist] Context action " + entry.Id + " failed: " + error); }
@@ -175,6 +188,7 @@ namespace ShopAssist
             foreach (var row in visible)
             {
                 row.entry.Parent = menu;
+                row.entry.DisplayedLabel = row.label;
                 row.entry.Button = new RichTextElement();
                 row.entry.Button.handler.gameObject.name = NodeName(row.entry.Id);
                 row.entry.Button.SetText(row.label, 10000, RenderHandler.ColorPalette.LightGray);
@@ -257,8 +271,7 @@ namespace ShopAssist
             foreach (Entry entry in entries)
             {
                 if (entry.Button?.handler == null || !ReferenceEquals(entry.Parent, persistentWindow) || !entry.Button.handler.gameObject.activeSelf) continue;
-                string label = entry.Grid ? entry.GridLabel(persistentGrid) : entry.ItemLabel(persistentItem);
-                entry.Button.SetText(label, 10000, ReferenceEquals(entry.Button, button) ? RenderHandler.ColorPalette.VeryLightGray : RenderHandler.ColorPalette.LightGray);
+                entry.Button.SetText(entry.DisplayedLabel, 10000, ReferenceEquals(entry.Button, button) ? RenderHandler.ColorPalette.VeryLightGray : RenderHandler.ColorPalette.LightGray);
             }
             hovered = button;
         }
@@ -271,8 +284,13 @@ namespace ShopAssist
                 if (!ReferenceEquals(entry.Button, button)) continue;
                 try
                 {
-                    ActionAvailability availability = entry.Grid ? entry.GridAvailable(grid) : entry.ItemAvailable(item);
+                    ActionAvailability availability = ShopSettings.ContextFeatureAvailability(entry.Id);
+                    if (availability.Allowed && !(entry.Grid ? entry.GridApplies(grid) : entry.ItemApplies(item)))
+                        availability = ActionAvailability.Blocked(ActionUnavailableReason.MissingObject, "availability.object");
+                    if (availability.Allowed) availability = entry.Grid ? entry.GridAvailable(grid) : entry.ItemAvailable(item);
+                    var selection = ShopSelection.SaveContext();
                     handler.Stop(); ForgetSession();
+                    ShopSelection.RestoreContext(selection);
                     if (availability.Allowed)
                     {
                         if (entry.Grid) entry.GridAction(grid); else entry.ItemAction(item);
@@ -281,6 +299,7 @@ namespace ShopAssist
                 }
                 catch (Exception error)
                 { Debug.LogError("[ShopAssist] Context action " + entry.Id + " failed: " + error); ShopNotice.Show(ShopSettings.Text("availability.unknown")); }
+                finally { ShopSelection.ClearContext(); }
                 return false;
             }
             return true;
@@ -304,6 +323,8 @@ namespace ShopAssist
                     __instance.Stop(); ForgetSession(); consumedFrame = Time.frameCount;
                     return false;
                 }
+                if (keysPressed.Contains(__instance.triggerKey) || keysPressed.Contains(__instance.sortMenuKey))
+                    ShopSelection.CaptureContext();
                 if (keysPressed.Contains(__instance.triggerKey) && EmporiumOption.SortMenuDisabled &&
                     ItemSelectHandler.current != null && !ItemSelectHandler.current.IsEquipped && !ItemPinHelper.BlocksClicks &&
                     ItemMouseDragHandler.current != null && !ItemMouseDragHandler.current.IsDraggingItem &&
@@ -314,9 +335,10 @@ namespace ShopAssist
                 }
                 return true;
             }
-            private static void Postfix(PixelWindow ___contextWindow, GameItem ___currentItem)
+            private static void Postfix(PixelWindow ___contextWindow, PixelWindow ___sortWindow, GameItem ___currentItem)
             {
                 if (___currentItem != null) Render(false, ___contextWindow, ___currentItem, null, true);
+                else if (___sortWindow?.IsVisible() != true) ShopSelection.ClearContext();
             }
         }
         [HarmonyPatch(typeof(ItemContextHandler), "get_keyListeners")]
@@ -343,7 +365,10 @@ namespace ShopAssist
             }
         }
         [HarmonyPatch(typeof(ItemContextHandler), "OnEventReset")]
-        private static class ResetPatch { private static void Postfix() => ForgetSession(); }
+        private static class ResetPatch
+        {
+            private static void Postfix() { ForgetSession(); ShopSelection.ClearContext(); }
+        }
         [HarmonyPatch(typeof(StoreUIManager), nameof(StoreUIManager.ResolveEscape))]
         private static class EscapePatch
         {

@@ -9,22 +9,19 @@ using UnityEngine.UI;
 
 namespace ShopAssist
 {
+    // Direct actions belong to the object or native panel the player is using.
     internal sealed class ContextShortcuts : IDisposable
     {
-        private static ContextShortcuts current;
-        private static readonly Vector3[] tooltipCorners = new Vector3[4];
-        private sealed class MachineEntry
-        {
-            internal PixelWindow Window;
-            internal GameItem Machine;
-            internal MachineryButton Button;
-        }
+        private static readonly System.Reflection.FieldInfo NativeWindowBackground = AccessTools.Field(typeof(PixelWindow), "background");
+        private static readonly System.Reflection.FieldInfo NativeButtonPlate = AccessTools.Field(typeof(MachineryButton), "plate");
+        private static readonly Vector3[] corners = new Vector3[4];
+        private static readonly string[] MachineActions = { "f10.open", "f31.open", "f32.open", "f33.open", "f35.open" };
 
-        private sealed class ToolEntry
+        private sealed class WindowAction
         {
             internal PixelWindow Window;
             internal GameItem Owner;
-            internal bool Machine;
+            internal string Key, Label;
             internal MachineryButton Button;
         }
 
@@ -35,31 +32,24 @@ namespace ShopAssist
             internal Button Button;
             internal string Command;
             internal int Index;
-        }
-
-        private sealed class CardAction
-        {
-            internal string Key;
-            internal Func<ActionAvailability> Evaluate;
-            internal CustomUIElement Button;
+            internal bool Inspection;
         }
 
         private readonly ShopSettings settings;
         private readonly CustomerInventory listings;
         private readonly Action<string> log;
-        private readonly Dictionary<PixelWindow, MachineEntry> machines = new Dictionary<PixelWindow, MachineEntry>();
-        private readonly Dictionary<PixelWindow, ToolEntry> toolButtons = new Dictionary<PixelWindow, ToolEntry>();
+        private readonly Dictionary<PixelWindow, Dictionary<string, WindowAction>> windowActions = new Dictionary<PixelWindow, Dictionary<string, WindowAction>>();
         private readonly Dictionary<string, PanelShortcut> panelButtons = new Dictionary<string, PanelShortcut>();
-        private readonly List<CardAction> cardActions = new List<CardAction>();
-        private CustomUIWindow contextCard;
-        private CustomUIElement contextEmpty, contextShowDisabled;
-        private PixelWindow contextOwner;
         private GameObject customerButton;
         private Button customerControl;
         private RectTransform customerRect, customerPanel;
         private NegotiationTabletFrame customerFrame;
         private bool started, dirty = true;
         private float refreshAt;
+        private PixelWindow measuredStock;
+        private Rect stockOffsets;
+        private Vector2 measuredStockSize;
+        private float measureStockAt;
         private string lastError;
 
         internal ContextShortcuts(ShopSettings settings, CustomerInventory listings, Action<string> log)
@@ -73,11 +63,10 @@ namespace ShopAssist
         {
             if (started) return;
             started = true;
-            current = this;
-            InventoryContextActions.RegisterItem("f22.open", _ => ShopSettings.Text("f22.open"), BatchLabeler.CanOpenFor, BatchLabeler.OpenFor);
-            InventoryContextActions.RegisterItem("f24.choose", _ => ShopSettings.Text("f24.choose"), AppraisalReceipt.CanBind, AppraisalReceipt.OpenBind);
-            InventoryContextActions.RegisterItem("f25.open", _ => ShopSettings.Text("f25.open"), TripCargo.CanOpenFor, TripCargo.OpenFor);
-            InventoryContextActions.RegisterItem("f29.open", _ => ShopSettings.Text("f29.open"), DisplayRestock.CanOpenFor, DisplayRestock.OpenFor);
+            InventoryContextActions.RegisterItem("f22.open", _ => ShopSettings.Text("f22.open"), BatchLabeler.AppliesTo, BatchLabeler.AvailabilityFor, BatchLabeler.OpenFor);
+            InventoryContextActions.RegisterItem("f24.choose", _ => ShopSettings.Text("f24.choose"), AppraisalReceipt.AppliesTo, AppraisalReceipt.AvailabilityFor, AppraisalReceipt.OpenBind);
+            InventoryContextActions.RegisterItem("f25.open", _ => ShopSettings.Text("f25.open"), TripCargo.AppliesTo, TripCargo.AvailabilityFor, TripCargo.OpenFor);
+            InventoryContextActions.RegisterItem("f29.open", _ => ShopSettings.Text("f29.open"), DisplayRestock.AppliesTo, DisplayRestock.AvailabilityFor, DisplayRestock.OpenFor);
             settings.Changed += Invalidate;
             VisibleInventoryViews.Changed += Invalidate;
             ModHook.OnGameLoadedInit += Reset;
@@ -85,7 +74,7 @@ namespace ShopAssist
             SceneManager.activeSceneChanged += SceneChanged;
         }
 
-        private void Invalidate() { dirty = true; refreshAt = 0; }
+        private void Invalidate() { dirty = true; refreshAt = 0; measureStockAt = 0; }
         private void SceneChanged(Scene before, Scene after) => Reset();
 
         internal void Tick()
@@ -96,40 +85,33 @@ namespace ShopAssist
                 if (dirty || Time.unscaledTime >= refreshAt)
                 {
                     dirty = false;
-                    refreshAt = Time.unscaledTime + 0.25f;
-                    PixelWindow[] visible = ShopInventory.InStore && WindowsHandler.current?.visibleWindows != null
-                        ? WindowsHandler.current.visibleWindows.ToArray() : Array.Empty<PixelWindow>();
-                    RefreshMachines(visible);
-                    RefreshTools(visible);
+                    refreshAt = Time.unscaledTime + .25f;
+                    var visible = WindowsHandler.current?.visibleWindows?.ToList() ?? new List<PixelWindow>();
+                    PixelWindow stock = EmporiumEntry.Instance?.invWindow;
+                    PixelWindow ground = EmporiumEntry.Instance?.afterhourWindow;
+                    if (VisibleInventoryViews.Visible(stock) && !visible.Contains(stock)) visible.Add(stock);
+                    if (VisibleInventoryViews.Visible(ground) && !visible.Contains(ground)) visible.Add(ground);
+                    RefreshWindowActions(visible);
                     RefreshCustomer();
                     RefreshPanelButtons();
-                    settings.RefreshCommands();
-                    RefreshContextCard();
                     lastError = null;
                 }
-                bool available = CanInteract();
-                foreach (MachineEntry entry in machines.Values)
+                foreach (var group in windowActions.Values)
                 {
-                    bool enabled = available && MachineTools.ModulesAvailableFor(entry.Machine, entry.Window);
-                    entry.Button.SetDisabled(!enabled);
-                    if (entry.Window.style != WindowStyle.Machinery) PositionClassic(entry);
+                    foreach (WindowAction entry in group.Values)
+                        if (entry.Button?.handler != null) entry.Button.SetDisabled(!CanInteract(ReferenceEquals(entry.Window, EmporiumEntry.Instance?.afterhourWindow)));
+                    PositionWindowActions(group.Values.ToList());
                 }
-                foreach (ToolEntry entry in toolButtons.Values)
-                {
-                    entry.Button.SetDisabled(!available);
-                    if (entry.Window.style != WindowStyle.Machinery) PositionToolClassic(entry);
-                }
-                if (contextCard != null && (!contextCard.IsAlive || contextOwner == null || !VisibleInventoryViews.Visible(contextOwner)))
-                    CloseContextCard();
                 foreach (PanelShortcut button in panelButtons.Values)
                     if (button.Root != null && button.Button != null)
                     {
-                        button.Button.interactable = available && settings.CanRun(button.Command);
+                        // Keep an enabled feature clickable so a changed prerequisite can explain itself.
+                        button.Button.interactable = CanInteract();
                         PositionPanelShortcut(button);
                     }
                 if (customerControl != null)
                 {
-                    customerControl.interactable = available && listings.CanOpen() &&
+                    customerControl.interactable = CanInteract() &&
                         (customerFrame?.confirmRoot == null || !customerFrame.confirmRoot.activeInHierarchy);
                     PositionCustomer();
                 }
@@ -143,231 +125,263 @@ namespace ShopAssist
             }
         }
 
-        private void RefreshTools(PixelWindow[] windows)
+        private void RefreshWindowActions(IEnumerable<PixelWindow> windows)
         {
-            var visible = new HashSet<PixelWindow>();
-            foreach (PixelWindow window in windows)
-                {
-                    if (!VisibleInventoryViews.Visible(window) || window.isLocked || window.handler == null) continue;
-                    GameItem owner = null;
-                    if (window.parentItems != null)
-                        foreach (GameItem item in window.parentItems)
-                        {
-                            if (item == null || !ReferenceEquals(item.contentWindow, window) || !ShopInventory.Owned(item)) continue;
-                            if (owner != null && !ReferenceEquals(owner, item)) { owner = null; break; }
-                            owner = item;
-                        }
-                    bool storage = ReferenceEquals(window, EmporiumEntry.Instance.invWindow) || owner != null && ShopInventory.SafeContainerForPeek(owner);
-                    bool machine = !storage && owner != null && owner.contentWindow?.childElement is MachineryPanelRow;
-                    if (!machine && !storage) continue;
-                    visible.Add(window);
-                    if (toolButtons.TryGetValue(window, out ToolEntry existing) && existing.Owner == owner && existing.Machine == machine && existing.Button?.handler != null)
+            var seen = new HashSet<PixelWindow>();
+            foreach (PixelWindow window in windows.Distinct())
+            {
+                if (!VisibleInventoryViews.Visible(window) || window.handler == null) continue;
+                bool stock = ShopInventory.InStore && ReferenceEquals(window, EmporiumEntry.Instance?.invWindow);
+                bool ground = PlayerStore.HasInstance && MapUIManager.Instance?.Current?.Id == AfterhourLocation.DUMPING_GROUND &&
+                    ReferenceEquals(window, EmporiumEntry.Instance?.afterhourWindow);
+                GameItem owner = null;
+                if (!stock && !ground && ShopInventory.InStore && window.parentItems != null)
+                    foreach (GameItem item in window.parentItems)
                     {
-                        string title = ShopSettings.Text("visual.tools");
-                        if (existing.Button.text != title) existing.Button.SetText(title);
+                        if (item == null || !ReferenceEquals(item.contentWindow, window) || !ShopInventory.Owned(item)) continue;
+                        if (owner != null && !ReferenceEquals(owner, item)) { owner = null; break; }
+                        owner = item;
+                    }
+
+                var wanted = new List<(string key, string label)>();
+                if (stock)
+                {
+                    AddIfEnabled(wanted, "f11.open", "f11.context");
+                    AddIfEnabled(wanted, "f30.open", "f30.context");
+                    AddIfEnabled(wanted, "f13.close", "f13.context");
+                    if (AttentionBook.Count > 0) wanted.Add(("attention", "attention"));
+                    if (ShopNotice.HasResult) wanted.Add(("result", "operation.last"));
+                }
+                else if (ground)
+                {
+                    AddIfEnabled(wanted, "f36.open", "f36.context");
+                    if (ShopNotice.HasResult) wanted.Add(("result", "operation.last"));
+                }
+                else if (owner != null)
+                {
+                    foreach (string key in MachineActions)
+                        if (settings.FeatureAvailability(key).Allowed && (key == "f10.open" ?
+                            MachineTools.ModuleContextApplies(owner, window) : MachineTools.SupportsContextAction(key, owner)))
+                            wanted.Add((key, key.Substring(0, 3) + ".context"));
+                }
+
+                if (wanted.Count == 0) continue;
+                seen.Add(window);
+                if (!windowActions.TryGetValue(window, out var group))
+                    windowActions.Add(window, group = new Dictionary<string, WindowAction>());
+                var keys = new HashSet<string>(wanted.Select(item => item.key));
+                foreach (string key in group.Keys.ToArray())
+                    if (!keys.Contains(key) || !ReferenceEquals(group[key].Owner, owner)) RemoveWindowAction(group, key);
+                foreach (var item in wanted)
+                {
+                    string label = item.key == "attention" ? ShopSettings.Format("visual.attention_count", AttentionBook.Count) : ShopSettings.Text(item.label);
+                    if (group.TryGetValue(item.key, out WindowAction existing) && existing.Button?.handler != null)
+                    {
+                        if (existing.Button.text != label) existing.Button.SetText(label);
                         continue;
                     }
-                    if (existing != null) RemoveTool(existing);
-                    var entry = new ToolEntry { Window = window, Owner = owner, Machine = machine };
-                    entry.Button = new MachineryButton(ShopSettings.Text("visual.tools"), () => OpenContextCard(entry));
-                    entry.Button.handler.gameObject.name = "ShopAssist_WindowTools";
-                    toolButtons[window] = entry;
-                    if (window.style == WindowStyle.Machinery) window.AddHeaderButton(entry.Button);
-                    else { entry.Button.handler.SetParent(window.handler); PositionToolClassic(entry); }
+                    var entry = new WindowAction { Window = window, Owner = owner, Key = item.key, Label = item.label };
+                    entry.Button = new MachineryButton(label, () => RunWindowAction(entry));
+                    entry.Button.handler.gameObject.name = "ShopAssist_Action_" + item.key.Replace('.', '_');
+                    entry.Button.handler.SetParent(window.handler);
+                    group[item.key] = entry;
                 }
-            foreach (PixelWindow window in toolButtons.Keys.ToArray())
-                if (!visible.Contains(window)) RemoveTool(toolButtons[window]);
+            }
+            foreach (PixelWindow window in windowActions.Keys.ToArray())
+                if (!seen.Contains(window)) RemoveWindowGroup(window);
         }
 
-        private ActionAvailability MachineAvailability(string key, GameItem item, PixelWindow window)
+        private void AddIfEnabled(List<(string key, string label)> wanted, string key, string label)
         {
-            var feature = settings.FeatureAvailability(key);
-            if (!feature.Allowed) return feature;
-            if (key != "f10.open") return MachineTools.Availability(key, item);
-            return MachineTools.ModulesAvailableFor(item, window) ? ActionAvailability.Ready :
-                ActionAvailability.Blocked(ActionUnavailableReason.MissingObject, "availability.object");
+            if (settings.FeatureAvailability(key).Allowed) wanted.Add((key, label));
         }
 
-        private static void PositionToolClassic(ToolEntry entry)
+        private void RunWindowAction(WindowAction entry)
         {
-            if (entry.Window?.handler == null || entry.Button?.handler == null) return;
-            var rect = entry.Button.handler.rectTransform;
-            rect.anchoredPosition = new Vector2(Mathf.Max(0, entry.Window.widthPixels - entry.Button.widthPixels - 18), -2f);
-            ClampToScreen(rect, entry.Window.handler.rectTransform);
-        }
-
-        private void RemoveTool(ToolEntry entry)
-        {
-            toolButtons.Remove(entry.Window);
-            if (entry.Button?.handler == null) return;
-            if (entry.Window?.handler != null && entry.Window.style == WindowStyle.Machinery)
-                entry.Window.RemoveHeaderButton(entry.Button);
-            UnityEngine.Object.Destroy(entry.Button.handler.gameObject);
-        }
-
-        private void OpenContextCard(ToolEntry entry)
-        {
-            if (!CanInteract() || entry?.Window == null || !VisibleInventoryViews.Visible(entry.Window) ||
-                entry.Machine && (entry.Owner == null || !ReferenceEquals(entry.Owner.contentWindow, entry.Window) || !ShopInventory.Owned(entry.Owner))) return;
-            OverlayHandler.current?.HideTooltip();
+            if (!CanInteract(ReferenceEquals(entry.Window, EmporiumEntry.Instance?.afterhourWindow)) || !VisibleInventoryViews.Visible(entry.Window)) return;
+            if (entry.Key == "attention") { AttentionBook.Open(); return; }
+            if (entry.Key == "result") { ShopNotice.OpenLastResult(); return; }
+            if (entry.Owner == null) { settings.Run(entry.Key); return; }
+            GameItem owner = entry.Owner;
+            if (!ShopInventory.Owned(owner) || !ReferenceEquals(owner.contentWindow, entry.Window) ||
+                !(entry.Key == "f10.open" ? MachineTools.ModuleContextApplies(owner, entry.Window) : MachineTools.SupportsContextAction(entry.Key, owner)))
+            { ShopNotice.Show(ShopSettings.Text("availability.object")); return; }
+            ActionAvailability availability = settings.FeatureAvailability(entry.Key);
+            if (availability.Allowed)
+                availability = entry.Key == "f10.open"
+                    ? MachineTools.ModuleContextAvailability(owner, entry.Window)
+                    : MachineTools.Availability(entry.Key, owner);
+            if (!availability.Allowed) { ShopNotice.Show(availability.Message); return; }
             entry.Window.ToFront();
-            CloseContextCard();
-            var actions = new List<(string key, Func<ActionAvailability> availability, Action run)>();
-            if (entry.Machine)
+            switch (entry.Key)
             {
-                if (MachineTools.SupportsContextAction("f10.open", entry.Owner))
-                    actions.Add(("f10.open", () => MachineAvailability("f10.open", entry.Owner, entry.Window), () => MachineTools.OpenModulesFor(entry.Owner)));
-                if (MachineTools.SupportsContextAction("f31.open", entry.Owner))
-                    actions.Add(("f31.open", () => MachineAvailability("f31.open", entry.Owner, entry.Window), () => MachineTools.OpenMaintenanceFor(entry.Owner, 31)));
-                if (MachineTools.SupportsContextAction("f32.open", entry.Owner))
-                    actions.Add(("f32.open", () => MachineAvailability("f32.open", entry.Owner, entry.Window), () => MachineTools.OpenReplantFor(entry.Owner)));
-                if (MachineTools.SupportsContextAction("f33.open", entry.Owner))
-                    actions.Add(("f33.open", () => MachineAvailability("f33.open", entry.Owner, entry.Window), () => MachineTools.OpenFeedFor(entry.Owner)));
-                if (MachineTools.SupportsContextAction("f35.open", entry.Owner))
-                    actions.Add(("f35.open", () => MachineAvailability("f35.open", entry.Owner, entry.Window), () => MachineTools.OpenMaintenanceFor(entry.Owner, 35)));
+                case "f10.open": MachineTools.OpenModulesFor(owner); break;
+                case "f31.open": MachineTools.OpenMaintenanceFor(owner, 31); break;
+                case "f32.open": MachineTools.OpenReplantFor(owner); break;
+                case "f33.open": MachineTools.OpenFeedFor(owner); break;
+                case "f35.open": MachineTools.OpenMaintenanceFor(owner, 35); break;
             }
-            else
-                foreach (string key in new[] { "f05.open", "f07.open" })
+        }
+
+        private static bool ScreenRect(RectTransform rect, Camera camera, out Rect bounds)
+        {
+            bounds = default;
+            if (rect == null) return false;
+            rect.GetWorldCorners(corners);
+            Vector2 first = RectTransformUtility.WorldToScreenPoint(camera, corners[0]);
+            float minX = first.x, maxX = first.x, minY = first.y, maxY = first.y;
+            for (int i = 1; i < corners.Length; i++)
+            {
+                Vector2 p = RectTransformUtility.WorldToScreenPoint(camera, corners[i]);
+                minX = Mathf.Min(minX, p.x); maxX = Mathf.Max(maxX, p.x);
+                minY = Mathf.Min(minY, p.y); maxY = Mathf.Max(maxY, p.y);
+            }
+            bounds = Rect.MinMaxRect(minX, minY, maxX, maxY);
+            return bounds.width > 0 && bounds.height > 0;
+        }
+
+        private static Rect Union(Rect a, Rect b) => Rect.MinMaxRect(Mathf.Min(a.xMin, b.xMin), Mathf.Min(a.yMin, b.yMin),
+            Mathf.Max(a.xMax, b.xMax), Mathf.Max(a.yMax, b.yMax));
+
+        // Place the actions as one group outside the object's frame. Measuring the
+        // rendered plate accounts for the game's pixel scale and translated labels.
+        private void PositionWindowActions(List<WindowAction> entries)
+        {
+            if (entries.Count == 0) return;
+            PixelWindow window = entries[0].Window;
+            RectTransform parent = window?.handler?.rectTransform;
+            if (parent == null) return;
+            Camera camera = CanvasCamera(parent);
+            var background = NativeWindowBackground?.GetValue(window) as TreeNodeRender;
+            if (!ScreenRect(background?.rectTransform, camera, out Rect avoid) && !ScreenRect(parent, camera, out avoid)) return;
+            if (ReferenceEquals(window, EmporiumEntry.Instance?.invWindow))
+            {
+                Rect frame = avoid;
+                Vector2 frameSize = frame.size;
+                if (!ReferenceEquals(measuredStock, window) || measuredStockSize != frameSize || Time.unscaledTime >= measureStockAt)
                 {
-                    string action = key;
-                    GameGridInventory target = ContextGrid(entry);
-                    actions.Add((action, () => target != null && ReferenceEquals(ContextGrid(entry), target)
-                            ? InventoryContextActions.EvaluateGrid(action, target)
-                            : ActionAvailability.Blocked(ActionUnavailableReason.MissingObject, "availability.object"),
-                        () => InventoryContextActions.RunGrid(action, target)));
+                    GameGridInventory grid = EmporiumEntry.Instance.invElement;
+                    if (ScreenRect(grid?.inner?.rectTransform, camera, out Rect gridBounds)) avoid = Union(avoid, gridBounds);
+                    if (grid?.childItems != null)
+                        foreach (GameItem item in grid.childItems)
+                            if (item is GameItemElement element && element.handler != null && element.handler.gameObject.activeInHierarchy &&
+                                ScreenRect(element.background?.rectTransform, camera, out Rect itemBounds)) avoid = Union(avoid, itemBounds);
+                    measuredStock = window; measuredStockSize = frameSize; measureStockAt = Time.unscaledTime + .25f;
+                    stockOffsets = Rect.MinMaxRect(avoid.xMin - frame.xMin, avoid.yMin - frame.yMin,
+                        avoid.xMax - frame.xMin, avoid.yMax - frame.yMin);
                 }
-            string objectName = entry.Owner != null ? entry.Owner.GetDisplayName(true) : ShopSettings.Text("inv.stock");
-            Vector2 size = UiLayout.Fit(390, Mathf.Min(430, 185 + actions.Count * 44));
-            var builder = CustomUIManager.Window(ModEntry.Id + ".context", ShopSettings.Text("visual.object_tools") + " · " + objectName, CustomUIManager.LAYER_META)
-                .SetSize(size.x, size.y).SetDraggable(true).SetCloseOnEscape(true);
-            contextCard = builder.GetWindow(); contextOwner = entry.Window;
-            CustomUIWindow own = contextCard;
-            if (own.frame?.titleText != null) { own.frame.titleText.richText = false; own.frame.titleText.fontSize = 19; own.frame.titleText.enableAutoSizing = false; }
-            builder.OnClose(() =>
-            {
-                if (ReferenceEquals(contextCard, own)) { contextCard = null; contextOwner = null; contextEmpty = contextShowDisabled = null; cardActions.Clear(); }
-            });
-            builder.AddToggle(ShopSettings.Text("visual.show_disabled"), settings.ShowDisabledTools, value =>
-            {
-                settings.ShowDisabledToolsChanged(value); RefreshContextCard();
-            }, "show_disabled");
-            contextShowDisabled = builder.Last;
-            builder.Last.SetPreferredSize(-1, 38);
-            if (builder.Last.text != null) { builder.Last.text.fontSize = 19; builder.Last.text.enableAutoSizing = false; }
-            builder.BeginScrollFlexible(80);
-            foreach (var action in actions.OrderBy(value => FeatureCatalog.For(value.key).Category).ThenBy(value => FeatureCatalog.Order(value.key)))
-            {
-                Action run = action.run;
-                Func<ActionAvailability> evaluate = action.availability;
-                var cardAction = new CardAction { Key = action.key, Evaluate = evaluate };
-                builder.AddButton(ShopSettings.Text(action.key), () =>
-                {
-                    if (!CanInteract() || !VisibleInventoryViews.Visible(entry.Window)) { CloseContextCard(); return; }
-                    if (entry.Machine && (entry.Owner == null || !ShopInventory.Owned(entry.Owner) || entry.Owner.contentWindow != entry.Window)) { CloseContextCard(); return; }
-                    var current = evaluate();
-                    if (!current.Allowed) { CloseContextCard(); ShopNotice.Show(current.Message); return; }
-                    entry.Window.ToFront(); CloseContextCard(); run();
-                }, action.key);
-                cardAction.Button = builder.Last;
-                ShopSettings.StyleToolRow(builder.Last);
-                cardActions.Add(cardAction);
+                else avoid = Rect.MinMaxRect(frame.xMin + stockOffsets.xMin, frame.yMin + stockOffsets.yMin,
+                    frame.xMin + stockOffsets.xMax, frame.yMin + stockOffsets.yMax);
             }
-            builder.AddLabel(ShopSettings.Text("visual.no_object_actions"), "empty"); contextEmpty = builder.Last;
-            builder.End().AddButton(ShopSettings.Text("visual.manage"), () =>
+            var measured = new List<(WindowAction entry, Rect bounds)>();
+            float width = 0, height = 0;
+            foreach (WindowAction entry in entries)
             {
-                CloseContextCard(); settings.OpenToolSettings(entry.Machine ? 2 : 0);
-            }, "manage");
-            ShopSettings.StyleToolRow(builder.Last);
-            builder.Show();
-            RefreshContextCard();
-            var rect = contextCard.root.transform as RectTransform;
-            if (rect?.parent is RectTransform parent && RectTransformUtility.ScreenPointToLocalPointInRectangle(parent,
-                (Vector2)Input.mousePosition + new Vector2(10, -10), CanvasCamera(parent), out Vector2 local))
+                if (entry.Button?.handler == null) continue;
+                entry.Button.handler.rectTransform.anchoredPosition = new Vector2(0, entry.Button.heightPixels + 3f);
+                var plate = NativeButtonPlate?.GetValue(entry.Button) as TreeNodeRender;
+                if (!ScreenRect(plate?.rectTransform, camera, out Rect bounds)) continue;
+                measured.Add((entry, bounds));
+                width = Mathf.Max(width, bounds.width); height = Mathf.Max(height, bounds.height);
+            }
+            if (measured.Count == 0 || width <= 0 || height <= 0) return;
+            const float gap = 3f, margin = 2f;
+            int columns = Mathf.Max(1, Mathf.Min(measured.Count, Mathf.FloorToInt((Screen.width - 2 * margin + gap) / (width + gap))));
+            int rows = (measured.Count + columns - 1) / columns;
+            float groupWidth = columns * width + (columns - 1) * gap;
+            float groupHeight = rows * height + (rows - 1) * gap;
+            float x = Mathf.Clamp(avoid.xMax - groupWidth, margin, Mathf.Max(margin, Screen.width - margin - groupWidth));
+            float y;
+            if (avoid.yMax + gap + groupHeight <= Screen.height - margin) y = avoid.yMax + gap;
+            else if (avoid.yMin - gap - groupHeight >= margin) y = avoid.yMin - gap - groupHeight;
+            else
             {
-                rect.anchorMin = rect.anchorMax = parent.pivot;
-                rect.pivot = new Vector2(0, 1); rect.anchoredPosition = local;
-                ClampToScreen(rect, parent);
+                columns = 1; rows = measured.Count; groupWidth = width; groupHeight = rows * height + (rows - 1) * gap;
+                if (avoid.xMax + gap + groupWidth <= Screen.width - margin) x = avoid.xMax + gap;
+                else if (avoid.xMin - gap - groupWidth >= margin) x = avoid.xMin - gap - groupWidth;
+                else x = Mathf.Clamp(avoid.xMax - groupWidth, margin, Mathf.Max(margin, Screen.width - margin - groupWidth));
+                y = Mathf.Clamp(avoid.yMax - groupHeight, margin, Mathf.Max(margin, Screen.height - margin - groupHeight));
+            }
+            for (int i = 0; i < measured.Count; i++)
+            {
+                var item = measured[i];
+                int column = i % columns, row = i / columns;
+                Vector2 wanted = new Vector2(x + column * (width + gap), y + (rows - 1 - row) * (height + gap));
+                Vector2 delta = wanted - item.bounds.min;
+                RectTransform rect = item.entry.Button.handler.rectTransform;
+                Vector2 origin = RectTransformUtility.WorldToScreenPoint(camera, rect.position);
+                if (RectTransformUtility.ScreenPointToLocalPointInRectangle(parent, origin, camera, out Vector2 before) &&
+                    RectTransformUtility.ScreenPointToLocalPointInRectangle(parent, origin + delta, camera, out Vector2 after))
+                    rect.anchoredPosition += after - before;
             }
         }
 
-        private static GameGridInventory ContextGrid(ToolEntry entry)
+        private static void RemoveWindowAction(Dictionary<string, WindowAction> group, string key)
         {
-            if (entry?.Window == null || entry.Window.isLocked || !VisibleInventoryViews.Visible(entry.Window)) return null;
-            if (entry.Owner != null)
-            {
-                if (!ShopInventory.Owned(entry.Owner) || !ReferenceEquals(entry.Owner.contentWindow, entry.Window)) return null;
-                if (entry.Window.childElement is GameGridInventory grid) return grid;
-                var visible = ShopInventory.OwnedLocations(true)
-                    .Where(location => ReferenceEquals(location.Owner, entry.Owner) && location.Ordinary && !location.IsMachine)
-                    .Select(location => location.Inventory as GameGridInventory).Where(inventory => inventory != null).Distinct().Take(2).ToArray();
-                return visible.Length == 1 ? visible[0] : null;
-            }
-            return ReferenceEquals(entry.Window, EmporiumEntry.Instance?.invWindow) ? EmporiumEntry.Instance.invElement : null;
+            if (!group.TryGetValue(key, out WindowAction entry)) return;
+            group.Remove(key);
+            if (entry.Button?.handler != null) UnityEngine.Object.Destroy(entry.Button.handler.gameObject);
         }
 
-        private void CloseContextCard()
+        private void RemoveWindowGroup(PixelWindow window)
         {
-            CustomUIWindow previous = contextCard; contextCard = null; contextOwner = null;
-            contextEmpty = contextShowDisabled = null;
-            cardActions.Clear();
-            if (previous != null && previous.IsAlive) previous.Close();
-        }
-
-        private void RefreshContextCard()
-        {
-            if (contextCard?.IsAlive != true || contextOwner == null || !VisibleInventoryViews.Visible(contextOwner)) return;
-            if (contextShowDisabled?.toggle != null && contextShowDisabled.GetBool() != settings.ShowDisabledTools)
-                contextShowDisabled.SetBool(settings.ShowDisabledTools, false);
-            int shown = 0;
-            foreach (var action in cardActions)
-            {
-                bool visible = settings.ShowDisabledTools || settings.FeatureAvailability(action.Key).Allowed;
-                if (action.Button?.root != null && action.Button.root.activeSelf != visible) action.Button.SetVisible(visible);
-                if (!visible) continue;
-                shown++;
-                ActionAvailability availability = action.Evaluate();
-                ShopSettings.UpdateActionButton(action.Button, availability);
-            }
-            contextEmpty?.SetVisible(shown == 0);
+            if (!windowActions.TryGetValue(window, out var group)) return;
+            foreach (string key in group.Keys.ToArray()) RemoveWindowAction(group, key);
+            windowActions.Remove(window);
         }
 
         private void RefreshPanelButtons()
         {
             var desired = new HashSet<string>();
             InspectionUIManager inspect = InspectionUIManager.Instance;
-            if (inspect?.appraisalPanel != null && inspect.appraisalPanel.activeInHierarchy && settings.CanRun("f23.open"))
-                EnsurePanelShortcut(desired, "ShopAssist_AppraisalTools", inspect.panel.transform as RectTransform, "f23.open", 0,
-                    inspect.appraisalPanel.transform as RectTransform);
-
+            if (inspect?.panel != null && inspect.panel.activeInHierarchy)
+            {
+                int index = 0;
+                RectTransform anchor = inspect.appraisalPanel != null && inspect.appraisalPanel.activeInHierarchy
+                    ? inspect.appraisalPanel.transform as RectTransform : inspect.magnifyingGlass?.transform as RectTransform;
+                if (inspect.appraisalPanel != null && inspect.appraisalPanel.activeInHierarchy && settings.FeatureAvailability("f23.open").Allowed)
+                    EnsurePanelShortcut(desired, "ShopAssist_AppraisalWorksheet", inspect.panel.transform as RectTransform, "f23.open", index++, anchor, true);
+                if (settings.FeatureAvailability("f18.reset").Allowed)
+                    EnsurePanelShortcut(desired, "ShopAssist_AppraisalReset", inspect.panel.transform as RectTransform, "f18.reset", index, anchor, true);
+            }
             PCUIManager pc = PCUIManager.Instance;
             if (pc?.panel != null && pc.panel.activeInHierarchy)
             {
                 int index = 0;
-                if (settings.CanRun("f27.open")) EnsurePanelShortcut(desired, "ShopAssist_RequestTools", pc.panel.transform as RectTransform, "f27.open", index++);
-                if (settings.CanRun("f28.open")) EnsurePanelShortcut(desired, "ShopAssist_LedgerTools", pc.panel.transform as RectTransform, "f28.open", index);
+                if (settings.FeatureAvailability("f27.open").Allowed) EnsurePanelShortcut(desired, "ShopAssist_RequestTools", pc.panel.transform as RectTransform, "f27.open", index++);
+                if (settings.FeatureAvailability("f28.open").Allowed) EnsurePanelShortcut(desired, "ShopAssist_LedgerTools", pc.panel.transform as RectTransform, "f28.open", index);
             }
-
             CustomUIWindow coordinator = CustomUIManager.Instance?.GetWindow("storage_coordinator");
-            if (coordinator?.IsVisible == true && settings.CanRun("f13.groups"))
+            if (coordinator?.IsVisible == true && settings.FeatureAvailability("f13.groups").Allowed)
                 EnsurePanelShortcut(desired, "ShopAssist_CoordinatorTools", coordinator.Rect, "f13.groups", 0);
-
             NegociationUIManager negotiation = NegociationUIManager.Instance;
             NegotiationTabletFrame frame = negotiation?.uiObject != null ? negotiation.uiObject.GetComponent<NegotiationTabletFrame>() : null;
-            if (negotiation != null && negotiation.IsOpen && frame?.panel != null && frame.panel.gameObject.activeInHierarchy && settings.CanRun("f34.open"))
-                EnsurePanelShortcut(desired, "ShopAssist_CustomerBasket", frame.panel, "f34.open", customerButton != null ? 1 : 0);
-
-            foreach (string id in panelButtons.Keys.ToArray())
-                if (!desired.Contains(id)) RemovePanelShortcut(id);
+            if (negotiation != null && negotiation.IsOpen && frame?.panel != null && frame.panel.gameObject.activeInHierarchy)
+            {
+                int index = customerButton != null ? 1 : 0;
+                if (settings.FeatureAvailability("f34.open").Allowed) EnsurePanelShortcut(desired, "ShopAssist_CustomerBasket", frame.panel, "f34.open", index++);
+                if (settings.FeatureAvailability("f14.reset").Allowed) EnsurePanelShortcut(desired, "ShopAssist_BargainReset", frame.panel, "f14.reset", index);
+            }
+            if (settings.FeatureAvailability("f19.choose").Allowed)
+            {
+                GameObject water = WaterScannerUIManager.Instance?.panel;
+                GameObject chem = ChemScannerUIManager.Instance?.panel;
+                if (water != null && water.activeInHierarchy) EnsurePanelShortcut(desired, "ShopAssist_WaterPins", water.transform as RectTransform, "f19.choose", 0);
+                if (chem != null && chem.activeInHierarchy) EnsurePanelShortcut(desired, "ShopAssist_ChemPins", chem.transform as RectTransform, "f19.choose", 0);
+            }
+            foreach (string id in panelButtons.Keys.ToArray()) if (!desired.Contains(id)) RemovePanelShortcut(id);
         }
 
-        private void EnsurePanelShortcut(HashSet<string> desired, string name, RectTransform parent, string command, int index, RectTransform anchor = null)
+        private void EnsurePanelShortcut(HashSet<string> desired, string name, RectTransform parent, string command, int index,
+            RectTransform anchor = null, bool inspection = false)
         {
             if (parent == null || !parent.gameObject.activeInHierarchy) return;
-            anchor = anchor != null ? anchor : parent;
             desired.Add(name);
-            if (panelButtons.TryGetValue(name, out PanelShortcut old) && old.Parent == parent && old.Anchor == anchor && old.Root != null)
+            if (panelButtons.TryGetValue(name, out PanelShortcut old) && old.Parent == parent && old.Root != null)
             {
                 old.Index = index;
+                old.Anchor = anchor != null ? anchor : parent;
+                old.Inspection = inspection;
                 TMP_Text existing = old.Root.GetComponentInChildren<TMP_Text>(true);
                 if (existing != null) existing.text = ShopSettings.Text(command);
                 return;
@@ -385,51 +399,71 @@ namespace ShopAssist
             if (layout != null) layout.ignoreLayout = true;
             rect.sizeDelta = new Vector2(112, 28);
             text.text = ShopSettings.Text(command); text.richText = false; text.raycastTarget = false;
+            text.enableAutoSizing = true; text.fontSizeMin = 11; text.fontSizeMax = 18;
             control.onClick = new Button.ButtonClickedEvent();
-            control.onClick.AddListener(() =>
-            {
-                if (CanInteract() && parent != null && parent.gameObject.activeInHierarchy && settings.CanRun(command)) settings.Run(command);
-            });
+            control.onClick.AddListener(() => { if (CanInteract() && parent != null && parent.gameObject.activeInHierarchy) settings.Run(command); });
             root.SetActive(true); rect.SetAsLastSibling();
-            panelButtons[name] = new PanelShortcut { Root = root, Rect = rect, Parent = parent, Anchor = anchor, Button = control, Command = command, Index = index };
+            panelButtons[name] = new PanelShortcut { Root = root, Rect = rect, Parent = parent, Anchor = anchor != null ? anchor : parent,
+                Button = control, Command = command, Index = index, Inspection = inspection };
             PositionPanelShortcut(panelButtons[name]);
         }
 
         private static void PositionPanelShortcut(PanelShortcut entry)
         {
             if (entry.Rect == null || entry.Parent == null) return;
-            if (entry.Anchor != null && entry.Anchor != entry.Parent)
+            if (entry.Inspection) PositionInspectionShortcut(entry);
+            else PositionOutsidePanel(entry.Rect, entry.Parent, entry.Index);
+        }
+
+        private static Camera PanelCamera(RectTransform rect)
+        {
+            Canvas canvas = rect != null ? rect.GetComponentInParent<Canvas>() : null;
+            if (canvas == null) return null;
+            GraphicRaycaster raycaster = canvas.GetComponent<GraphicRaycaster>();
+            return raycaster != null ? raycaster.eventCamera :
+                canvas.renderMode == RenderMode.ScreenSpaceOverlay ? null : canvas.worldCamera;
+        }
+
+        private static void PositionInspectionShortcut(PanelShortcut entry)
+        {
+            RectTransform actual = entry.Button?.transform as RectTransform;
+            if (actual == null || entry.Anchor == null || Screen.width <= 0 || Screen.height <= 0) return;
+            Camera camera = PanelCamera(actual);
+            if (!ScreenRect(actual, camera, out Rect button) || !ScreenRect(entry.Anchor, PanelCamera(entry.Anchor), out Rect anchor)) return;
+            Rect screen = new Rect(0, 0, Screen.width, Screen.height);
+            Canvas canvas = actual.GetComponentInParent<Canvas>()?.rootCanvas;
+            if (canvas != null)
             {
-                Camera anchorCamera = CanvasCamera(entry.Anchor), parentCamera = CanvasCamera(entry.Parent);
-                Vector3[] anchorCorners = new Vector3[4]; entry.Anchor.GetWorldCorners(anchorCorners);
-                Vector2 leftTop = RectTransformUtility.WorldToScreenPoint(anchorCamera, anchorCorners[1]);
-                Vector2 rightTop = RectTransformUtility.WorldToScreenPoint(anchorCamera, anchorCorners[2]);
-                Vector2 parentOrigin = RectTransformUtility.WorldToScreenPoint(parentCamera, entry.Parent.TransformPoint(Vector3.zero));
-                Vector2 parentWidth = RectTransformUtility.WorldToScreenPoint(parentCamera, entry.Parent.TransformPoint(new Vector3(entry.Rect.rect.width + 6, 0, 0)));
-                float screenWidth = Mathf.Abs(parentWidth.x - parentOrigin.x);
-                bool placeRight = Screen.width - rightTop.x >= screenWidth + 4 ||
-                    (leftTop.x < screenWidth + 4 && Screen.width - rightTop.x >= leftTop.x);
-                Vector2 screen = placeRight ? rightTop + new Vector2(4, -4) : leftTop + new Vector2(-screenWidth - 4, -4);
-                if (RectTransformUtility.ScreenPointToLocalPointInRectangle(entry.Parent, screen, parentCamera, out Vector2 local))
-                {
-                    entry.Rect.anchorMin = entry.Rect.anchorMax = entry.Parent.pivot;
-                    entry.Rect.pivot = new Vector2(0, 1); entry.Rect.anchoredPosition = local;
-                    ClampToScreen(entry.Rect, entry.Parent);
-                }
-                return;
+                Rect viewport = canvas.pixelRect;
+                float left = Mathf.Max(screen.xMin, viewport.xMin), right = Mathf.Min(screen.xMax, viewport.xMax);
+                float bottom = Mathf.Max(screen.yMin, viewport.yMin), top = Mathf.Min(screen.yMax, viewport.yMax);
+                if (right > left && top > bottom) screen = Rect.MinMaxRect(left, bottom, right, top);
             }
-            Camera camera = CanvasCamera(entry.Parent);
-            Vector3[] corners = new Vector3[4]; entry.Parent.GetWorldCorners(corners);
-            float left = RectTransformUtility.WorldToScreenPoint(camera, corners[0]).x;
-            float right = RectTransformUtility.WorldToScreenPoint(camera, corners[2]).x;
-            Vector2 origin = RectTransformUtility.WorldToScreenPoint(camera, entry.Parent.TransformPoint(Vector3.zero));
-            Vector2 end = RectTransformUtility.WorldToScreenPoint(camera, entry.Parent.TransformPoint(new Vector3(entry.Rect.rect.width + 6, 0, 0)));
-            float width = Mathf.Abs(end.x - origin.x);
-            bool useRight = Screen.width - right >= width + 4 || (left < width + 4 && Screen.width - right >= left);
-            entry.Rect.anchorMin = entry.Rect.anchorMax = new Vector2(useRight ? 1 : 0, 1);
-            entry.Rect.pivot = new Vector2(useRight ? 0 : 1, 1);
-            entry.Rect.anchoredPosition = new Vector2(useRight ? 4 : -4, -4 - entry.Index * 32);
-            ClampToScreen(entry.Rect, entry.Parent);
+            const float gap = 4f, margin = 2f;
+            float xMin = screen.xMin + margin, xMax = Mathf.Max(xMin, screen.xMax - margin - button.width);
+            float yMin = screen.yMin + margin, yMax = Mathf.Max(yMin, screen.yMax - margin - button.height);
+            float rightX = anchor.xMax + gap, leftX = anchor.xMin - gap - button.width;
+            float topY = anchor.yMax + gap, bottomY = anchor.yMin - gap - button.height;
+            float x, y;
+            if (rightX <= xMax || leftX >= xMin)
+            {
+                x = rightX <= xMax ? rightX : leftX;
+                y = anchor.yMax - button.height - entry.Index * (button.height + gap);
+            }
+            else if (topY <= yMax || bottomY >= yMin)
+            {
+                x = anchor.xMax - button.width - entry.Index * (button.width + gap);
+                y = topY <= yMax ? topY : bottomY;
+            }
+            else
+            {
+                x = screen.xMax - margin - button.width;
+                y = screen.yMax - margin - button.height - entry.Index * (button.height + gap);
+            }
+            Vector2 target = new Vector2(Mathf.Clamp(x, xMin, xMax), Mathf.Clamp(y, yMin, yMax));
+            if (RectTransformUtility.ScreenPointToLocalPointInRectangle(entry.Parent, button.min, camera, out Vector2 before) &&
+                RectTransformUtility.ScreenPointToLocalPointInRectangle(entry.Parent, target, camera, out Vector2 after))
+                entry.Rect.anchoredPosition += after - before;
         }
 
         private void RemovePanelShortcut(string id)
@@ -439,75 +473,16 @@ namespace ShopAssist
             if (entry.Root != null) UnityEngine.Object.Destroy(entry.Root);
         }
 
-        private void RefreshMachines(PixelWindow[] windows)
-        {
-            var visible = new HashSet<PixelWindow>();
-            foreach (PixelWindow window in windows)
-                {
-                    if (!VisibleInventoryViews.Visible(window) || window.isLocked || window.parentItems == null) continue;
-                    GameItem owner = null;
-                    foreach (GameItem item in window.parentItems)
-                    {
-                        if (item == null || !ReferenceEquals(item.contentWindow, window) || !MachineTools.ModulesAvailableFor(item, window)) continue;
-                        if (owner != null && !ReferenceEquals(owner, item)) { owner = null; break; }
-                        owner = item;
-                    }
-                    if (owner == null) continue;
-                    visible.Add(window);
-                    if (machines.TryGetValue(window, out MachineEntry existing) && ReferenceEquals(existing.Machine, owner) && existing.Button?.handler != null)
-                    {
-                        string label = ShopSettings.Text("f10.context");
-                        if (existing.Button.text != label) existing.Button.SetText(label);
-                        continue;
-                    }
-                    if (existing != null) RemoveMachine(existing);
-                    GameItem target = owner;
-                    var button = new MachineryButton(ShopSettings.Text("f10.context"), () =>
-                    {
-                        if (CanInteract() && MachineTools.ModulesAvailableFor(target, window)) MachineTools.OpenModulesFor(target);
-                    });
-                    button.handler.gameObject.name = "ShopAssist_MachineModules";
-                    var entry = new MachineEntry { Window = window, Machine = target, Button = button };
-                    machines[window] = entry;
-                    if (window.style == WindowStyle.Machinery) window.AddHeaderButton(button);
-                    else { button.handler.SetParent(window.handler); PositionClassic(entry); }
-            }
-            foreach (PixelWindow window in machines.Keys.ToArray())
-                if (!visible.Contains(window)) RemoveMachine(machines[window]);
-        }
-
-        private void RemoveMachine(MachineEntry entry)
-        {
-            machines.Remove(entry.Window);
-            if (entry.Button?.handler == null) return;
-            if (entry.Window?.handler != null && entry.Window.style == WindowStyle.Machinery)
-                entry.Window.RemoveHeaderButton(entry.Button);
-            UnityEngine.Object.Destroy(entry.Button.handler.gameObject);
-        }
-
-        private static void PositionClassic(MachineEntry entry)
-        {
-            if (entry.Window?.handler == null || entry.Button?.handler == null) return;
-            var rect = entry.Button.handler.rectTransform;
-            // Classic windows do not participate in the native header-button layout.
-            rect.anchoredPosition = new Vector2(entry.Window.widthPixels + 3f, -2f);
-            ClampToScreen(rect, entry.Window.handler.rectTransform);
-        }
-
         private void RefreshCustomer()
         {
             NegociationUIManager negotiation = NegociationUIManager.Instance;
             NegotiationTabletFrame frame = negotiation?.uiObject != null ? negotiation.uiObject.GetComponent<NegotiationTabletFrame>() : null;
-            if (!listings.CanOpen() || negotiation == null || !negotiation.IsOpen || frame?.panel == null ||
-                !frame.panel.gameObject.activeInHierarchy)
-            {
-                RemoveCustomer();
-                return;
-            }
+            if (!settings.FeatureAvailability("f11.open").Allowed || negotiation == null || !negotiation.IsOpen || frame?.panel == null || !frame.panel.gameObject.activeInHierarchy)
+            { RemoveCustomer(); return; }
             if (customerButton != null && ReferenceEquals(customerFrame, frame))
             {
                 TMP_Text label = customerButton.GetComponentInChildren<TMP_Text>(true);
-                if (label != null) label.text = ShopSettings.Text("f11.context");
+                if (label != null) label.text = ShopSettings.Text("f11.demand_context");
                 return;
             }
             RemoveCustomer();
@@ -519,41 +494,60 @@ namespace ShopAssist
             customerControl = customerButton.GetComponentInChildren<Button>(true);
             TMP_Text text = customerButton.GetComponentInChildren<TMP_Text>(true);
             if (customerRect == null || customerControl == null || text == null) { RemoveCustomer(); return; }
-            customerPanel = frame.panel;
-            customerFrame = frame;
+            customerPanel = frame.panel; customerFrame = frame;
             LayoutElement layout = customerButton.GetComponent<LayoutElement>();
             if (layout != null) layout.ignoreLayout = true;
-            customerRect.sizeDelta = new Vector2(104f, 28f);
-            text.text = ShopSettings.Text("f11.context");
-            text.richText = false;
-            text.raycastTarget = false;
+            customerRect.sizeDelta = new Vector2(104, 28);
+            text.text = ShopSettings.Text("f11.demand_context"); text.richText = false; text.raycastTarget = false;
             customerControl.onClick = new Button.ButtonClickedEvent();
             customerControl.onClick.AddListener(() =>
             {
-                if (CanInteract() && listings.CanOpen() && NegociationUIManager.Instance != null && NegociationUIManager.Instance.IsOpen &&
-                    (customerFrame?.confirmRoot == null || !customerFrame.confirmRoot.activeInHierarchy)) listings.Open();
+                if (!CanInteract() || NegociationUIManager.Instance == null || !NegociationUIManager.Instance.IsOpen ||
+                    customerFrame?.confirmRoot != null && customerFrame.confirmRoot.activeInHierarchy) return;
+                if (!listings.CanOpenDemand()) { ShopNotice.Show(ShopSettings.Text("f11.no_demand")); return; }
+                listings.OpenDemand();
             });
-            customerButton.SetActive(true);
-            customerRect.SetAsLastSibling();
-            PositionCustomer();
+            customerButton.SetActive(true); customerRect.SetAsLastSibling(); PositionCustomer();
         }
 
         private void PositionCustomer()
         {
             if (customerRect == null || customerPanel == null) return;
-            Camera camera = CanvasCamera(customerPanel);
-            Vector3[] corners = new Vector3[4];
-            customerPanel.GetWorldCorners(corners);
-            float left = RectTransformUtility.WorldToScreenPoint(camera, corners[0]).x;
-            float right = RectTransformUtility.WorldToScreenPoint(camera, corners[2]).x;
-            Vector2 origin = RectTransformUtility.WorldToScreenPoint(camera, customerPanel.TransformPoint(Vector3.zero));
-            Vector2 widthPoint = RectTransformUtility.WorldToScreenPoint(camera, customerPanel.TransformPoint(new Vector3(customerRect.rect.width + 6f, 0f, 0f)));
-            float width = Mathf.Abs(widthPoint.x - origin.x);
-            bool useRight = Screen.width - right >= width + 4f || (left < width + 4f && Screen.width - right >= left);
-            customerRect.anchorMin = customerRect.anchorMax = new Vector2(useRight ? 1f : 0f, 1f);
-            customerRect.pivot = new Vector2(useRight ? 0f : 1f, 1f);
-            customerRect.anchoredPosition = new Vector2(useRight ? 4f : -4f, -4f);
-            ClampToScreen(customerRect, customerPanel);
+            PositionOutsidePanel(customerRect, customerPanel, 0);
+        }
+
+        private static void PositionOutsidePanel(RectTransform rect, RectTransform parent, int index)
+        {
+            Camera camera = CanvasCamera(parent);
+            if (!ScreenRect(parent, camera, out Rect bounds)) return;
+            Vector2 origin = RectTransformUtility.WorldToScreenPoint(camera, parent.TransformPoint(Vector3.zero));
+            Vector2 horizontal = RectTransformUtility.WorldToScreenPoint(camera, parent.TransformPoint(new Vector3(rect.rect.width + 6, 0, 0)));
+            Vector2 vertical = RectTransformUtility.WorldToScreenPoint(camera, parent.TransformPoint(new Vector3(0, rect.rect.height + 4, 0)));
+            float width = Mathf.Abs(horizontal.x - origin.x), height = Mathf.Abs(vertical.y - origin.y);
+            bool fitsBelowTop = bounds.yMax - (index + 1) * height >= 2;
+            bool right = Screen.width - bounds.xMax >= width + 4;
+            bool left = bounds.xMin >= width + 4;
+            if (fitsBelowTop && (right || left))
+            {
+                rect.anchorMin = rect.anchorMax = new Vector2(right ? 1 : 0, 1);
+                rect.pivot = new Vector2(right ? 0 : 1, 1);
+                rect.anchoredPosition = new Vector2(right ? 4 : -4, -4 - index * (rect.rect.height + 4));
+            }
+            else if (Screen.height - bounds.yMax >= height + 4 || bounds.yMin >= height + 4)
+            {
+                bool above = Screen.height - bounds.yMax >= height + 4;
+                rect.anchorMin = rect.anchorMax = new Vector2(1, above ? 1 : 0);
+                rect.pivot = new Vector2(1, above ? 0 : 1);
+                rect.anchoredPosition = new Vector2(-index * (rect.rect.width + 6), above ? 4 : -4);
+            }
+            else
+            {
+                bool useRight = Screen.width - bounds.xMax >= bounds.xMin;
+                rect.anchorMin = rect.anchorMax = new Vector2(useRight ? 1 : 0, 1);
+                rect.pivot = new Vector2(useRight ? 0 : 1, 1);
+                rect.anchoredPosition = new Vector2(useRight ? 4 : -4, -4 - index * (rect.rect.height + 4));
+            }
+            ClampToScreen(rect, parent);
         }
 
         private static Camera CanvasCamera(RectTransform rect)
@@ -564,57 +558,26 @@ namespace ShopAssist
             return canvas == null || canvas.renderMode == RenderMode.ScreenSpaceOverlay ? null : canvas.worldCamera;
         }
 
-        private static bool OverToolWindow(CustomUIWindow window, Vector2 point)
-        {
-            if (window?.IsAlive != true || !window.root.activeInHierarchy || window.Rect == null) return false;
-            window.Rect.GetWorldCorners(tooltipCorners);
-            Camera camera = CanvasCamera(window.Rect);
-            Vector2 low = RectTransformUtility.WorldToScreenPoint(camera, tooltipCorners[0]);
-            Vector2 high = RectTransformUtility.WorldToScreenPoint(camera, tooltipCorners[2]);
-            const float margin = 20;
-            return point.x >= low.x - margin && point.x <= high.x + margin &&
-                point.y >= low.y - margin && point.y <= high.y + margin;
-        }
-
-        [HarmonyPatch(typeof(ItemTooltipHandler), "OnEventUpdate")]
-        private static class BlockToolBackgroundTooltip
-        {
-            private static bool Prefix(ref bool __result)
-            {
-                Vector2 point = Input.mousePosition;
-                if (!OverToolWindow(current?.contextCard, point) && !OverToolWindow(ShopSettings.OpenToolsWindow, point)) return true;
-                OverlayHandler.current?.HideTooltip();
-                __result = false;
-                return false;
-            }
-        }
-
         private static void ClampToScreen(RectTransform rect, RectTransform parent)
         {
             if (rect == null || parent == null || Screen.width <= 0 || Screen.height <= 0) return;
             Camera camera = CanvasCamera(rect);
-            Vector3[] corners = new Vector3[4];
-            rect.GetWorldCorners(corners);
-            float minX = float.PositiveInfinity, minY = float.PositiveInfinity, maxX = float.NegativeInfinity, maxY = float.NegativeInfinity;
-            foreach (Vector3 corner in corners)
-            {
-                Vector2 point = RectTransformUtility.WorldToScreenPoint(camera, corner);
-                minX = Mathf.Min(minX, point.x); maxX = Mathf.Max(maxX, point.x);
-                minY = Mathf.Min(minY, point.y); maxY = Mathf.Max(maxY, point.y);
-            }
-            float dx = minX < 2f ? 2f - minX : maxX > Screen.width - 2f ? Screen.width - 2f - maxX : 0f;
-            float dy = minY < 2f ? 2f - minY : maxY > Screen.height - 2f ? Screen.height - 2f - maxY : 0f;
-            if (dx == 0f && dy == 0f) return;
-            Vector2 pointOnScreen = RectTransformUtility.WorldToScreenPoint(camera, rect.position);
-            if (RectTransformUtility.ScreenPointToLocalPointInRectangle(parent, pointOnScreen, camera, out Vector2 before) &&
-                RectTransformUtility.ScreenPointToLocalPointInRectangle(parent, pointOnScreen + new Vector2(dx, dy), camera, out Vector2 after))
+            if (!ScreenRect(rect, camera, out Rect bounds)) return;
+            float dx = bounds.xMin < 2 ? 2 - bounds.xMin : bounds.xMax > Screen.width - 2 ? Screen.width - 2 - bounds.xMax : 0;
+            float dy = bounds.yMin < 2 ? 2 - bounds.yMin : bounds.yMax > Screen.height - 2 ? Screen.height - 2 - bounds.yMax : 0;
+            if (dx == 0 && dy == 0) return;
+            Vector2 point = RectTransformUtility.WorldToScreenPoint(camera, rect.position);
+            if (RectTransformUtility.ScreenPointToLocalPointInRectangle(parent, point, camera, out Vector2 before) &&
+                RectTransformUtility.ScreenPointToLocalPointInRectangle(parent, point + new Vector2(dx, dy), camera, out Vector2 after))
                 rect.anchoredPosition += after - before;
         }
 
-        private static bool CanInteract()
+        private static bool CanInteract(bool ground = false)
         {
             StoreUIManager ui = StoreUIManager.Instance;
-            return ShopInventory.InStore && ui != null && !StoreUIManager.IsAnyTyping() && !KeyBindHelper.IsCapturing &&
+            bool inScope = ShopInventory.InStore || ground && PlayerStore.HasInstance &&
+                MapUIManager.Instance?.Current?.Id == AfterhourLocation.DUMPING_GROUND;
+            return inScope && ui != null && !StoreUIManager.IsAnyTyping() && !KeyBindHelper.IsCapturing &&
                 !UIDragHandler.isDraggingAnyUI && ItemMouseDragHandler.current?.IsDraggingItem != true &&
                 (ui.gameOptionUIManager == null || !ui.gameOptionUIManager.IsOpen) &&
                 (ui.escapeUIManager == null || !ui.escapeUIManager.menuPanel.activeInHierarchy) &&
@@ -632,19 +595,16 @@ namespace ShopAssist
         }
         private void ResetControls()
         {
-            foreach (MachineEntry entry in machines.Values.ToArray()) RemoveMachine(entry);
-            foreach (ToolEntry entry in toolButtons.Values.ToArray()) RemoveTool(entry);
+            foreach (PixelWindow window in windowActions.Keys.ToArray()) RemoveWindowGroup(window);
             foreach (string id in panelButtons.Keys.ToArray()) RemovePanelShortcut(id);
-            CloseContextCard();
-            RemoveCustomer();
-            dirty = true;
+            measuredStock = null; measureStockAt = 0;
+            RemoveCustomer(); dirty = true;
         }
         private void Reset() { ResetControls(); lastError = null; }
         public void Dispose()
         {
             if (!started) return;
             started = false;
-            if (ReferenceEquals(current, this)) current = null;
             InventoryContextActions.Unregister("f22.open");
             InventoryContextActions.Unregister("f24.choose");
             InventoryContextActions.Unregister("f25.open");

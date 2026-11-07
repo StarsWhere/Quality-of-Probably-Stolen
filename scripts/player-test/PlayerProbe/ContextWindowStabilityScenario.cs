@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -31,19 +32,19 @@ public sealed class ContextWindowStabilityScenario
                 StoreUIManager.Instance?.gameOptionUIManager == null || ItemMouseDoubleClickHandler.current == null || EventSystem.current == null) return false;
             TradeScenario.SetOptions(true, "f05.enabled", "f07.enabled", "f30.enabled", "f31.enabled");
             TradeScenario.SetOptions(false, "f05.rotate", "f15.enabled", "f17.enabled", "f21.enabled");
-            bagA = New("backpack_medium", "QA context container A"); bagB = New("backpack_medium", "QA context container B");
+            bagA = New("backpack_medium", "原料收纳包"); bagB = New("backpack_medium", "备件收纳包");
             Put(EmporiumEntry.Instance.invElement, bagA); Put(EmporiumEntry.Instance.invElement, bagB);
             gridA = bagA.contentWindow.childElement as GameGridInventory; gridB = bagB.contentWindow.childElement as GameGridInventory;
             Need(gridA != null && gridB != null, "Container grids are unavailable");
-            itemA = New("processed_meat", "QA context goods A"); itemB = New("processed_meat", "QA context goods B");
+            itemA = New("processed_meat", "加工肉"); itemB = New("processed_meat", "罐装食品");
             PutFar(gridA, itemA); PutFar(gridB, itemB);
-            machineA = New("hydroponic", "QA maintenance machine A"); machineB = New("hydroponic", "QA maintenance machine B");
+            machineA = New("hydroponic", "日常水培机"); machineB = New("hydroponic", "备用水培机");
             Put(EmporiumEntry.Instance.invElement, machineA); Put(EmporiumEntry.Instance.invElement, machineB);
             var destinations = new GameInventory[] { EmporiumEntry.Instance.invElement, EmporiumEntry.Instance.backInvinvElement,
                 EmporiumEntry.Instance.showcaseElement, EmporiumEntry.Instance.frontInvinvElement };
             for (int i = 0; i < 8; i++)
             {
-                GameItem extra = New("hydroponic", "QA overview " + i);
+                GameItem extra = New("hydroponic", "水培机 " + (i + 1));
                 if (!destinations.Any(destination => TryPut(destination, extra))) extra.Destroy();
             }
             ItemMouseDoubleClickHandler.current.OpenContentAction(bagA, new Vector2(150, 250));
@@ -54,7 +55,7 @@ public sealed class ContextWindowStabilityScenario
         }
         if (step == 2)
         {
-            if (Tool(bagA.contentWindow) == null || Tool(bagB.contentWindow) == null || Tool(machineA.contentWindow) == null) return false;
+            if (ActionButton(machineA.contentWindow, "f31.open") == null) return false;
             OpenFrom(bagA.contentWindow, "f07.open");
             var rules = Window("routes");
             Need(Text(rules).Contains(bagA.GetDisplayName(true)), "F07 did not select container A");
@@ -121,23 +122,48 @@ public sealed class ContextWindowStabilityScenario
                 maintenanceList != null && Mathf.Abs(maintenanceList.verticalNormalizedPosition - maintenanceScroll) < .02f &&
                 Text(maintenance).Contains(machineB.GetDisplayName(true)), "Selecting a machine moved, scrolled or recreated maintenance");
             maintenance.Close();
-            RoutingScenario.OpenOptionAction("f30.open");
+            RoutingScenario.RunFeatureAction("f30.open");
             overview = Window("f30");
             overview.Rect.anchoredPosition += new Vector2(21, -11); overviewPosition = overview.Rect.anchoredPosition;
+            captureFrame = Time.frameCount + 2; step = 22; return false;
+        }
+        if (step == 22)
+        {
+            if (Time.frameCount < captureFrame) return false;
             Canvas.ForceUpdateCanvases();
             overviewScreenPosition = ScreenPosition(overview.Rect);
-            ScrollRect scroll = overview.root.GetComponentsInChildren<ScrollRect>(true).FirstOrDefault();
-            Need(scroll != null, "Overview has no scrollable list");
-            scroll.verticalNormalizedPosition = .35f; scrollPosition = scroll.verticalNormalizedPosition;
+            var scroll = overview.root.GetComponentsInChildren<ScrollRect>(true).FirstOrDefault(s => s.gameObject.activeInHierarchy);
+            Need(scroll?.content != null && scroll.viewport != null && scroll.content.rect.height > scroll.viewport.rect.height + 1,
+                "Overview fixture did not produce a scrollable list: " + OverviewState(scroll));
+            scroll.StopMovement();
+            scroll.verticalNormalizedPosition = .35f;
+            captureFrame = Time.frameCount + 2; step = 23; return false;
+        }
+        if (step == 23)
+        {
+            if (Time.frameCount < captureFrame) return false;
+            Canvas.ForceUpdateCanvases();
+            var scroll = overview.root.GetComponentsInChildren<ScrollRect>(true).FirstOrDefault(s => s.gameObject.activeInHierarchy);
+            Need(scroll != null && Mathf.Abs(scroll.verticalNormalizedPosition - .35f) < .02f,
+                "Overview fixture could not maintain the requested scroll before selection: " + OverviewState(scroll));
+            scrollPosition = scroll.verticalNormalizedPosition;
+            Debug.Log("[PLAYER-QA] overview before select " + OverviewState(scroll));
             LayoutScenario.Select(overview, machineB);
             scroll = overview.root.GetComponentsInChildren<ScrollRect>(true).FirstOrDefault(s => s.gameObject.activeInHierarchy);
-            Debug.Log("[PLAYER-QA] overview after select " + OverviewState(scroll));
+            Debug.Log("[PLAYER-QA] overview immediately after select " + OverviewState(scroll));
+            captureFrame = Time.frameCount + 2; step = 24; return false;
+        }
+        if (step == 24)
+        {
+            if (Time.frameCount < captureFrame) return false;
+            var scroll = overview.root.GetComponentsInChildren<ScrollRect>(true).FirstOrDefault(s => s.gameObject.activeInHierarchy);
+            Debug.Log("[PLAYER-QA] overview settled after select " + OverviewState(scroll));
             Need(Window("f30") == overview && overview.IsAlive, "Selecting an overview card recreated or closed the window");
             Need(Vector2.Distance(ScreenPosition(overview.Rect), overviewScreenPosition) <= .5f,
                 "Selecting an overview card moved the window: " + OverviewState(scroll));
             Need(scroll != null && Mathf.Abs(scroll.verticalNormalizedPosition - scrollPosition) < .02f,
                 "Selecting an overview card reset the scroll: " + OverviewState(scroll));
-            Put(gridA, New("wine_yeast", "QA overview invalidation"));
+            Put(gridA, New("wine_yeast", "酵母"));
             wait = Time.realtimeSinceStartup + .5f; step = 3; return false;
         }
         if (step == 3)
@@ -161,7 +187,7 @@ public sealed class ContextWindowStabilityScenario
             overview.Close();
             foreach (PixelWindow window in WindowsHandler.current.visibleWindows.ToArray())
                 if (window?.parentItems != null && window.parentItems.Any(i => i != null && i.IsGameItemType("MACHINE"))) window.Hide();
-            RoutingScenario.OpenOptionAction("f31.open");
+            RoutingScenario.RunFeatureAction("f31.open");
             maintenance = Window("maintenance");
             Need(maintenance.IsAlive && QaItemUi.Hit(maintenance.root, machineA) != null, "No-host maintenance chooser did not open");
             maintenance.Rect.anchoredPosition += new Vector2(-16, 9); maintenancePosition = maintenance.Rect.anchoredPosition;
@@ -170,7 +196,7 @@ public sealed class ContextWindowStabilityScenario
                 Text(maintenance).Contains(machineA.GetDisplayName(true)), "No-host selection did not keep its maintenance window");
             maintenance.Close();
             machineA.contentWindow.Hide();
-            RoutingScenario.OpenOptionAction("f31.open");
+            RoutingScenario.RunFeatureAction("f31.open");
             maintenance = Window("maintenance");
             Need(maintenance.IsAlive && QaItemUi.Hit(maintenance.root, machineA) != null, "No-host chooser did not reopen");
             TradeScenario.SetOptions(false, "f31.enabled");
@@ -196,16 +222,25 @@ public sealed class ContextWindowStabilityScenario
         Camera camera = canvas == null || canvas.renderMode == RenderMode.ScreenSpaceOverlay ? null : canvas.worldCamera;
         return RectTransformUtility.WorldToScreenPoint(camera, rect.TransformPoint(rect.rect.center));
     }
-    private static MachineryButton Tool(PixelWindow window) => window?.handler?.transform.Find("ShopAssist_WindowTools")
+    private static MachineryButton ActionButton(PixelWindow window, string action) =>
+        window?.handler?.transform.Find("ShopAssist_Action_" + action.Replace('.', '_'))
         ?.GetComponent<TreeNodeRender>()?.element as MachineryButton;
     private static void OpenFrom(PixelWindow source, string action)
     {
-        MachineryButton button = Tool(source); Need(button != null && !button.isDisabled, "Unavailable source title button");
+        if (action == "f05.open" || action == "f07.open")
+        {
+            var grid = source?.childElement as GameGridInventory;
+            Need(grid != null && source.IsVisible(), "Unavailable source inventory");
+            var mod = ModLoader.Mods.First(value => value.Manifest?.ID == Mod).Instance;
+            var method = mod.GetType().Assembly.GetType("ShopAssist.InventoryContextActions", true)
+                .GetMethod("RunGrid", BindingFlags.Static | BindingFlags.NonPublic);
+            Need(method != null, "Missing native inventory context dispatcher");
+            method.Invoke(null, new object[] { action, grid });
+            return;
+        }
+        MachineryButton button = ActionButton(source, action);
+        Need(button != null && !button.isDisabled, "Unavailable source action " + action);
         button.Select();
-        var card = Window("context");
-        var operation = card.Get(action)?.button;
-        Need(operation != null && operation.interactable, "Unavailable source action " + action);
-        operation.onClick.Invoke();
     }
     private static GameItem New(string id, string name)
     {

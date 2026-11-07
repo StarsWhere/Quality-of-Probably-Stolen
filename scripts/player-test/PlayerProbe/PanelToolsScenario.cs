@@ -81,7 +81,7 @@ public sealed class PanelToolsScenario
             }
             case 5:
             {
-                Button appraisal = Find("ShopAssist_AppraisalTools");
+                Button appraisal = Find("ShopAssist_AppraisalWorksheet");
                 if (appraisal == null) return false;
                 Need(Hit(appraisal), "Appraisal shortcut is visually blocked");
                 appraisal.onClick.Invoke();
@@ -106,14 +106,38 @@ public sealed class PanelToolsScenario
     {
         var rect = button.transform as RectTransform;
         var canvas = rect.GetComponentInParent<Canvas>();
-        Camera camera = canvas == null || canvas.renderMode == RenderMode.ScreenSpaceOverlay ? null : canvas.worldCamera;
+        var raycaster = canvas != null ? canvas.GetComponent<GraphicRaycaster>() : null;
+        Camera camera = raycaster != null ? raycaster.eventCamera :
+            canvas == null || canvas.renderMode == RenderMode.ScreenSpaceOverlay ? null : canvas.worldCamera;
         var corners = new Vector3[4]; rect.GetWorldCorners(corners);
         Vector2 point = RectTransformUtility.WorldToScreenPoint(camera, (corners[0] + corners[2]) / 2f);
         var hits = new List<RaycastResult>(); EventSystem.current.RaycastAll(new PointerEventData(EventSystem.current) { position = point }, hits);
-        bool hit = hits.Count > 0 && (hits[0].gameObject == button.gameObject || hits[0].gameObject.transform.IsChildOf(button.transform));
+        bool inScreen = point.x >= 0 && point.y >= 0 && point.x <= Screen.width && point.y <= Screen.height;
+        bool hit = inScreen && hits.Count > 0 && (hits[0].gameObject == button.gameObject || hits[0].gameObject.transform.IsChildOf(button.transform));
         if (!hit) Debug.Log("[PLAYER-QA] Panel tool " + button.name + " at " + point + " hit=" +
-            string.Join(" | ", hits.Take(8).Select(value => value.gameObject.name + " via " + value.module.name)));
+            string.Join(" | ", hits.Take(8).Select(value => value.gameObject.name + " via " + value.module.name)) +
+            " screen=" + Screen.width + "x" + Screen.height + " button=" + Geometry(rect) +
+            " parent=" + Geometry(rect.parent as RectTransform) +
+            " inspection=" + Geometry(InspectionUIManager.Instance?.panel?.transform as RectTransform) +
+            " appraisal=" + Geometry(InspectionUIManager.Instance?.appraisalPanel?.transform as RectTransform));
         return hit;
+    }
+    private static string Geometry(RectTransform rect)
+    {
+        if (rect == null) return "<none>";
+        var canvas = rect.GetComponentInParent<Canvas>();
+        var raycaster = canvas != null ? canvas.GetComponent<GraphicRaycaster>() : null;
+        Camera camera = raycaster != null ? raycaster.eventCamera :
+            canvas == null || canvas.renderMode == RenderMode.ScreenSpaceOverlay ? null : canvas.worldCamera;
+        var corners = new Vector3[4]; rect.GetWorldCorners(corners);
+        Vector2 low = RectTransformUtility.WorldToScreenPoint(camera, corners[0]);
+        Vector2 high = RectTransformUtility.WorldToScreenPoint(camera, corners[2]);
+        return rect.name + " screen=" + low + ".." + high + " local=" + rect.rect + " anchored=" + rect.anchoredPosition +
+            " anchors=" + rect.anchorMin + ".." + rect.anchorMax + " scale=" + rect.lossyScale +
+            " canvas=" + (canvas == null ? "<none>" : canvas.name + "/" + canvas.renderMode + "/" + canvas.pixelRect +
+                "/root=" + canvas.rootCanvas.name + "/worldCamera=" + (canvas.worldCamera != null ? canvas.worldCamera.name : "<null>")) +
+            " eventCamera=" + (camera != null ? camera.name : "<null>") +
+            " raycaster=" + (raycaster != null ? raycaster.name : "<none>");
     }
     private void Advance(int next) { step = next; since = Time.realtimeSinceStartup; }
     private static void Need(bool value, string message) { if (!value) throw new InvalidOperationException(message); }

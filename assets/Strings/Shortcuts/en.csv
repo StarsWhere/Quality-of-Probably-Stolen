@@ -1,3 +1,11 @@
 f10.context,Module cabinet
 f11.context,Find goods
-settings.key_conflict,{0} is used by {1}. Choose another Shop Assist shortcut in Key Bindings.
+f11.demand_context,Customer request
+f13.context,Close windows
+f30.context,Machine status
+f31.context,Spare battery
+f32.context,Replant
+f33.context,Furnace batches
+f35.context,Spare filter
+f36.context,Pack loot
+settings.key_conflict,{0} is used by {1}. Choose another Quality of Probably Stolen shortcut in Key Bindings.
