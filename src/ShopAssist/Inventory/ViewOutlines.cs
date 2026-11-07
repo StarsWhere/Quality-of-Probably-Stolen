@@ -4,7 +4,7 @@ using UnityEngine;
 
 namespace ShopAssist
 {
-    internal enum ViewOutlineKind { Demand, Stolen, Contraband, ContainsDemand, ContainsStolen, ContainsContraband, Locate, Hold }
+    internal enum ViewOutlineKind { Demand, Stolen, Contraband, ContainsDemand, ContainsStolen, ContainsContraband, Locate }
 
     // Owned render nodes are children of the same rotating view as the item.
     // Each boundary is inset into an occupied cell, so irregular shapes do not
@@ -15,7 +15,6 @@ namespace ShopAssist
         {
             internal TreeNodeRender Root;
             internal ViewOutlineKind Kind;
-            internal bool InsetForPeer;
             internal readonly List<TreeNodeRender> Parts = new List<TreeNodeRender>();
         }
 
@@ -38,9 +37,8 @@ namespace ShopAssist
                 for (int x = 0; x < shape.width; x++)
                     cells[y * shape.width + x] = shape.GetLocal(x, y) != 0;
             bool dashed = kind == ViewOutlineKind.ContainsDemand || kind == ViewOutlineKind.ContainsStolen || kind == ViewOutlineKind.ContainsContraband;
-            bool insetForPeer = InsetForPeer(item, kind);
             List<OutlineSegment> segments = OutlineGeometry.Build(cells, shape.width, shape.height,
-                UISettings.current.gridSize, dashed, insetForPeer ? 2.5f : 0);
+                UISettings.current.gridSize, dashed);
             if (segments.Count == 0)
             {
                 Remove(item);
@@ -53,14 +51,12 @@ namespace ShopAssist
                 outline.Root.image.enabled = false;
                 outlines.Add(item, outline);
             }
-            Color color = kind == ViewOutlineKind.Hold ? new Color(0.7f, 0.6f, 1f, 1f) :
-                kind == ViewOutlineKind.Locate ? new Color(0.35f, 0.7f, 1f, 1f) :
+            Color color = kind == ViewOutlineKind.Locate ? new Color(0.35f, 0.7f, 1f, 1f) :
                 kind == ViewOutlineKind.Demand || kind == ViewOutlineKind.ContainsDemand ? new Color(0.2f, 0.95f, 0.75f, 1f) :
                 (kind == ViewOutlineKind.Stolen || kind == ViewOutlineKind.ContainsStolen
                     ? new Color(1f, 0.65f, 0.15f, 1f) : new Color(1f, 0.25f, 0.22f, 1f));
             outline.Kind = kind;
-            outline.InsetForPeer = insetForPeer;
-            int required = segments.Count + (dashed ? 4 : kind == ViewOutlineKind.Hold ? 2 : 0);
+            int required = segments.Count + (dashed ? 4 : 0);
             while (outline.Parts.Count < required)
                 outline.Parts.Add(NewNode(outline.Root, "ShopAssist_OutlinePart"));
             for (int i = 0; i < outline.Parts.Count; i++)
@@ -71,8 +67,6 @@ namespace ShopAssist
                 if (!active) continue;
                 OutlineSegment segment;
                 if (i < segments.Count) segment = segments[i];
-                else if (kind == ViewOutlineKind.Hold)
-                    segment = i == segments.Count ? new OutlineSegment(2f, -2f, 7f, 3f) : new OutlineSegment(5f, -5f, 2f, 5f);
                 else
                 {
                     int side = i - segments.Count;
@@ -94,52 +88,17 @@ namespace ShopAssist
             return outline.Root.gameObject.activeSelf;
         }
 
-        // The workshop painter may toggle on a later frame without a game view
-        // event. Yield only the same visible indication, and restore ours when
-        // its border is turned off. Contained-risk, locate and hold marks have
-        // their own meaning and remain independent.
         internal void Sync()
         {
-            var redraw = new List<KeyValuePair<GameItemElement, ViewOutlineKind>>();
             foreach (var pair in outlines)
                 if (pair.Key != null && pair.Value.Root != null)
-                {
-                    if (pair.Value.InsetForPeer != InsetForPeer(pair.Key, pair.Value.Kind))
-                        redraw.Add(new KeyValuePair<GameItemElement, ViewOutlineKind>(pair.Key, pair.Value.Kind));
-                    else SetVisibility(pair.Key, pair.Value);
-                }
-            foreach (var pair in redraw) Show(pair.Key, pair.Value);
+                    SetVisibility(pair.Key, pair.Value);
         }
-
-        private static bool InsetForPeer(GameItemElement item, ViewOutlineKind kind) =>
-            kind == ViewOutlineKind.ContainsStolen ? EquivalentWorkshopBorder(item, ViewOutlineKind.Stolen) :
-            kind == ViewOutlineKind.ContainsContraband && EquivalentWorkshopBorder(item, ViewOutlineKind.Contraband);
 
         private static void SetVisibility(GameItemElement item, Outline outline)
         {
-            bool show = item.background != null && item.background.image != null && item.background.image.enabled &&
-                !EquivalentWorkshopBorder(item, outline.Kind);
+            bool show = item.background != null && item.background.image != null && item.background.image.enabled;
             if (outline.Root.gameObject.activeSelf != show) outline.Root.gameObject.SetActive(show);
-        }
-
-        private static bool EquivalentWorkshopBorder(GameItemElement item, ViewOutlineKind kind)
-        {
-            if (kind != ViewOutlineKind.Demand && kind != ViewOutlineKind.Stolen && kind != ViewOutlineKind.Contraband)
-                return false;
-            return EquivalentWorkshopNode(item.middle?.transform.Find("CDH_Border"), kind) ||
-                EquivalentWorkshopNode(item.rotator?.transform.Find("CDH_Border"), kind);
-        }
-
-        private static bool EquivalentWorkshopNode(Transform node, ViewOutlineKind kind)
-        {
-            if (node == null || !node.gameObject.activeInHierarchy) return false;
-            var graphic = node.gameObject.GetComponent<UnityEngine.UI.Graphic>();
-            if (graphic == null || !graphic.isActiveAndEnabled || graphic.color.a <= 0f) return false;
-            Color color = graphic.color;
-            bool amber = Math.Abs(color.r - 1f) < 0.02f && Math.Abs(color.g - 0.7f) < 0.02f && Math.Abs(color.b - 0.1f) < 0.02f;
-            bool red = Math.Abs(color.r - 0.95f) < 0.02f && Math.Abs(color.g - 0.22f) < 0.02f && Math.Abs(color.b - 0.2f) < 0.02f;
-            bool green = Math.Abs(color.r - 0.3f) < 0.02f && Math.Abs(color.g - 0.9f) < 0.02f && Math.Abs(color.b - 0.35f) < 0.02f;
-            return kind == ViewOutlineKind.Demand ? green : kind == ViewOutlineKind.Stolen ? amber : red;
         }
 
         private static TreeNodeRender NewNode(TreeNodeRender parent, string name)

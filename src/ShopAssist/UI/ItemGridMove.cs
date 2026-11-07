@@ -12,6 +12,7 @@ namespace ShopAssist
         {
             if (item == null || !(item.parentInventory is GameGridInventory source) || destination == null || pose == null ||
                 item.unitCount < 1 || item.modifiedShape == null ||
+                ShopInventory.WouldContainSelf(item, destination) ||
                 source.IsRemoveLocked() || !item.MayRemove() || item.MaxNumRemove() < item.unitCount ||
                 destination.IsInsertLocked() || !GeneralHelper.MayPlayerInsertInto(destination)) return false;
             SlotMarker slot = GridPlacements.Exact(destination, item, pose);

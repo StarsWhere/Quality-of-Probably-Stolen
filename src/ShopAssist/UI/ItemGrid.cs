@@ -20,6 +20,7 @@ namespace ShopAssist
             internal bool Selected;
             internal bool Enabled = true;
             internal bool Selectable = true;
+            internal bool Draggable = true;
             internal string Reason;
             internal string Caption;
             internal string Badge;
@@ -27,12 +28,14 @@ namespace ShopAssist
             internal string SourceLabel;
             internal string StatusLabel;
             internal string QuoteLabel;
+            internal string PurchaseLabel;
+            internal string TooltipHint;
 
             internal Entry(GameItem item, GameInventory source = null, GridShape shape = null)
             {
                 Item = item;
                 Source = source ?? item?.parentInventory;
-                Shape = shape ?? item?.modifiedShape;
+                Shape = (shape ?? item?.modifiedShape)?.Clone();
             }
         }
 
@@ -52,6 +55,7 @@ namespace ShopAssist
             internal float CellSize = 24f;
             internal bool HighContrast;
             internal bool Cards;
+            internal bool RequireSourceShape;
             internal float CardWidth = 120f;
             internal float CardHeight = 105f;
             internal Action<Entry> OnClick;
@@ -59,6 +63,11 @@ namespace ShopAssist
             internal Func<Entry, GameGridInventory, GridShape, bool> CanDrop;
             internal Action<Entry, GameGridInventory, GridShape> OnDrop;
             internal Action<Entry, GameGridInventory, GridShape> OnReject;
+            // Optional exact native target, including a pointed stack or a single slot.
+            internal Func<Entry, GameInventory, GameItem, GridShape, bool> CanDropTarget;
+            internal Action<Entry, GameInventory, GameItem, GridShape> OnDropTarget;
+            internal Action<Entry, GameInventory, GameItem, GridShape> OnRejectTarget;
+            internal Action OnDragStarted, OnDragEnded;
         }
 
         private sealed class Placed
@@ -193,12 +202,13 @@ namespace ShopAssist
 
         private static List<string> CardDetails(Entry entry)
         {
-            var details = new List<string>(3);
+            var details = new List<string>(4);
             foreach (string value in new[] { entry.SourceLabel, entry.StatusLabel, entry.QuoteLabel })
                 if (!string.IsNullOrWhiteSpace(value) && !details.Contains(value)) details.Add(value);
             if (details.Count == 0)
                 foreach (string value in new[] { entry.Badge, entry.Reason })
                     if (!string.IsNullOrWhiteSpace(value) && !details.Contains(value)) details.Add(value);
+            if (!string.IsNullOrWhiteSpace(entry.PurchaseLabel)) details.Add(entry.PurchaseLabel);
             return details;
         }
 
@@ -408,7 +418,8 @@ namespace ShopAssist
             private Dictionary<Entry, View> cards;
             private readonly List<GameObject> preview = new List<GameObject>();
             private GridShape previousPreview;
-            private bool previousAllowed, previewVisible;
+            private bool? previousAllowed;
+            private bool previewVisible;
             internal void Initialize(RectTransform rect, Options options, float cell, int columns, int rows)
             { Rect = rect; Options = options; Cell = cell; Columns = columns; Rows = rows; }
             internal void Register(Entry entry, Image image, GridShape shape)
@@ -469,7 +480,7 @@ namespace ShopAssist
                 preview.Clear();
                 previousPreview = null; previewVisible = false;
             }
-            internal void ShowPreview(GridShape shape, bool allowed)
+            internal void ShowPreview(GridShape shape, bool? allowed)
             {
                 if (previewVisible && previousAllowed == allowed &&
                     (Options.Proxy || ItemGridMove.SameShape(previousPreview, shape))) return;
@@ -480,7 +491,8 @@ namespace ShopAssist
                 {
                     RectTransform overlay = NewRect("preview", Rect, Vector2.zero, Rect.rect.size);
                     Image image = overlay.gameObject.AddComponent<Image>();
-                    image.color = allowed ? new Color(.15f, .85f, .25f, .3f) : new Color(.9f, .12f, .12f, .3f);
+                    image.color = allowed == null ? new Color(.7f, .7f, .7f, .3f) : allowed.Value ?
+                        new Color(.15f, .85f, .25f, .3f) : new Color(.9f, .12f, .12f, .3f);
                     image.raycastTarget = false; preview.Add(overlay.gameObject); return;
                 }
                 for (int y = 0; y < shape.globalHeight; y++) for (int x = 0; x < shape.globalWidth; x++)
@@ -489,7 +501,8 @@ namespace ShopAssist
                     if (px < 0 || py < 0 || px >= Columns || py >= Rows || shape.Get(px, py) != 1) continue;
                     RectTransform tile = NewRect("preview", Rect, new Vector2(px * Cell, -py * Cell), new Vector2(Cell - 1, Cell - 1));
                     Image image = tile.gameObject.AddComponent<Image>();
-                    image.color = allowed ? new Color(.15f, .85f, .25f, .65f) : new Color(.9f, .12f, .12f, .65f);
+                    image.color = allowed == null ? new Color(.7f, .7f, .7f, .65f) : allowed.Value ?
+                        new Color(.15f, .85f, .25f, .65f) : new Color(.9f, .12f, .12f, .65f);
                     image.raycastTarget = false; preview.Add(tile.gameObject);
                 }
             }
@@ -497,6 +510,10 @@ namespace ShopAssist
 
         private static Hit activeDrag;
         internal static bool DragActive => activeDrag != null || NativeDragActive();
+        internal static void CancelDragWithin(GameObject root)
+        {
+            if (root != null && activeDrag != null && activeDrag.transform.IsChildOf(root.transform)) activeDrag.CancelDrag();
+        }
 
         private static readonly HashSet<GridRoot> activeRoots = new HashSet<GridRoot>();
         private static readonly List<Hit> hoveredHits = new List<Hit>();
@@ -555,6 +572,17 @@ namespace ShopAssist
             private GameInventory original;
             private int originalCount;
             private GridShape originalShape;
+            private Camera dragCamera;
+            private RectTransform nativeDropPreview;
+            private GameGridInventory nativeDropTarget;
+            private GridShape nativeDropShape;
+            private bool? nativeDropAllowed;
+            private float nextPreviewCheck;
+            private GameInventory checkedTarget;
+            private GameItem checkedStack;
+            private GridShape checkedPose;
+            private bool checkedAllowed;
+            private bool notifiedDrag;
             private RectTransform marquee;
             private Vector2 marqueeStart;
             private float tooltipRefresh;
@@ -562,6 +590,7 @@ namespace ShopAssist
 
             internal void Initialize(View owner, Entry value, GridShape pose) { view = owner; entry = value; shownShape = pose; }
             internal static View At(GameObject target) => target?.GetComponentInParent<Hit>()?.view;
+            internal static GameItem ItemAt(GameObject target) => target?.GetComponentInParent<Hit>()?.entry?.Item;
             internal bool HasTooltipHover => hovered && ghost == null && entry?.Item is GameItemElement item && !item.IsDestroyed();
             public void OnPointerClick(PointerEventData eventData)
             {
@@ -584,7 +613,7 @@ namespace ShopAssist
                 if (dragging) HideOwnedTooltip(this);
                 if (!dragging && hovered && ghost == null && entry?.Item is GameItemElement item && !item.IsDestroyed() && OverlayHandler.current != null)
                 {
-                    if (item.HasTooltip())
+                    if (item.HasTooltip() || !string.IsNullOrWhiteSpace(entry.TooltipHint))
                     {
                         if (tooltip == null || Time.unscaledTime >= tooltipRefresh)
                         { tooltip = Tooltip(entry, item); tooltipRefresh = Time.unscaledTime + .25f; }
@@ -592,18 +621,26 @@ namespace ShopAssist
                     }
                 }
                 if (ghost == null) return;
-                var handler = ItemMouseDragHandler.current;
-                bool cw = handler != null && Input.GetKeyDown(handler.rotateCWKey);
-                bool ccw = handler != null && Input.GetKeyDown(handler.rotateCCWKey);
-                float scroll = Input.mouseScrollDelta.y;
-                if (cw || ccw || scroll != 0)
+                try
                 {
-                    int turn = cw || scroll < 0 ? 3 : 1;
-                    RotateDrag(turn);
+                    if (view.Options.CanDropTarget != null && (Input.GetKeyDown(KeyCode.Escape) || Input.GetMouseButtonDown(1)))
+                    { EndGhost(); return; }
+                    var handler = ItemMouseDragHandler.current;
+                    bool cw = handler != null && Input.GetKeyDown(handler.rotateCWKey);
+                    bool ccw = handler != null && Input.GetKeyDown(handler.rotateCCWKey);
+                    float scroll = Input.mouseScrollDelta.y;
+                    if (cw || ccw || scroll != 0)
+                    {
+                        int turn = cw || scroll < 0 ? 3 : 1;
+                        RotateDrag(turn);
+                    }
+                    var rect = ghost.transform as RectTransform;
+                    if (rect?.parent is RectTransform parent && RectTransformUtility.ScreenPointToLocalPointInRectangle(parent, Input.mousePosition,
+                        parent.GetComponentInParent<Canvas>()?.worldCamera, out Vector2 point)) rect.anchoredPosition = point;
+                    if (Time.unscaledTime >= nextPreviewCheck)
+                        UpdateDropPreview(Input.mousePosition, dragCamera, TopHitAtPointer(Input.mousePosition));
                 }
-                var rect = ghost.transform as RectTransform;
-                if (rect?.parent is RectTransform parent && RectTransformUtility.ScreenPointToLocalPointInRectangle(parent, Input.mousePosition,
-                    parent.GetComponentInParent<Canvas>()?.worldCamera, out Vector2 point)) rect.anchoredPosition = point;
+                catch { EndGhost(); throw; }
             }
             public void OnBeginDrag(PointerEventData eventData)
             {
@@ -615,37 +652,72 @@ namespace ShopAssist
                     image.color = new Color(.25f, .7f, .95f, .3f); image.raycastTarget = false;
                     activeDrag = this; return;
                 }
-                if (eventData.button != PointerEventData.InputButton.Left || entry?.Enabled != true || !Valid() ||
-                    view.Options.CanDrop == null || view.Options.OnDrop == null || entry.Shape == null) return;
+                if (eventData.button != PointerEventData.InputButton.Left || entry?.Enabled != true || !entry.Draggable ||
+                    (view.Options.CanDrop == null || view.Options.OnDrop == null) &&
+                    (view.Options.CanDropTarget == null || view.Options.OnDropTarget == null) || entry.Shape == null) return;
+                if (!Valid() || view.Options.RequireSourceShape && !ItemGridMove.SameShape(entry.Item.modifiedShape, entry.Shape))
+                {
+                    if (view.Options.RequireSourceShape)
+                    {
+                        if (view.Options.OnRejectTarget != null) view.Options.OnRejectTarget(entry, null, null, null);
+                        else view.Options.OnReject?.Invoke(entry, null, null);
+                    }
+                    return;
+                }
                 original = entry.Item.parentInventory; originalCount = entry.Item.unitCount;
                 originalShape = entry.Item.modifiedShape?.Clone();
                 dragShape = entry.Shape.Clone();
-                RectTransformUtility.ScreenPointToLocalPointInRectangle(view.Rect, eventData.position, eventData.pressEventCamera, out Vector2 local);
+                Vector2 press = eventData.pointerPressRaycast.gameObject == null ? eventData.position : eventData.pressPosition;
+                RectTransformUtility.ScreenPointToLocalPointInRectangle(view.Rect, press, eventData.pressEventCamera, out Vector2 local);
                 int x = Mathf.FloorToInt((local.x - view.Rect.rect.xMin) / view.Cell);
                 int y = Mathf.FloorToInt((view.Rect.rect.yMax - local.y) / view.Cell);
                 grab = new Vector2(Mathf.Clamp(x - shownShape.minX, 0, shownShape.globalWidth - 1),
                     Mathf.Clamp(y - shownShape.minY, 0, shownShape.globalHeight - 1));
                 RectTransform layer = CustomUIManager.Instance?.GetLayerRoot("overlay");
                 if (layer == null) return;
+                dragCamera = eventData.pressEventCamera;
                 RectTransform root = NewRect("ShopAssist_ItemGridDrag", layer, Vector2.zero, Vector2.one);
                 root.anchorMin = root.anchorMax = layer.pivot;
-                root.gameObject.AddComponent<CanvasGroup>().blocksRaycasts = false;
-                ghost = root.gameObject; activeDrag = this; UpdateGhost();
-                HideOwnedTooltip(this);
+                ghost = root.gameObject; activeDrag = this;
+                try
+                {
+                    root.gameObject.AddComponent<CanvasGroup>().blocksRaycasts = false;
+                    notifiedDrag = true;
+                    view.Options.OnDragStarted?.Invoke();
+                    UpdateGhost();
+                    HideOwnedTooltip(this);
+                }
+                catch { EndGhost(); throw; }
             }
             public void OnDrag(PointerEventData eventData)
             {
                 if (marquee != null) { UpdateMarquee(eventData); return; }
                 if (ghost == null) return;
-                View target = At(eventData.pointerCurrentRaycast.gameObject);
+                try { UpdateDropPreview(eventData.position, eventData.pressEventCamera, eventData.pointerCurrentRaycast.gameObject); }
+                catch { EndGhost(); throw; }
+            }
+            private void UpdateDropPreview(Vector2 point, Camera camera, GameObject hit)
+            {
+                if (view.Options.CanDropTarget != null) hit = TopHitAtPointer(point);
+                View target = At(hit);
                 if (previewTarget != null && previewTarget != target) previewTarget.ClearPreview();
                 previewTarget = target;
-                if (target?.Options.Inventory == null) return;
-                GridShape pose = TargetPose(target, entry.Item, eventData.position, eventData.pressEventCamera, dragShape, grab);
-                bool allowed = pose != null && Valid() && entry.Item.parentInventory == original && entry.Item.unitCount == originalCount &&
-                    ItemGridMove.SameShape(entry.Item.modifiedShape, originalShape) &&
-                    view.Options.CanDrop(entry, target.Options.Inventory, pose);
-                target.ShowPreview(pose, allowed);
+                if (target?.Options.Inventory != null)
+                {
+                    ClearNativeDropPreview();
+                    GridShape pose = TargetPose(target, entry.Item, point, camera, dragShape, grab);
+                    GameItem stack = ItemAt(hit);
+                    if (stack?.parentInventory != target.Options.Inventory) stack = null;
+                    if (stack != null && view.Options.CanDropTarget != null) pose = stack.modifiedShape?.Clone();
+                    target.ShowPreview(pose, PreviewAt(target.Options.Inventory, stack, pose));
+                    return;
+                }
+                GameItem resident = null;
+                GameInventory native = view.Options.CanDropTarget == null ? NativeGridAtPointer(point) : NativeTargetAtPointer(point, out resident);
+                var inventory = native as GameGridInventory;
+                GridShape nativePose = resident != null ? resident.modifiedShape?.Clone() : inventory != null ?
+                    NativePoseAt(inventory, point, dragShape, grab) : native != null ? dragShape?.Clone() : null;
+                ShowNativeDropPreview(inventory, nativePose, PreviewAt(native, resident, nativePose));
             }
             public void OnEndDrag(PointerEventData eventData)
             {
@@ -664,26 +736,82 @@ namespace ShopAssist
                 if (ghost == null) return;
                 try
                 {
-                    if (!Valid() || entry.Item.parentInventory != original || entry.Item.unitCount != originalCount ||
-                        !ItemGridMove.SameShape(entry.Item.modifiedShape, originalShape)) return;
-                    View target = At(eventData.pointerCurrentRaycast.gameObject);
-                    GameGridInventory inventory = target?.Options.Inventory;
+                    GameObject hit = view.Options.CanDropTarget == null ? eventData.pointerCurrentRaycast.gameObject : TopHitAtPointer(eventData.position);
+                    View target = At(hit);
+                    GameInventory inventory = target?.Options.Inventory;
+                    GameItem resident = inventory == null ? null : ItemAt(hit);
+                    if (resident?.parentInventory != inventory) resident = null;
                     GridShape pose = null;
                     if (target != null && inventory != null)
-                        pose = TargetPose(target, entry.Item, eventData.position, eventData.pressEventCamera, dragShape, grab);
+                        pose = resident != null && view.Options.CanDropTarget != null ? resident.modifiedShape?.Clone() :
+                            TargetPose(target, entry.Item, eventData.position, eventData.pressEventCamera, dragShape, grab);
                     else
                     {
-                        inventory = NativeGridAtPointer(eventData.position);
-                        if (inventory != null)
-                            pose = NativePoseAt(inventory, eventData.position, dragShape, grab);
+                        inventory = view.Options.CanDropTarget == null ? NativeGridAtPointer(eventData.position) :
+                            NativeTargetAtPointer(eventData.position, out resident);
+                        pose = resident != null ? resident.modifiedShape?.Clone() : inventory is GameGridInventory grid ?
+                            NativePoseAt(grid, eventData.position, dragShape, grab) : inventory != null ? dragShape?.Clone() : null;
                     }
                     if (inventory != null)
                     {
-                        if (pose != null && view.Options.CanDrop(entry, inventory, pose)) view.Options.OnDrop(entry, inventory, pose);
-                        else view.Options.OnReject?.Invoke(entry, inventory, pose);
+                        if (CanDropAt(inventory, resident, pose))
+                        {
+                            if (view.Options.OnDropTarget != null) view.Options.OnDropTarget(entry, inventory, resident, pose);
+                            else view.Options.OnDrop(entry, (GameGridInventory)inventory, pose);
+                        }
+                        else if (view.Options.OnRejectTarget != null) view.Options.OnRejectTarget(entry, inventory, resident, pose);
+                        else view.Options.OnReject?.Invoke(entry, inventory as GameGridInventory, pose);
                     }
                 }
                 finally { EndGhost(); }
+            }
+            private bool CanDropAt(GameInventory inventory, GameItem stack, GridShape pose) => inventory != null && pose != null &&
+                Valid() && entry.Item.parentInventory == original && entry.Item.unitCount == originalCount &&
+                ItemGridMove.SameShape(entry.Item.modifiedShape, originalShape) &&
+                (view.Options.CanDropTarget != null ? view.Options.CanDropTarget(entry, inventory, stack, pose) :
+                    inventory is GameGridInventory grid && view.Options.CanDrop(entry, grid, pose));
+
+            private bool? PreviewAt(GameInventory inventory, GameItem stack, GridShape pose)
+            {
+                if (inventory == null || pose == null) return false;
+                if (!Valid() || entry.Item.parentInventory != original || entry.Item.unitCount != originalCount ||
+                    !ItemGridMove.SameShape(entry.Item.modifiedShape, originalShape)) return false;
+                if (Time.unscaledTime >= nextPreviewCheck)
+                {
+                    checkedTarget = inventory; checkedStack = stack; checkedPose = pose.Clone();
+                    checkedAllowed = CanDropAt(inventory, stack, pose);
+                    nextPreviewCheck = Time.unscaledTime + .15f;
+                }
+                return checkedTarget == inventory && checkedStack == stack && ItemGridMove.SameShape(checkedPose, pose) ? checkedAllowed : (bool?)null;
+            }
+
+            private void ShowNativeDropPreview(GameGridInventory inventory, GridShape shape, bool? allowed)
+            {
+                if (nativeDropPreview != null && nativeDropTarget == inventory && nativeDropAllowed == allowed &&
+                    ItemGridMove.SameShape(nativeDropShape, shape)) return;
+                ClearNativeDropPreview();
+                RectTransform rect = inventory?.rectTransform;
+                if (rect == null || shape == null || UISettings.current == null || UISettings.current.gridSize <= 0) return;
+                nativeDropTarget = inventory; nativeDropShape = shape.Clone(); nativeDropAllowed = allowed;
+                nativeDropPreview = NewRect("ShopAssist_NativeGridPreview", rect, Vector2.zero, rect.rect.size);
+                nativeDropPreview.gameObject.AddComponent<LayoutElement>().ignoreLayout = true;
+                float cell = UISettings.current.gridSize;
+                for (int y = 0; y < shape.globalHeight; y++) for (int x = 0; x < shape.globalWidth; x++)
+                {
+                    int px = shape.minX + x, py = shape.minY + y;
+                    if (px < 0 || py < 0 || px >= inventory.inventoryShape.width || py >= inventory.inventoryShape.height ||
+                        shape.Get(px, py) != 1) continue;
+                    RectTransform tile = NewRect("preview", nativeDropPreview, new Vector2(px * cell, -py * cell), new Vector2(cell - 1, cell - 1));
+                    var image = tile.gameObject.AddComponent<Image>();
+                    image.color = allowed == null ? new Color(.7f, .7f, .7f, .65f) : allowed.Value ?
+                        new Color(.15f, .85f, .25f, .65f) : new Color(.9f, .12f, .12f, .65f);
+                    image.raycastTarget = false;
+                }
+            }
+            private void ClearNativeDropPreview()
+            {
+                if (nativeDropPreview != null) { nativeDropPreview.gameObject.SetActive(false); Destroy(nativeDropPreview.gameObject); }
+                nativeDropPreview = null; nativeDropTarget = null; nativeDropShape = null;
             }
             private bool Valid() => entry?.Item != null && entry.Item.parentInventory == entry.Source && entry.Item.unitCount > 0 &&
                 (!(entry.Item is GameItemElement item) || !item.IsDestroyed());
@@ -723,11 +851,23 @@ namespace ShopAssist
             }
             private void EndGhost()
             {
-                if (previewTarget != null) previewTarget.ClearPreview(); previewTarget = null;
-                if (ghost != null) Destroy(ghost); ghost = null; dragShape = null; originalShape = null;
-                if (marquee != null) Destroy(marquee.gameObject); marquee = null;
-                if (activeDrag == this) activeDrag = null;
+                try
+                {
+                    if (previewTarget != null) previewTarget.ClearPreview();
+                    ClearNativeDropPreview();
+                    if (ghost != null) Destroy(ghost);
+                    if (marquee != null) Destroy(marquee.gameObject);
+                }
+                finally
+                {
+                    previewTarget = null; nativeDropPreview = null; nativeDropTarget = null; nativeDropShape = null;
+                    checkedTarget = null; checkedStack = null; checkedPose = null; nextPreviewCheck = 0;
+                    dragCamera = null; ghost = null; dragShape = null; originalShape = null; marquee = null;
+                    if (activeDrag == this) activeDrag = null;
+                    if (notifiedDrag) { notifiedDrag = false; view?.Options.OnDragEnded?.Invoke(); }
+                }
             }
+            internal void CancelDrag() => EndGhost();
             private void OnDisable()
             {
                 EndGhost(); hovered = false; hoveredHits.Remove(this); HideOwnedTooltip(this);
@@ -839,20 +979,23 @@ namespace ShopAssist
 
         private static RichText Tooltip(Entry entry, GameItemElement item)
         {
-            RichText native = item.GetTooltip();
-            if (native == null) return null;
+            RichText native = item.HasTooltip() ? item.GetTooltip() : null;
             var extra = new RichTextBuilder(60);
             if (!string.IsNullOrWhiteSpace(entry.Caption) && entry.Caption != item.GetDisplayName(true)) extra.AddLine(Clean(entry.Caption));
             foreach (string detail in CardDetails(entry)) extra.AddLine(Clean(detail));
+            if (!string.IsNullOrWhiteSpace(entry.TooltipHint)) extra.AddLine(Clean(entry.TooltipHint));
             RichText suffix = extra.Build();
+            if (native == null) return string.IsNullOrWhiteSpace(suffix.nakedText) ? null : suffix;
             if (string.IsNullOrWhiteSpace(suffix.nakedText)) return native;
-            return new RichText(native.nakedText + "\n" + suffix.nakedText,
+            var composed = new RichText(native.nakedText + "\n" + suffix.nakedText,
                 native.richTextStrikethrough + "\n" + suffix.richTextStrikethrough,
                 native.richTextUnderline + "\n" + suffix.richTextUnderline,
                 native.richTextForeground + "\n" + suffix.richTextForeground,
                 native.richTextBackground + "\n" + suffix.richTextBackground,
                 Math.Max(native.recommendedWidth, suffix.recommendedWidth), native.recommendedHeight + suffix.recommendedHeight,
                 native.isTruncated || suffix.isTruncated);
+            CustomerIndicators.TooltipComposed(item, native, composed);
+            return composed;
         }
 
         private static string Clean(string value) => value.Replace("<", "‹").Replace(">", "›");
@@ -886,14 +1029,24 @@ namespace ShopAssist
 
         private static GameGridInventory NativeGridAtPointer(Vector2 point)
         {
+            TreeNodeRender node = TopHitAtPointer(point)?.GetComponent<TreeNodeRender>();
+            return node == null ? null : node.FindParentElement<GameGridInventory>();
+        }
+
+        private static GameInventory NativeTargetAtPointer(Vector2 point, out GameItem resident)
+        {
+            TreeNodeRender node = TopHitAtPointer(point)?.GetComponent<TreeNodeRender>();
+            GameInventory inventory = node?.FindParentElement<GameInventory>();
+            resident = node?.FindParentElement<GameItem>();
+            if (resident?.parentInventory != inventory) resident = null;
+            return inventory;
+        }
+
+        private static GameObject TopHitAtPointer(Vector2 point)
+        {
             if (EventSystem.current == null) return null;
-            var hits = nativeGridRaycast.At(EventSystem.current, point);
-            foreach (RaycastResult hit in hits)
-            {
-                if (hit.gameObject == null) continue;
-                TreeNodeRender node = hit.gameObject.GetComponent<TreeNodeRender>();
-                return node == null ? null : node.FindParentElement<GameGridInventory>();
-            }
+            foreach (RaycastResult hit in nativeGridRaycast.At(EventSystem.current, point))
+                if (hit.gameObject != null) return hit.gameObject;
             return null;
         }
 

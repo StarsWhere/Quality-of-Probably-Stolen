@@ -14,7 +14,6 @@ grid.storage_missing,未指定或收纳区不可用
 grid.storage_footer,拖回：{0} · 空余 {1}/{2} 格
 grid.stat_delta,{0} {1}% → {2}%（{3:+#;-#;0}%）
 grid.too_many,已选 {0} 件，最多可预演 5 件。
-grid.more,更多
 grid.mark_stuck,卡
 grid.mark_fixed,固
 grid.mark_reserved,预
