@@ -5,6 +5,10 @@ attention.resolve,Mark as checked
 attention.locate,Locate
 attention.refresh,Refresh
 attention.unreadable,Could not read this save's attention records. The original data was retained.
+attention.rebuild,Rebuild records
+attention.rebuild_warning,Rebuilding removes unreadable attention records. You may need to check affected machines and items yourself. The original data will be retained.
+attention.cancel,Cancel
+attention.rebuilt,Attention records rebuilt. Check the affected machines and items.
 attention.save_failed,Could not save the updated status. Please retry.
 attention.provider_failed,This feature's status could not be read. Refresh to retry.
 attention.action_failed,The action did not complete. Check its current state before retrying.

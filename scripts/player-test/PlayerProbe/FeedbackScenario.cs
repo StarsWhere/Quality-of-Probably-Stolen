@@ -37,16 +37,41 @@ public sealed class FeedbackScenario
             Need(marker != null && marker.TryAcceptOnce() > 0, "Could not place feedback fixture");
             item.GetUniqueID();
             object batch = Activator.CreateInstance(operation, Instance, null, new object[] { "f25.open" }, null);
+            operation.GetMethod("Skip", Instance).Invoke(batch, new object[] { item, 1, "inv.changed", "QA source → QA destination", false });
+            Call(notice, "Report", batch);
+            Need((int)book.GetProperty("Count", Static).GetValue(null) == 0, "Ordinary failure incorrectly created an inspection item");
+            step = 10; return false;
+        }
+        if (step == 10)
+        {
+            var resultButton = QaItemUi.WindowAction(EmporiumEntry.Instance.invWindow, "result");
+            if (resultButton == null || resultButton.isDisabled) return false;
+            Need(QaItemUi.WindowAction(EmporiumEntry.Instance.invWindow, "attention") == null,
+                "Ordinary failure exposed a spurious attention action");
+            resultButton.Select();
+            var details = CustomUIManager.Instance.GetWindow(Mod + ".operation");
+            Need(details?.IsAlive == true && details.root.GetComponentsInChildren<TMP_Text>(true).Any(t => t.text.Contains("QA feedback item")),
+                "The direct result action did not open an ordinary failure");
+            details.Close();
+            Call(notice, "ResetSession");
+            Type operation = notice.Assembly.GetType("ShopAssist.OperationResult", true);
+            object batch = Activator.CreateInstance(operation, Instance, null, new object[] { "f25.open" }, null);
             operation.GetMethod("Skip", Instance).Invoke(batch, new object[] { item, 1, "inv.inspect", "QA source → QA destination", true });
             Call(notice, "Report", batch); Call(notice, "Report", batch);
             Need((int)book.GetProperty("Count", Static).GetValue(null) == 1, "Repeated reports duplicated the unresolved item");
             string raw = ModHelper.GetModData(Mod, "attention", null);
             Need(raw != null && raw.Contains(item.uniqueId.ToString()) && raw.Contains(PlayerStore.Instance.runID), "Unresolved issue did not persist with its save identity");
-            Call(book, "Open");
+            until = Time.realtimeSinceStartup + 7.3f; step = 11; return false;
+        }
+        if (step == 11)
+        {
+            var attentionButton = QaItemUi.WindowAction(EmporiumEntry.Instance.invWindow, "attention");
+            if (attentionButton == null || attentionButton.isDisabled) return false;
+            attentionButton.Select();
             var window = CustomUIManager.Instance.GetWindow(Mod + ".attention");
             Need(window?.IsAlive == true && window.root.GetComponentsInChildren<TMP_Text>(true).Any(t => t.text.Contains("QA feedback item")),
-                "Needs-attention window did not show the affected item with F30 disabled");
-            until = Time.realtimeSinceStartup + 7.3f; step++; return false;
+                "The direct attention action did not show the affected item with F30 disabled");
+            step = 2; return false;
         }
         if (step == 2)
         {

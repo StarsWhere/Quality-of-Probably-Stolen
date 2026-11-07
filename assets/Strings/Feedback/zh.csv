@@ -5,6 +5,10 @@ attention.resolve,确认已处理
 attention.locate,定位
 attention.refresh,刷新
 attention.unreadable,无法读取本档待处理记录；原记录已保留。
+attention.rebuild,重建记录
+attention.rebuild_warning,重建将清除无法读取的待处理记录。你可能需要自行核对相关机器和物品。原始记录会保留。
+attention.cancel,取消
+attention.rebuilt,待处理记录已重建。请核对相关机器和物品。
 attention.save_failed,无法保存处理状态，请重试。
 attention.provider_failed,暂时无法读取该功能的状态，请刷新重试。
 attention.action_failed,操作未完成，请检查当前状态后重试。

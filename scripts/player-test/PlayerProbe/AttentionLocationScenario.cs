@@ -56,16 +56,6 @@ public sealed class AttentionLocationScenario
     private static void RecordNotice(string message) { locateNotice = message; }
     private static GameItem Put(string identifier, string name, GameInventory inventory) => PackingRecoveryFixture.Put(identifier, name, inventory);
 
-    private static void OpenAttention()
-    {
-        var options = StoreUIManager.Instance.gameOptionUIManager;
-        options.OpenUI();
-        CustomUIManager.Instance.GetWindow("game_options").Get(Mod + ":tools").button.onClick.Invoke();
-        CustomUIManager.Instance.GetWindow(Mod + ".tools").Get("attention").button.onClick.Invoke();
-        Need(Attention()?.IsAlive == true, "Attention control did not open its window");
-        options.CloseUI();
-    }
-
     private static void InvokeWithoutOpeningStock(Button locate, PixelWindow stock, PixelWindow container = null, bool keepContainerOpen = false)
     {
         watchedStock = stock; watchedContainer = container; stockShows = containerShows = 0; locateNotice = null;
@@ -193,7 +183,7 @@ public sealed class AttentionLocationScenario
                 Need(bag.identifier == "backpack_medium" && bag.contentWindow.openCallback == null &&
                     !bag.contentWindow.isLocked && !bag.IsTag("LOCKED_TAG") && !bag.IsTag("TRACK_OPENED_TAG"),
                     "Fixture is not a closed, ordinary safe container");
-                OpenAttention();
+                if (!QaItemUi.OpenAttention()) return false;
                 Need(Text(Attention()).Contains(label) && Locate() != null, "A safe closed container has no Locate action");
                 LocateThroughUi(false);
                 step = 11; return false;
@@ -252,7 +242,7 @@ public sealed class AttentionLocationScenario
                 bag = EmporiumEntry.Instance.invElement.childItems.Find(value => value.uniqueId == bagId);
                 Need(bag != null && EmporiumEntry.Instance.invElement.childItems.Any(value => value.uniqueId == stockItemId),
                     "Reloaded stock fixture is unavailable");
-                OpenAttention();
+                if (!QaItemUi.OpenAttention()) return false;
                 Need(Text(Attention()).Contains(stockLabel) && Locate() != null, "Visible stock item has no Locate action");
                 ItemMouseDoubleClickHandler.current.OpenContentAction(bag, new Vector2(220, 200));
                 bag.contentWindow.ToFront();

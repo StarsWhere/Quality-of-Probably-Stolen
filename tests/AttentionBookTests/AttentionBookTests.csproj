@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <GameDir Condition="'$(GameDir)' == ''">$(PROBABLY_STOLEN_GAME_DIR)</GameDir>
+    <GameDir Condition="'$(GameDir)' == ''">D:/SteamLibrary/steamapps/common/Probably Stolen</GameDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../src/ShopAssist/UI/AttentionBook.cs" Link="AttentionBook.cs" />
+    <Compile Include="../../src/ShopAssist/State/AttentionItem.cs" Link="AttentionItem.cs" />
+    <Compile Include="../../src/ShopAssist/State/OperationResult.cs" Link="OperationResult.cs" />
+    <Compile Include="../../src/ShopAssist/State/ShopData.cs" Link="ShopData.cs" />
+    <Compile Include="FakeGame.cs" />
+    <Compile Include="AttentionBookTests.cs" />
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>$(GameDir)/Probably Stolen_Data/Managed/Newtonsoft.Json.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+</Project>

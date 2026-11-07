@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Cryptography;
 using Newtonsoft.Json;
 using UnityEngine;
 using UnityEngine.SceneManagement;
@@ -21,15 +22,27 @@ namespace ShopAssist
             [JsonRequired] public int slot;
             [JsonRequired] public List<SavedIssue> issues = new List<SavedIssue>();
         }
+        [Serializable] private sealed class RecoveryAttempt
+        {
+            [JsonRequired] public int version = 1;
+            [JsonRequired] public string run, backupKey, digest, written;
+            [JsonRequired] public int slot;
+            [JsonRequired] public bool completed, markerReset;
+            [JsonIgnore] internal string markerRaw;
+        }
 
         private const string DataKey = "attention";
+        private const string RecoveryKey = "attention.recovery";
+        private const string BackupPrefix = "attention.unreadable.";
+        private const string MarkerBackupPrefix = "attention.recovery.unreadable.";
         private static readonly Dictionary<string, Func<IEnumerable<AttentionItem>>> providers = new Dictionary<string, Func<IEnumerable<AttentionItem>>>();
         private static readonly Dictionary<string, string> providerErrors = new Dictionary<string, string>();
         private static readonly Dictionary<string, SavedIssues> unsaved = new Dictionary<string, SavedIssues>(StringComparer.Ordinal);
         private static SavedIssues data;
-        private static string run, signature;
+        private static string run, signature, invalidRaw, invalidKey;
         private static int slot;
         private static bool loaded, invalid, dirty, saveFailed;
+        private static RecoveryAttempt recovery;
         private static CustomUIWindow window;
         private static Action<string> log;
         private static float refreshAt;
@@ -49,7 +62,7 @@ namespace ShopAssist
             providers.Add(owner, provider); Changed();
         }
         internal static void Unregister(string owner) { providers.Remove(owner); providerErrors.Remove(owner); Changed(); }
-        internal static void Changed() { dirty = true; refreshAt = 0; }
+        internal static void Changed() { dirty = true; refreshAt = 0; MachineTools.OverviewAttentionChanged(); }
 
         private static bool Ensure()
         {
@@ -58,23 +71,127 @@ namespace ShopAssist
             var store = PlayerStore.Instance;
             if (loaded && run == store.runID && slot == store.saveSlotId) return !invalid;
             Reset(); loaded = true; run = store.runID; slot = store.saveSlotId;
+            return Read();
+        }
+
+        private static void Validate(SavedIssues value, string expectedRun, int expectedSlot)
+        {
+            if (value == null || value.version != 1 || value.run != expectedRun || value.slot != expectedSlot || value.issues == null ||
+                value.issues.Count > 4096 || value.issues.Any(issue => issue == null || string.IsNullOrEmpty(issue.key) ||
+                    issue.key.Length > 256 || string.IsNullOrEmpty(issue.feature) || issue.feature.Length > 128 ||
+                    issue.title == null || issue.title.Length > 4096 || issue.location == null || issue.location.Length > 8192 ||
+                    string.IsNullOrEmpty(issue.reason) || issue.reason.Length > 256 || issue.item < 0) ||
+                value.issues.Select(issue => issue.key).Distinct(StringComparer.Ordinal).Count() != value.issues.Count)
+                throw new FormatException("Invalid attention data or save identity");
+        }
+
+        private static string EncodeChecked(SavedIssues value)
+        {
+            Validate(value, run, slot);
+            string raw = ShopData.Encode(value);
+            Validate(ShopData.Decode<SavedIssues>(raw, 1048576), run, slot);
+            return raw;
+        }
+
+        private static string Digest(string value)
+        {
+            var bytes = new byte[checked(value.Length * 2)];
+            for (int i = 0; i < value.Length; i++) { bytes[i * 2] = (byte)value[i]; bytes[i * 2 + 1] = (byte)(value[i] >> 8); }
+            using (var hash = SHA256.Create()) return Convert.ToBase64String(hash.ComputeHash(bytes));
+        }
+
+        private static void ValidateRecovery(RecoveryAttempt attempt)
+        {
+            string prefix = attempt?.markerReset == true ? MarkerBackupPrefix : BackupPrefix;
+            if (attempt == null || attempt.version != 1 || attempt.run != run || attempt.slot != slot ||
+                attempt.backupKey == null || !attempt.backupKey.StartsWith(prefix, StringComparison.Ordinal) ||
+                !Guid.TryParseExact(attempt.backupKey.Substring(prefix.Length), "N", out _) ||
+                string.IsNullOrEmpty(attempt.digest) || (attempt.markerReset && (!attempt.completed || attempt.written != "")) ||
+                (!attempt.markerReset && attempt.written == null))
+                throw new FormatException("Invalid attention recovery data or save identity");
+            if (!attempt.markerReset) Validate(ShopData.Decode<SavedIssues>(attempt.written, 1048576), run, slot);
+        }
+
+        private static SavedIssues Merge(SavedIssues pending, SavedIssues persisted)
+        {
+            var keys = new HashSet<string>(pending.issues.Select(issue => issue.key), StringComparer.Ordinal);
+            return new SavedIssues { run = run, slot = slot, issues = pending.issues.Concat(persisted.issues.Where(issue => keys.Add(issue.key))).ToList() };
+        }
+
+        private static bool Read()
+        {
+            invalid = saveFailed = false; invalidRaw = invalidKey = null; recovery = null; data = null;
+            string marker;
             try
             {
-                string raw = ModHelper.GetModData(ModEntry.Id, DataKey, null);
+                marker = ModHelper.GetModData(ModEntry.Id, RecoveryKey, null);
+            }
+            catch (Exception error)
+            {
+                invalid = true; log?.Invoke("Could not read attention recovery data: " + error);
+                return false;
+            }
+            if (marker != null)
+            {
+                RecoveryAttempt attempt;
+                try
+                {
+                    attempt = ShopData.Decode<RecoveryAttempt>(marker, 8388608);
+                    ValidateRecovery(attempt);
+                }
+                catch (Exception error)
+                {
+                    invalid = true; invalidKey = RecoveryKey; invalidRaw = marker;
+                    log?.Invoke("Retained unreadable attention recovery data: " + error);
+                    return false;
+                }
+                try
+                {
+                    string backup = ModHelper.GetModData(ModEntry.Id, attempt.backupKey, null);
+                    if (backup == null || Digest(backup) != attempt.digest)
+                        throw new InvalidOperationException("Attention backup is unavailable or changed.");
+                    if (!attempt.completed)
+                    {
+                        // A previous rebuild has not been fully verified, even if its write took effect.
+                        ModHelper.GetModData(ModEntry.Id, DataKey, null);
+                        attempt.markerRaw = marker; recovery = attempt; invalid = true; invalidKey = DataKey; invalidRaw = backup;
+                        SavedIssues candidate = ShopData.Decode<SavedIssues>(attempt.written, 1048576);
+                        string scope = run + ":" + slot;
+                        unsaved[scope] = unsaved.TryGetValue(scope, out SavedIssues pending) ? Merge(pending, candidate) : candidate;
+                        return false;
+                    }
+                }
+                catch (Exception error)
+                {
+                    invalid = true; log?.Invoke("Could not verify attention recovery data: " + error);
+                    return false;
+                }
+            }
+            string raw;
+            try
+            {
+                raw = ModHelper.GetModData(ModEntry.Id, DataKey, null);
+            }
+            catch (Exception error)
+            {
+                invalid = true; log?.Invoke("Could not read attention data: " + error);
+                return false;
+            }
+            try
+            {
                 data = raw == null ? new SavedIssues { run = run, slot = slot } : ShopData.Decode<SavedIssues>(raw, 1048576);
-                if (data == null || data.version != 1 || data.run != run || data.slot != slot || data.issues == null ||
-                    data.issues.Count > 4096 || data.issues.Any(issue => issue == null || string.IsNullOrEmpty(issue.key) ||
-                        issue.key.Length > 256 || string.IsNullOrEmpty(issue.feature) || issue.feature.Length > 128 ||
-                        issue.title == null || issue.title.Length > 4096 || issue.location == null || issue.location.Length > 8192 ||
-                        string.IsNullOrEmpty(issue.reason) || issue.reason.Length > 256 || issue.item < 0) ||
-                    data.issues.Select(issue => issue.key).Distinct(StringComparer.Ordinal).Count() != data.issues.Count)
-                    throw new FormatException("Invalid attention data or save identity");
-                if (unsaved.TryGetValue(run + ":" + slot, out SavedIssues pending)) { data = pending; saveFailed = true; }
+                Validate(data, run, slot);
+                if (unsaved.TryGetValue(run + ":" + slot, out SavedIssues pending))
+                {
+                    // The saved data may have changed after a failed write. Keep both sets until checked.
+                    data = Merge(pending, data);
+                    unsaved[run + ":" + slot] = data; saveFailed = true;
+                }
                 return true;
             }
             catch (Exception error)
             {
-                invalid = true; data = null; log?.Invoke("Retained unreadable attention data: " + error);
+                invalid = true; invalidKey = DataKey; invalidRaw = raw; data = null; log?.Invoke("Retained unreadable attention data: " + error);
                 return false;
             }
         }
@@ -83,7 +200,7 @@ namespace ShopAssist
         {
             try
             {
-                string raw = ShopData.Encode(next);
+                string raw = EncodeChecked(next);
                 ModHelper.SetModData(ModEntry.Id, DataKey, raw);
                 if (ModHelper.GetModData(ModEntry.Id, DataKey, null) != raw) throw new InvalidOperationException("Attention update was not retained.");
                 data = next; saveFailed = false; unsaved.Remove(next.run + ":" + next.slot); Changed(); return true;
@@ -100,8 +217,11 @@ namespace ShopAssist
 
         internal static void Report(OperationResult result, bool alreadyNotified = false)
         {
-            if (result == null || !Ensure()) return;
-            var next = new SavedIssues { run = run, slot = slot, issues = new List<SavedIssue>(data.issues) };
+            if (result == null) return;
+            bool readable = Ensure();
+            if (!readable && (!loaded || !invalid || !SameScope(run, slot))) return;
+            SavedIssues current = readable ? data : (unsaved.TryGetValue(run + ":" + slot, out SavedIssues pending) ? pending : null);
+            var next = new SavedIssues { run = run, slot = slot, issues = current == null ? new List<SavedIssue>() : new List<SavedIssue>(current.issues) };
             var notified = new List<string>();
             bool changed = false;
             foreach (var item in result.Items)
@@ -117,7 +237,9 @@ namespace ShopAssist
                 notified.Add(key);
                 changed = true;
             }
-            if (changed && Save(next) && alreadyNotified) foreach (string key in notified) announced.Add(key);
+            if (!changed) return;
+            if (!readable) { unsaved[run + ":" + slot] = next; Changed(); return; }
+            if (Save(next) && alreadyNotified) foreach (string key in notified) announced.Add(key);
         }
 
         internal static bool HasInspection(string actionKey, int itemId) => PlayerStore.HasInstance && !string.IsNullOrEmpty(PlayerStore.Instance.runID) &&
@@ -125,24 +247,168 @@ namespace ShopAssist
 
         private static void Remove(string key)
         {
-            if (!Ensure()) return;
-            var next = new SavedIssues { run = run, slot = slot, issues = data.issues.Where(issue => issue.key != key).ToList() };
-            if (next.issues.Count != data.issues.Count) Save(next);
+            bool readable = Ensure();
+            if (!readable && (!loaded || !invalid || !SameScope(run, slot))) return;
+            SavedIssues current = readable ? data : (unsaved.TryGetValue(run + ":" + slot, out SavedIssues pending) ? pending : null);
+            if (current == null) return;
+            var next = new SavedIssues { run = run, slot = slot, issues = current.issues.Where(issue => issue.key != key).ToList() };
+            if (next.issues.Count == current.issues.Count) return;
+            if (readable) Save(next);
+            else { unsaved[run + ":" + slot] = next; Changed(); }
+        }
+
+        private static void RetryRead()
+        {
+            if (!loaded || !invalid || !SameScope(run, slot)) return;
+            Read(); Changed();
+        }
+
+        private static void ConfirmRebuild()
+        {
+            if (!loaded || !invalid || invalidRaw == null || !SameScope(run, slot)) return;
+            var prompt = GenericConfirmationUIManager.Instance;
+            if (prompt == null) { ShopNotice.Show(ShopSettings.Text("attention.action_failed")); return; }
+            string expectedRun = run, expectedKey = invalidKey, expectedRaw = invalidRaw; int expectedSlot = slot;
+            prompt.OpenPanel(ShopSettings.Text("attention.rebuild_warning"), ShopSettings.Text("attention.rebuild"),
+                ShopSettings.Text("attention.cancel"), () =>
+                {
+                    prompt.ClosePanel();
+                    Rebuild(expectedRun, expectedSlot, expectedKey, expectedRaw);
+                }, () => prompt.ClosePanel());
+        }
+
+        private static void Rebuild(string expectedRun, int expectedSlot, string expectedKey, string expectedRaw)
+        {
+            if (!loaded || !invalid || run != expectedRun || slot != expectedSlot || invalidKey != expectedKey || invalidRaw != expectedRaw ||
+                !SameScope(expectedRun, expectedSlot))
+            { ShopNotice.Show(ShopSettings.Text("inv.changed")); return; }
+            if (expectedKey == RecoveryKey) { RebuildMarker(expectedRun, expectedSlot, expectedRaw); return; }
+            if (expectedKey != DataKey) { ShopNotice.Show(ShopSettings.Text("attention.action_failed")); return; }
+            try
+            {
+                string current = ModHelper.GetModData(ModEntry.Id, DataKey, null);
+                RecoveryAttempt attempt = recovery;
+                if (current != expectedRaw && (attempt == null || attempt.written == null || current != attempt.written))
+                { ShopNotice.Show(ShopSettings.Text("inv.changed")); return; }
+                if (!SameScope(expectedRun, expectedSlot)) throw new InvalidOperationException("Attention save scope changed.");
+                string scope = expectedRun + ":" + expectedSlot;
+                if (attempt == null)
+                {
+                    SavedIssues candidate = unsaved.TryGetValue(scope, out SavedIssues pending) ? pending :
+                        new SavedIssues { run = expectedRun, slot = expectedSlot };
+                    string candidateRaw = EncodeChecked(candidate);
+                    if (!unsaved.ContainsKey(scope)) unsaved[scope] = candidate;
+                    string backupKey = BackupPrefix + Guid.NewGuid().ToString("N");
+                    if (ModHelper.GetModData(ModEntry.Id, backupKey, null) != null)
+                        throw new InvalidOperationException("Attention backup key already exists.");
+                    if (!SameScope(expectedRun, expectedSlot)) throw new InvalidOperationException("Attention save scope changed.");
+                    ModHelper.SetModData(ModEntry.Id, backupKey, expectedRaw);
+                    if (!SameScope(expectedRun, expectedSlot) || ModHelper.GetModData(ModEntry.Id, backupKey, null) != expectedRaw)
+                        throw new InvalidOperationException("Attention backup was not retained.");
+                    if (ModHelper.GetModData(ModEntry.Id, DataKey, null) != expectedRaw || !SameScope(expectedRun, expectedSlot))
+                        throw new InvalidOperationException("Attention data changed before recovery.");
+                    attempt = new RecoveryAttempt { run = expectedRun, slot = expectedSlot, backupKey = backupKey,
+                        digest = Digest(expectedRaw), written = candidateRaw };
+                    string marker = ShopData.Encode(attempt);
+                    ValidateRecovery(ShopData.Decode<RecoveryAttempt>(marker, 8388608));
+                    ModHelper.SetModData(ModEntry.Id, RecoveryKey, marker);
+                    if (!SameScope(expectedRun, expectedSlot) || ModHelper.GetModData(ModEntry.Id, RecoveryKey, null) != marker)
+                        throw new InvalidOperationException("Attention recovery marker was not retained.");
+                    attempt.markerRaw = marker;
+                    recovery = attempt;
+                    log?.Invoke("Backed up unreadable attention data under " + backupKey);
+                }
+                ValidateRecovery(attempt);
+                if (attempt.completed || Digest(expectedRaw) != attempt.digest ||
+                    ModHelper.GetModData(ModEntry.Id, attempt.backupKey, null) != expectedRaw ||
+                    ModHelper.GetModData(ModEntry.Id, RecoveryKey, null) != attempt.markerRaw ||
+                    !SameScope(expectedRun, expectedSlot) || ModHelper.GetModData(ModEntry.Id, DataKey, null) != current)
+                    throw new InvalidOperationException("Attention recovery data changed.");
+                if (current != attempt.written)
+                {
+                    if (!SameScope(expectedRun, expectedSlot)) throw new InvalidOperationException("Attention save scope changed.");
+                    ModHelper.SetModData(ModEntry.Id, DataKey, attempt.written);
+                }
+                if (!SameScope(expectedRun, expectedSlot) || ModHelper.GetModData(ModEntry.Id, DataKey, null) != attempt.written ||
+                    ModHelper.GetModData(ModEntry.Id, attempt.backupKey, null) != expectedRaw ||
+                    ModHelper.GetModData(ModEntry.Id, RecoveryKey, null) != attempt.markerRaw || !SameScope(expectedRun, expectedSlot))
+                    throw new InvalidOperationException("Attention recovery was not retained.");
+                var completed = new RecoveryAttempt { run = attempt.run, slot = attempt.slot, backupKey = attempt.backupKey,
+                    digest = attempt.digest, written = attempt.written, completed = true };
+                string finishedMarker = ShopData.Encode(completed);
+                ValidateRecovery(ShopData.Decode<RecoveryAttempt>(finishedMarker, 8388608));
+                ModHelper.SetModData(ModEntry.Id, RecoveryKey, finishedMarker);
+                if (!SameScope(expectedRun, expectedSlot) || ModHelper.GetModData(ModEntry.Id, RecoveryKey, null) != finishedMarker ||
+                    ModHelper.GetModData(ModEntry.Id, DataKey, null) != attempt.written ||
+                    ModHelper.GetModData(ModEntry.Id, attempt.backupKey, null) != expectedRaw || !SameScope(expectedRun, expectedSlot))
+                    throw new InvalidOperationException("Attention recovery completion was not retained.");
+                SavedIssues next = unsaved.TryGetValue(scope, out SavedIssues latest) ? latest :
+                    ShopData.Decode<SavedIssues>(attempt.written, 1048576);
+                string nextRaw = EncodeChecked(next);
+                data = next; invalid = false; invalidRaw = invalidKey = null; recovery = null;
+                if (nextRaw != attempt.written)
+                {
+                    saveFailed = true;
+                    if (!Save(next)) return;
+                }
+                else { saveFailed = false; unsaved.Remove(scope); }
+                Changed(); ShopNotice.Show(ShopSettings.Text("attention.rebuilt"));
+            }
+            catch (Exception error)
+            {
+                log?.Invoke("Could not rebuild attention data: " + error);
+                Changed(); ShopNotice.Show(ShopSettings.Text("attention.save_failed"));
+            }
+        }
+
+        private static void RebuildMarker(string expectedRun, int expectedSlot, string expectedRaw)
+        {
+            try
+            {
+                if (ModHelper.GetModData(ModEntry.Id, RecoveryKey, null) != expectedRaw || !SameScope(expectedRun, expectedSlot))
+                { ShopNotice.Show(ShopSettings.Text("inv.changed")); return; }
+                string backupKey = MarkerBackupPrefix + Guid.NewGuid().ToString("N");
+                if (ModHelper.GetModData(ModEntry.Id, backupKey, null) != null || !SameScope(expectedRun, expectedSlot))
+                    throw new InvalidOperationException("Attention recovery backup key is unavailable.");
+                ModHelper.SetModData(ModEntry.Id, backupKey, expectedRaw);
+                if (!SameScope(expectedRun, expectedSlot) || ModHelper.GetModData(ModEntry.Id, backupKey, null) != expectedRaw ||
+                    ModHelper.GetModData(ModEntry.Id, RecoveryKey, null) != expectedRaw || !SameScope(expectedRun, expectedSlot))
+                    throw new InvalidOperationException("Attention recovery backup was not retained or changed.");
+                var marker = new RecoveryAttempt { run = expectedRun, slot = expectedSlot, backupKey = backupKey,
+                    digest = Digest(expectedRaw), written = "", completed = true, markerReset = true };
+                string raw = ShopData.Encode(marker);
+                ValidateRecovery(ShopData.Decode<RecoveryAttempt>(raw, 8388608));
+                ModHelper.SetModData(ModEntry.Id, RecoveryKey, raw);
+                if (!SameScope(expectedRun, expectedSlot) || ModHelper.GetModData(ModEntry.Id, RecoveryKey, null) != raw ||
+                    ModHelper.GetModData(ModEntry.Id, backupKey, null) != expectedRaw || !SameScope(expectedRun, expectedSlot))
+                    throw new InvalidOperationException("Attention recovery marker reset was not retained.");
+                log?.Invoke("Backed up unreadable attention recovery data under " + backupKey);
+                if (!Read() || saveFailed) { Changed(); ShopNotice.Show(ShopSettings.Text("attention.save_failed")); return; }
+                Changed(); ShopNotice.Show(ShopSettings.Text("attention.rebuilt"));
+            }
+            catch (Exception error)
+            {
+                log?.Invoke("Could not rebuild attention recovery data: " + error);
+                Changed(); ShopNotice.Show(ShopSettings.Text("attention.save_failed"));
+            }
         }
 
         internal static List<AttentionItem> Snapshot()
         {
             var result = new Dictionary<string, AttentionItem>(StringComparer.Ordinal);
             if (!ShopInventory.InStore) return result.Values.ToList();
-            if (Ensure())
-                foreach (SavedIssue issue in data.issues)
+            bool readable = Ensure();
+            SavedIssues visible = readable ? data : (loaded && invalid && unsaved.TryGetValue(run + ":" + slot, out SavedIssues pending) ? pending : null);
+            if (visible != null)
+                foreach (SavedIssue issue in visible.issues)
                 {
                     string key = issue.key;
                     result[key] = new AttentionItem { Key = key, Feature = issue.feature, ItemId = issue.item, Title = issue.title,
                         Location = issue.location, ReasonKey = issue.reason, NeedsInspection = true, Resolve = () => Remove(key) };
                 }
-            else result["attention.invalid"] = new AttentionItem { Key = "attention.invalid", Title = ShopSettings.Text("attention.open"),
-                ReasonKey = "attention.unreadable", NeedsInspection = true };
+            if (!readable) result["attention.invalid"] = new AttentionItem { Key = "attention.invalid", Title = ShopSettings.Text("attention.open"),
+                ReasonKey = "attention.unreadable", NeedsInspection = true, Retry = RetryRead,
+                ResolveLabelKey = "attention.rebuild", Resolve = invalidRaw == null ? (Action)null : ConfirmRebuild };
             if (saveFailed && data != null) result["attention.unsaved"] = new AttentionItem { Key = "attention.unsaved", Title = ShopSettings.Text("attention.open"),
                 ReasonKey = "attention.save_failed", NeedsInspection = true, Retry = () => { if (Ensure()) Save(data); } };
             foreach (var provider in providers.ToArray())
@@ -212,8 +478,8 @@ namespace ShopAssist
             builder.AddButton(ShopSettings.Text("attention.refresh"), () => { if (SameScope(ownRun, ownSlot)) Render(Snapshot()); }).End().Show();
             signature = Signature(items, locations); dirty = false; refreshAt = Time.unscaledTime + 0.5f;
         }
-        private static bool SameScope(string expectedRun, int expectedSlot) => ShopInventory.InStore &&
-            PlayerStore.Instance.runID == expectedRun && PlayerStore.Instance.saveSlotId == expectedSlot;
+        private static bool SameScope(string expectedRun, int expectedSlot) => ShopInventory.InStore && PlayerStore.HasInstance &&
+            PlayerStore.Instance.runID == expectedRun && PlayerStore.Instance.saveSlotId == expectedSlot && PlayerStore.Instance.ModData() != null;
         private static void Invoke(string key, string ownRun, int ownSlot, bool resolve)
         {
             if (!SameScope(ownRun, ownSlot) || !ActionReady()) return;
@@ -290,7 +556,7 @@ namespace ShopAssist
         private static void Reset()
         {
             CustomUIWindow old = window; window = null; old?.Close();
-            data = null; run = null; slot = 0; loaded = invalid = saveFailed = false; signature = null; dirty = true;
+            data = null; run = invalidRaw = invalidKey = null; slot = 0; loaded = invalid = saveFailed = false; recovery = null; signature = null; dirty = true;
             announced.Clear();
             ShopNotice.ResetSession();
         }
