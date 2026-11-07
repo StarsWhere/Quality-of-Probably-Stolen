@@ -150,7 +150,7 @@ namespace ShopAssist
                 string raw = ModHelper.GetModData(ModEntry.Id, ReplantDataKey, null);
                 data = raw == null ? new SeedRules { run = PlayerStore.Instance.runID, slot = PlayerStore.Instance.saveSlotId } :
                     ShopData.Decode<SeedRules>(raw, 65536);
-                if (data == null || (data.version != 1 && data.version != 2) || data.run != PlayerStore.Instance.runID ||
+                if (data == null || data.version != 2 || data.run != PlayerStore.Instance.runID ||
                     data.slot != PlayerStore.Instance.saveSlotId || data.rules == null || data.rules.Count > 100 ||
                     data.rules.Any(rule => rule == null || rule.machine <= 0 || string.IsNullOrEmpty(rule.plant) ||
                         rule.plant.Length > 128 || !ValidGenes(rule.genes)) ||
@@ -158,11 +158,9 @@ namespace ShopAssist
                     throw new FormatException("Invalid F32 rules or save identity");
                 foreach (SeedRule rule in data.rules)
                 {
-                    if (data.version == 1) { rule.state = (int)ReplantPhase.Idle; rule.reason = ""; }
                     if (!rule.state.HasValue || rule.state < 0 || rule.state > 2 || !ValidReplantReason(rule))
                         throw new FormatException("Invalid F32 pending state");
                 }
-                data.version = 2;
                 replantReadError = null;
                 return true;
             }
@@ -230,7 +228,7 @@ namespace ShopAssist
             int cardRows = (count + 3) / 4;
             float scrollHeight = count == 0 ? 36 : Mathf.Min(205, cardRows * 100 + 4);
             int statusHeight = rule != null && rule.state != (int)ReplantPhase.Idle ? 70 : 0;
-            int height = Mathf.Clamp(Mathf.CeilToInt(195 + scrollHeight + (rule == null ? 0 : 34) + (selected == null ? 0 : 22) + statusHeight), 280, 560);
+            int height = Mathf.Clamp(Mathf.CeilToInt(195 + scrollHeight + (rule == null ? 0 : 56) + statusHeight), 280, 560);
             var builder = UiLayout.Rebuild(ref replantWindow, ModEntry.Id + ".f32", ShopSettings.Text("f32.open"), 600, height);
             replantWindow = builder.GetWindow(); CustomUIWindow own = replantWindow;
             builder.OnClose(() => { if (ReferenceEquals(replantWindow, own)) replantWindow = null; });
@@ -247,6 +245,15 @@ namespace ShopAssist
             {
                 string details = SeedDetails(selected, scanner);
                 builder.AddLabel(SeedSource(selected.Item) + (string.IsNullOrEmpty(details) ? "" : " · " + details));
+                if (builder.Last.text != null) builder.Last.text.richText = false;
+            }
+            else if (rule != null)
+            {
+                string name = PlantRegistry.Get(rule.plant)?.displayName;
+                if (string.IsNullOrEmpty(name)) name = ShopSettings.Text("f32.unknown_plant");
+                string details = SeedDetails(rule.genes, scanner);
+                builder.AddLabel(ShopSettings.Format("f32.target", name) +
+                    (string.IsNullOrEmpty(details) ? "" : " · " + details));
                 if (builder.Last.text != null) builder.Last.text.richText = false;
             }
             if (rule != null && rule.state != (int)ReplantPhase.Idle)
@@ -303,8 +310,10 @@ namespace ShopAssist
         private string SeedSource(GameItem seed) => ShopSettings.Text(ReferenceEquals(seed?.parentInventory,
             MachineHydroponic.GetInputSlot(replantMachine)) ? "vm.seed_input" : "vm.seed_output");
 
-        private static string SeedDetails(SeedChoice choice, bool scanner) => !scanner || choice.Genes.Count == 0 ? "" :
-            string.Join(" / ", choice.Genes.Select(gene =>
+        private static string SeedDetails(SeedChoice choice, bool scanner) => SeedDetails(choice.Genes, scanner);
+
+        private static string SeedDetails(List<SeedGene> genes, bool scanner) => !scanner || genes == null || genes.Count == 0 ? "" :
+            string.Join(" / ", genes.Select(gene =>
             {
                 PlantTrait trait = PlantTraitRegistry.Get(gene.id);
                 return (trait?.displayName ?? gene.id) + " " + PlantGeneticsHelper.RankLabel(gene.rank);

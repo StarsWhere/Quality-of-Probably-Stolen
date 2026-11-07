@@ -34,7 +34,7 @@ public sealed class ReplantRecoveryScenario
             MachineFeatureQa.Put(input, original); MachineFeatureQa.Put(MachineHelper.GetBatterySlot(machine), battery);
             MachineFeatureQa.Put(MachineHydroponic.GetWaterSlot(machine), water);
             ItemMouseDoubleClickHandler.current.OpenContentAction(machine, new Vector2(260, 140)); machine.contentWindow.ToFront();
-            TradeScenario.SetOptions(true, "f32.enabled"); RoutingScenario.OpenOptionAction("f32.open");
+            TradeScenario.SetOptions(true, "f32.enabled"); RoutingScenario.RunFeatureAction("f32.open");
             var selector = CustomUIManager.Instance.GetWindow(Mod + ".f32");
             Require(selector?.IsAlive == true, "Replant selector unavailable");
             LayoutScenario.Select(selector, original); CustomUIManager.Instance.GetWindow(Mod + ".f32")?.Close();
@@ -99,7 +99,7 @@ public sealed class ReplantRecoveryScenario
         {
             Require(Rules().Contains("\"state\":2") && ReferenceEquals(input.childItem, selected), "Inspection state was retried or cleared without confirmation");
             if (--waitFrames > 0) return false;
-            machine.contentWindow.ToFront(); RoutingScenario.OpenOptionAction("f32.open");
+            machine.contentWindow.ToFront(); RoutingScenario.RunFeatureAction("f32.open");
             var view = CustomUIManager.Instance.GetWindow(Mod + ".f32");
             Require(view?.Get("resolve")?.button != null, "Inspection has no explicit resolution action");
             view.Get("resolve").button.onClick.Invoke();

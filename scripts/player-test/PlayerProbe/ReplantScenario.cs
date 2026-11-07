@@ -45,7 +45,7 @@ public sealed class ReplantScenario
             ItemMouseDoubleClickHandler.current.OpenContentAction(machine, new Vector2(260, 140));
             machine.contentWindow.ToFront();
             TradeScenario.SetOptions(true, "f32.enabled");
-            RoutingScenario.OpenOptionAction("f32.open");
+            RoutingScenario.RunFeatureAction("f32.open");
             var selector = CustomUIManager.Instance.GetWindow(Mod + ".f32");
             Require(selector?.IsAlive == true && selector.root.GetComponentsInChildren<Transform>(true).Any(t => t.name == "ShopAssist_ItemCards"),
                 "F32 did not show actual item cards");
