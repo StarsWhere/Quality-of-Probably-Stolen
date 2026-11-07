@@ -10,7 +10,7 @@ namespace ShopAssist
     internal sealed class CustomerBasket : IDisposable
     {
         private sealed class Quote { internal int Price, Count, Revision; }
-        private sealed class Offer { internal GameItem Item; internal int Price, Count; }
+        private sealed class Offer { internal GameItem Item; internal int Price, Count; internal bool OnCounter; }
         private sealed class Choice { internal ulong Items; internal int Total, Units; }
         private static CustomerBasket active;
         private readonly CustomerIndicators clues;
@@ -24,7 +24,7 @@ namespace ShopAssist
         private StoreClientInstance customer;
         private string run;
         private int saveSlot;
-        private bool reading;
+        private bool reading, showingResults;
         private int? shownBudget;
         private int revision, expectedBudget, waitingAfter, page;
         private string typed = "";
@@ -48,13 +48,19 @@ namespace ShopAssist
         {
             if (enabled.Value && clues.HasBuyingDemand) builder.AddButton(ShopSettings.Text("f34.open"), Draw, "basket");
         }
-        private void Changed() { if (!enabled.Value) Reset(); else if (!allowMove.Value) StopPlace(); }
+        private void Changed()
+        {
+            if (!enabled.Value) { Reset(); return; }
+            if (!allowMove.Value) StopPlace();
+            if (window?.IsAlive != true) return;
+            if (showingResults) Compare(); else Draw();
+        }
         private void StopPlace() { pending.Clear(); staged.Clear(); plannedItems.Clear(); waiting = null; }
         private void Reset()
         {
             if (window != null && window.IsAlive) window.Close();
             window = null; StopPlace(); customer = null; run = null; quotes.Clear(); excluded.Clear(); typed = ""; shownBudget = null;
-            reading = false; page = revision = 0;
+            reading = showingResults = false; page = revision = 0;
             inventory.QuotesChanged();
         }
         private bool CaptureContext()
@@ -67,13 +73,16 @@ namespace ShopAssist
             return true;
         }
         private bool Context() => enabled.Value && CaptureContext();
-        private string QuoteLabel(GameItem item)
+        private bool TryQuote(GameItem item, out int price, out bool onCounter)
         {
-            if (!clues.HasBuyingDemand || customer != clues.Customer || run != PlayerStore.Instance.runID || saveSlot != PlayerStore.Instance.saveSlotId ||
-                item == null || !quotes.TryGetValue(item, out var quote) || quote.Count != item.unitCount ||
-                !clues.Matches(item)) return null;
-            return ShopSettings.Format("f11.quoted", quote.Price);
+            price = 0; onCounter = false;
+            return item != null && CaptureContext() && clues.Matches(item) &&
+                CustomerQuote.TryGet(item, customer.GetClientBlueprint(), out price, out onCounter);
         }
+        private static string FormatQuote(int value, bool onCounter) =>
+            ShopSettings.Format(onCounter ? "f11.quoted" : "f11.estimated", value);
+        private string QuoteLabel(GameItem item) => TryQuote(item, out int price, out bool onCounter)
+            ? FormatQuote(price, onCounter) : null;
         [HarmonyPatch(typeof(NegociationUIManager), "BuildBuying")]
         private static class Buying
         {
@@ -102,7 +111,7 @@ namespace ShopAssist
                 if (!string.IsNullOrEmpty(refusal)) { if (a.quotes.Remove(item)) a.inventory.QuotesChanged(); return; }
                 string icon = GeneralHelper.CreditIcon();
                 if (string.IsNullOrEmpty(icon) || right == null || !right.EndsWith(icon, StringComparison.Ordinal) ||
-                    !int.TryParse(right.Substring(0, right.Length - icon.Length), NumberStyles.Integer, CultureInfo.CurrentCulture, out int n) || n <= 0)
+                    !int.TryParse(right.Substring(0, right.Length - icon.Length), NumberStyles.Integer, CultureInfo.CurrentCulture, out int n) || n < 0)
                 { if (a.quotes.Remove(item)) a.inventory.QuotesChanged(); return; }
                 bool changed = !a.quotes.TryGetValue(item, out var old) || old.Price != n || old.Count != item.unitCount;
                 a.quotes[item] = new Quote { Price = n, Count = item.unitCount, Revision = a.revision };
@@ -134,16 +143,23 @@ namespace ShopAssist
         private void Draw()
         {
             if (!Context() || !clues.HasBuyingDemand) return;
+            showingResults = false;
             var stock = Stock();
             var b = Window();
             b.AddLabel(shownBudget.HasValue ? ShopSettings.Format("f34.budget", shownBudget) : ShopSettings.Text("f34.unshown"))
                 .AddInput(ShopSettings.Text("f34.limit"), typed, s => typed = s, "limit", s => typed = s);
             b.BeginScrollFlexible(120);
             page = Math.Max(0, Math.Min(page, (stock.Count - 1) / 24));
-            ItemGrid.Add(b, stock.Skip(page * 24).Take(24).Select(item => new ItemGrid.Entry(item)
+            ItemGrid.Add(b, stock.Skip(page * 24).Take(24).Select(item =>
             {
-                Selected = !excluded.Contains(item), Enabled = quotes.TryGetValue(item, out var quote) && quote.Count == item.unitCount,
-                Badge = quotes.TryGetValue(item, out var price) && price.Count == item.unitCount ? price.Price.ToString() : ShopSettings.Text("f34.unpriced")
+                bool priced = TryQuote(item, out int price, out bool onCounter);
+                return new ItemGrid.Entry(item)
+                {
+                    Selected = !excluded.Contains(item), Enabled = priced,
+                    Badge = priced ? price.ToString() : ShopSettings.Text("f34.unpriced"),
+                    QuoteLabel = priced ? FormatQuote(price, onCounter) : ShopSettings.Text("f34.unpriced"),
+                    PurchaseLabel = inventory.PurchaseLabel(item)
+                };
             }), new ItemGrid.Options { Cards = true, Columns = 4, CardWidth = 130, CardHeight = 100,
                 OnClick = entry => { if (!excluded.Add(entry.Item)) excluded.Remove(entry.Item); entry.Selected = !excluded.Contains(entry.Item); } });
             b.End();
@@ -153,8 +169,11 @@ namespace ShopAssist
         private void Compare()
         {
             if (!Context() || !Budget(out int limit)) { ShopNotice.Show(ShopSettings.Text("f34.unshown")); return; }
-            var stock = Stock().Where(i => !excluded.Contains(i) && quotes.TryGetValue(i, out var q) && q.Count == i.unitCount && q.Price <= limit)
-                .Select(i => new Offer { Item = i, Count = i.unitCount, Price = quotes[i].Price }).OrderBy(o => o.Price).ToList();
+            showingResults = true;
+            var stock = Stock().Where(i => !excluded.Contains(i)).Select(i =>
+                TryQuote(i, out int price, out bool onCounter) && price <= limit
+                    ? new Offer { Item = i, Count = i.unitCount, Price = price, OnCounter = onCounter } : null)
+                .Where(o => o != null).OrderBy(o => o.Price).ToList();
             int eligibleCount = stock.Count;
             if (stock.Count > 48) stock = stock.Take(24).Concat(stock.Skip(stock.Count - 24)).ToList();
             var states = new Dictionary<int, Choice> { [0] = new Choice() };
@@ -182,7 +201,8 @@ namespace ShopAssist
             {
                 var picked = stock.Where((o, i) => (choice.Items & (1UL << i)) != 0).ToList();
                 b.AddLabel(ShopSettings.Format("f34.summary", choice.Units, choice.Total, limit - choice.Total));
-                ItemGrid.Add(b, picked.Select(o => new ItemGrid.Entry(o.Item) { Badge = o.Price.ToString(), Selected = true }),
+                ItemGrid.Add(b, picked.Select(o => new ItemGrid.Entry(o.Item) { Badge = o.Price.ToString(),
+                    QuoteLabel = FormatQuote(o.Price, o.OnCounter), PurchaseLabel = inventory.PurchaseLabel(o.Item), Selected = true }),
                     new ItemGrid.Options { Columns = 20, CellSize = 20 });
                 if (allowMove.Value) b.AddButton(ShopSettings.Text("f34.place"), () => BeginPlace(picked, limit), "place_" + choice.Items);
             }
@@ -196,7 +216,7 @@ namespace ShopAssist
             var eligible = new HashSet<GameItem>(Stock());
             if (NegociationUIManager.Instance?.uiObject.activeInHierarchy != true ||
                 desk.childItems.Any(i => !items.Any(o => o.Item == i)) || items.Any(o => !eligible.Contains(o.Item) ||
-                !quotes.TryGetValue(o.Item, out var q) || q.Price != o.Price || q.Count != o.Count))
+                o.Item.unitCount != o.Count || !TryQuote(o.Item, out int price, out _) || price != o.Price))
             { ShopNotice.Show(ShopSettings.Text("f34.desk")); return; }
             foreach (var o in items.Where(o => o.Item.parentInventory != desk))
             {
@@ -233,8 +253,9 @@ namespace ShopAssist
             }
             var move = pending.Dequeue();
             var from = ShopInventory.OwnedLocations(false).Find(l => l.Ordinary && l.Inventory == move.Item.parentInventory);
-            if (from == null || !Eligible(move.Item) || move.Item.unitCount != move.Count || !quotes.TryGetValue(move.Item, out var old) ||
-                old.Price != move.Price) { StopPlace(); ShopNotice.Show(ShopSettings.Text("f34.changed")); return; }
+            if (from == null || !Eligible(move.Item) || move.Item.unitCount != move.Count ||
+                !TryQuote(move.Item, out int price, out _) || price != move.Price)
+            { StopPlace(); ShopNotice.Show(ShopSettings.Text("f34.changed")); return; }
             var slot = GridPlacements.Empty(desk, move.Item);
             if (move.Item.parentInventory != from.Inventory || move.Item.unitCount != move.Count || !Eligible(move.Item))
             { StopPlace(); ShopNotice.Show(ShopSettings.Text("f34.changed")); return; }

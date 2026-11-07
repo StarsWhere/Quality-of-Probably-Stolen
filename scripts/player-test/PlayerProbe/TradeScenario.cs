@@ -75,15 +75,10 @@ public sealed class TradeScenario
         }
         if (step == 5)
         {
-            var opts = StoreUIManager.Instance.gameOptionUIManager;
-            opts.OpenUI();
-            var action = BatchAScenario.ToolsAction("f28.open");
-            Check(action?.button != null && action.button.interactable, "Ledger tools action inaccessible");
-            action.button.onClick.Invoke();
+            RoutingScenario.RunFeatureAction("f28.open");
             var ledger = CustomUIManager.Instance.GetWindow(Mod + ".ledger");
             Check(ledger != null && ledger.IsAlive, "Ledger failed to open");
             ledger.Close();
-            opts.CloseUI();
             p.dayUntilRent = 1;
             Check(p.IsPayingRent(), "Test store does not rent property");
             if (StoreUIManager.Instance.controlHintOverlay?.activeSelf == true) StoreUIManager.Instance.ToggleControlHintOverlay();

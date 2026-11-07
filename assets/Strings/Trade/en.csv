@@ -15,6 +15,10 @@ f28.tip,Record daily cash changes after enabling this feature. Open the ledger b
 f28.open,Cash flow ledger
 f28.invalid,Could not read the ledger. Its existing records have been kept.
 f28.day,Day {0}
+f28.day_input,Day
+f28.go,Go
+f28.invalid_day,Enter a day from 1 to {0}.
+f28.empty,No data recorded for this view.
 f28.row,{0}   received {1}   spent {2}
 f28.total,Net cash flow: {0}
 f28.margin,Gross margin on known costs: {0}. Sales without a known cost: {1}.

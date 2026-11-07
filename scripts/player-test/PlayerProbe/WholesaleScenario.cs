@@ -8,6 +8,7 @@ public sealed class WholesaleScenario
     private readonly QaNewRun start = new QaNewRun();
     private GameItem first, second;
     private int step, paidBalance;
+    private bool oldNative;
     private static void Need(bool ok, string text) { if (!ok) throw new InvalidOperationException(text); }
     public bool Tick(out string result)
     {
@@ -19,6 +20,9 @@ public sealed class WholesaleScenario
             case 1:
                 if (e.storeInteractables?.activeInHierarchy != true || NegociationUIManager.Instance == null) return false;
                 TradeScenario.SetOptions(true, "f01.wholesale");
+                TradeScenario.SetOptions(false, "f01.enabled");
+                oldNative = EmporiumOption.Instance.moveBoughtItemsToInventory;
+                EmporiumOption.Instance.moveBoughtItemsToInventory = false;
                 var client = StoreClientList.CreateJunkerSellOnly();
                 p.currentClientInstance = StoreClientInstance.CreateClientInstance(client); p.isClientArrived = true;
                 client.isOfferWholesale = true; client.wholesaleDiscount = 20;
@@ -39,12 +43,34 @@ public sealed class WholesaleScenario
                 NegociationUIManager.Instance.OnWholesaleClick();
                 Need(price > 0 && p.playerCash == before - price && GeneralHelper.IsItemOwned(first) && GeneralHelper.IsItemOwned(second) &&
                     first.parentInventory == e.backInvinvElement && second.parentInventory == e.backInvinvElement, "Wholesale settlement lost cash or stock");
+                TradeScenario.SetOptions(true, "f01.enabled");
+                TradeScenario.SetOptions(false, "f01.wholesale");
+                EmporiumOption.Instance.moveBoughtItemsToInventory = true;
+                var nativeClient = StoreClientList.CreateJunkerSellOnly();
+                nativeClient.isOfferWholesale = true; nativeClient.wholesaleDiscount = 20;
+                p.currentClientInstance = StoreClientInstance.CreateClientInstance(nativeClient);
+                var nativeItem = Add("wine_yeast_red", e.backInvinvElement);
+                before = p.playerCash; price = p.GetWholesalePrice();
+                NegociationUIManager.Instance.OnWholesaleClick();
+                Need(price > 0 && p.playerCash == before - price && GeneralHelper.IsItemOwned(nativeItem) &&
+                    nativeItem.parentInventory != e.backInvinvElement,
+                    "Ordinary purchase switch changed native wholesale routing when wholesale is disabled");
+                nativeItem.Destroy();
                 paidBalance = p.playerCash;
                 p.currentClientInstance = null; p.isClientArrived = false;
                 MapUIManager.Instance.Travel(AfterhourLocation.Get(AfterhourLocation.DUMPING_GROUND));
                 step++; return false;
             case 2:
                 if (!MapUIManager.Instance.IsOutside) return false;
+                p.currentClientInstance = StoreClientInstance.CreateClientInstance(StoreClientList.CreateJunkerSellOnly());
+                var outsideItem = Add("wine_yeast_red", e.backInvinvElement);
+                p.BuyItem(outsideItem);
+                Need(GeneralHelper.IsItemOwned(outsideItem) && outsideItem.parentInventory == e.afterhourInventory,
+                    "Outside purchase did not use native after-hours storage");
+                outsideItem.Destroy();
+                paidBalance = p.playerCash;
+                p.currentClientInstance = null; p.isClientArrived = false;
+                EmporiumOption.Instance.moveBoughtItemsToInventory = oldNative;
                 MapUIManager.Instance.ReturnNow(); step++; return false;
             case 3:
                 if (MapUIManager.Instance.IsOutside || p.playerLocation != PlayerStore.PlayerLocation.IN_STORE || !e.storeInteractables.activeInHierarchy) return false;
@@ -52,7 +78,7 @@ public sealed class WholesaleScenario
                     "Purchased wholesale goods did not survive leaving and returning");
                 string data = string.Join("|", p.runID, p.saveSlotId, first.GetUniqueID(), second.GetUniqueID(), paidBalance);
                 File.WriteAllText(Path.Combine(Application.persistentDataPath, "qa-wholesale.txt"), data);
-                p.SaveGame(); result = "PASS native wholesale space cancellation, single charge, retained purchased goods after outing, saved isolated store"; return true;
+                p.SaveGame(); result = "PASS independent wholesale/ordinary switches, native auto-storage and outside routing, retained paid goods after outing, saved isolated store"; return true;
         }
         return false;
     }

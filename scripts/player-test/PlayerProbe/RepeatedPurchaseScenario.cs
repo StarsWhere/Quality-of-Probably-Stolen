@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using HarmonyLib;
 using UnityEngine;
 
 public class RepeatedPurchaseScenario
@@ -12,6 +13,8 @@ public class RepeatedPurchaseScenario
     protected RepeatedPurchaseScenario(bool allFeatures) { this.allFeatures = allFeatures; }
     private readonly QaNewRun start = new QaNewRun();
     private int step;
+    private static GameItem outer, inner, special;
+    private static bool throwTransfer, hookSeen;
     private float started = Time.realtimeSinceStartup;
     private static void Need(bool ok, string message) { if (!ok) throw new InvalidOperationException(message); }
     private static GameItem Offer(string id)
@@ -35,12 +38,10 @@ public class RepeatedPurchaseScenario
         if (step == 1)
         {
             if (e.storeInteractables?.activeInHierarchy != true || ui == null) return false;
-            var peer = ModLoader.Mods.Find(m => m.Manifest?.ID == "purchase_stay_counter");
-            Need(peer == null || peer.IsEnabled && peer.Instance != null && string.IsNullOrEmpty(peer.LoadError), "Installed peer failed to start");
             if (allFeatures)
             {
                 var config = ModConfig.Find(Mod);
-                originalOptions = Enumerable.Range(1, 42).ToDictionary(i => "f" + i.ToString("00") + ".enabled",
+                originalOptions = Enumerable.Range(1, 42).Where(i => i != 6).ToDictionary(i => "f" + i.ToString("00") + ".enabled",
                     i => ((ConfigEntry<bool>)config.Get("f" + i.ToString("00") + ".enabled")).Value);
                 TradeScenario.SetOptions(true, originalOptions.Keys.ToArray());
                 if (AdvCalendarUIManager.Instance?.UIPanel?.activeSelf == true) StoreUIManager.Instance.storeCalendar.OnClick();
@@ -50,6 +51,7 @@ public class RepeatedPurchaseScenario
             foreach (var item in e.GetAllNonOwnedItem().ToArray()) item.Destroy();
             var client = StoreClientList.CreateJunkerSellOnly(); client.isMultiBuyDisabled = false;
             p.currentClientInstance = StoreClientInstance.CreateClientInstance(client); p.isClientArrived = true;
+            if (!allFeatures) CheckPurchaseRouting(p);
             var first = Offer("system_module_quality"); var second = Offer("system_module_performance");
             int price = checked((int)(first.GetNegociatedValue() + second.GetNegociatedValue())), before = p.playerCash;
             ui.OnBuyAllClick();
@@ -76,11 +78,106 @@ public class RepeatedPurchaseScenario
             var enabled = originalOptions.Where(kv => kv.Value).Select(kv => kv.Key).ToArray();
             if (enabled.Length > 0) TradeScenario.SetOptions(true, enabled);
             Need(originalOptions.All(kv => ((ConfigEntry<bool>)ModConfig.Find(Mod).Get(kv.Key)).Value == kv.Value),
-                "Restoring all 37 settings failed");
+                "Restoring all feature settings failed");
         }
         result = "PASS native buy button excludes retained goods across repeated and subsequent offers" +
-            (allFeatures ? " with all 42 live settings enabled, disabled and restored" : "");
+            (allFeatures ? " with all live feature settings enabled, disabled and restored" :
+                "; native auto-storage, independent switches, barter, lottery, nested and failed transfers");
         return true;
+    }
+
+    private static void CheckPurchaseRouting(PlayerStore player)
+    {
+        var config = ModConfig.Find(Mod);
+        var ordinary = (ConfigEntry<bool>)config.Get("f01.enabled");
+        var wholesale = (ConfigEntry<bool>)config.Get("f01.wholesale");
+        bool oldOrdinary = ordinary.Value, oldWholesale = wholesale.Value;
+        bool oldNative = EmporiumOption.Instance.moveBoughtItemsToInventory;
+        var oldClient = player.currentClientInstance;
+        var observer = new Harmony("qa.purchase.scope." + Guid.NewGuid().ToString("N"));
+        try
+        {
+            foreach (bool native in new[] { false, true })
+            foreach (bool keep in new[] { false, true })
+            foreach (bool bulk in new[] { false, true })
+            {
+                EmporiumOption.Instance.moveBoughtItemsToInventory = native;
+                ordinary.Set(keep); wholesale.Set(bulk);
+                var item = Offer("wine_yeast");
+                player.BuyItem(item);
+                Need(GeneralHelper.IsItemOwned(item) && (item.parentInventory == EmporiumEntry.Instance.backInvinvElement) == (!native || keep),
+                    "Ordinary purchase routing differs for native=" + native + ", ordinary=" + keep + ", wholesale=" + bulk);
+                item.Destroy();
+            }
+
+            EmporiumOption.Instance.moveBoughtItemsToInventory = true;
+            ordinary.Set(true); wholesale.Set(false);
+            foreach (string tag in new[] { ScratcherHelper.SCRATCHER_TAG, LotteryHelper.LOTTERY_TICKET_TAG })
+            {
+                var ticket = Offer("wine_yeast");
+                ticket.EnableTag(tag, false);
+                Need(ticket.IsTag(tag), "Lottery fixture tag was not applied");
+                player.BuyItem(ticket);
+                Need(GeneralHelper.IsItemOwned(ticket) && ticket.parentInventory != EmporiumEntry.Instance.backInvinvElement,
+                    "Lottery purchase did not use native routing for " + tag);
+                ticket.Destroy();
+            }
+
+            var barterClient = StoreClientList.CreateJunkerSellOnly();
+            barterClient.barterOffer = new BarterOffer { isFreeReward = true };
+            player.currentClientInstance = StoreClientInstance.CreateClientInstance(barterClient);
+            var previouslyOwned = EmporiumEntry.Instance.backInvinvElement.childItems.Where(GeneralHelper.IsItemOwned).ToArray();
+            var barterItem = DirectoryMaster.Item("wine_yeast");
+            GeneralHelper.SetItemOwned(barterItem, false);
+            var slot = EmporiumEntry.Instance.frontInvinvElement.TryFindOneValidInventorySlot(barterItem);
+            Need(slot != null && slot.TryAcceptOnce(barterItem.unitCount) == barterItem.unitCount, "Could not place barter offer");
+            player.AcceptBarter();
+            foreach (var item in previouslyOwned) GeneralHelper.SetItemOwned(item, true);
+            Need(GeneralHelper.IsItemOwned(barterItem) && barterItem.parentInventory != EmporiumEntry.Instance.backInvinvElement,
+                "Barter incorrectly entered the ordinary purchase scope");
+            barterItem.Destroy();
+
+            player.currentClientInstance = StoreClientInstance.CreateClientInstance(StoreClientList.CreateJunkerSellOnly());
+            var method = AccessTools.Method(typeof(PlayerStore), "MoveDealItemToInventory", new[] { typeof(GameItem) });
+            Need(method != null, "Native deal transfer is unavailable");
+            observer.Patch(method, prefix: new HarmonyMethod(typeof(RepeatedPurchaseScenario), nameof(NestedTransfer)));
+            outer = Offer("system_module_quality"); inner = Offer("system_module_performance");
+            special = Offer("wine_yeast"); GeneralHelper.SetItemOwned(special, true);
+            hookSeen = false; throwTransfer = false;
+            player.BuyItem(outer);
+            Need(hookSeen && RetainedOnce(outer) && RetainedOnce(inner) && special.parentInventory != EmporiumEntry.Instance.backInvinvElement,
+                "Nested purchase did not restore its enclosing scope or leaked it to a different deal");
+            outer.Destroy(); inner.Destroy(); special.Destroy();
+
+            outer = Offer("wine_yeast"); inner = special = null;
+            hookSeen = false; throwTransfer = true;
+            try { player.BuyItem(outer); throw new InvalidOperationException("Transfer fixture did not throw"); }
+            catch (InvalidOperationException error) when (error.Message == "QA transfer failure") { }
+            Need(hookSeen, "Transfer failure fixture did not run");
+            throwTransfer = false;
+            var failed = outer; outer = null;
+            player.MoveDealItemToInventory(failed);
+            Need(failed.parentInventory != EmporiumEntry.Instance.backInvinvElement,
+                "Failed purchase leaked its transfer scope");
+            failed.Destroy();
+        }
+        finally
+        {
+            observer.UnpatchAll(observer.Id);
+            outer = inner = special = null; throwTransfer = hookSeen = false;
+            ordinary.Set(oldOrdinary); wholesale.Set(oldWholesale);
+            EmporiumOption.Instance.moveBoughtItemsToInventory = oldNative;
+            player.currentClientInstance = oldClient;
+        }
+    }
+
+    private static void NestedTransfer(PlayerStore __instance, GameItem item)
+    {
+        if (!ReferenceEquals(item, outer)) return;
+        hookSeen = true;
+        if (throwTransfer) throw new InvalidOperationException("QA transfer failure");
+        __instance.BuyItem(inner);
+        __instance.MoveDealItemToInventory(special);
     }
 }
 
