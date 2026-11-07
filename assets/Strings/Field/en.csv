@@ -1,20 +1,31 @@
 f25.enabled,Unload goods brought back from a trip
-f25.tip,When enabled, the backpack is recorded at departure. After returning, use the backpack or tools to choose newly acquired goods and a destination. New goods merged into an old stack need manual handling.
+f25.tip,When enabled, carried items are recorded at departure. After returning, choose the goods to unload and a destination.
 f25.open,Unload this trip’s goods
 f25.none,No new cargo to unload.
 f25.choose,Choose an unloading area
-f25.check,Stack changed — check this item
+f25.check,Origin uncertain — check and handle manually
 f25.bagmissing,The backpack used for this outing could not be found.
 f25.unload,Unload selected cargo
 f25.select,Select cargo to unload first.
-f25.record_failed,Could not record this trip's cargo. Check the backpack manually.
+f25.record_failed,Could not record this trip's cargo. Check the backpack and pockets manually.
 f25.result,Unloaded {0} units
+f25.preview_summary,Ready to unload {0} units to {1}
+f25.merge,Merge into an existing stack
+f25.confirm,Confirm unloading
+f25.resolve_pending,Checked; remove this trip cargo record
+f25.pending_departure,The previous unload needs inspection; its cargo record will be kept during this trip.
+f36.resolve_pending,Finished checking this packing move
+f36.ground,Scavenging ground
+f36.backpack,Trip backpack
+f36.left_pocket,Left pocket
+f36.right_pocket,Right pocket
+f36.merge,Merge into an existing stack
 f22.enabled,Batch-label matching items
-f22.tip,First label a sample with a labeler, then use the tools or shortcut to select matching items. The blue labeler copies names; the ordinary labeler repeats feature labels.
+f22.tip,First label a sample with a labeler, then right-click the sample or a matching item, or use the shortcut. The blue labeler copies names; the ordinary labeler repeats feature labels.
 f22.overwrite,Allow batch replacement of existing labels
 f22.overwrite.tip,Allow the batch to replace existing custom names or feature labels.
 f22.key,Open batch labeling
-f22.key.tip,Open batch labeling. If items are already selected, list only matching items in that selection.
+f22.key.tip,Open batch labeling. Matching selected items are preselected; other visible matching items remain available.
 f22.open,Label a batch
 f22.sample,Equip the labeler and finish labeling one sample first.
 f22.copyName,Copy name · {0}
@@ -22,8 +33,14 @@ f22.repeat,Repeat feature labels · {0}
 f22.none,No eligible matching items in the visible inventory.
 f22.apply,Label checked items
 f22.result,Labeled {0} · skipped {1}
+f22.select_all,Select all
+f22.clear,Clear selection
+f22.selected,Selected {0} / {1}
+f22.interrupted,Labeled {0} · skipped {1} · not processed {2}
 f29.enabled,Restock the showcase using rules
-f29.tip,Use the tools or right-click a source item to set the source, display target and source reserve. Preview and confirm restocking; ineligible goods and those that do not fit stay in place.
+f29.tip,Right-click a source item to set the source, display target and source reserve. Preview and confirm restocking; ineligible goods and those that do not fit stay in place.
+f29.context_price,This item has no purchase price record
+f29.context_data,Cannot read display restocking rules
 f29.price,Restock only goods with a purchase price
 f29.price.tip,When enabled, both selecting goods and applying existing rules require a purchase price record on each item. Turn it off to allow goods without that record.
 f29.goal,Showcase target quantity (units)
@@ -47,16 +64,16 @@ f29.back,Back to list
 f29.apply,Place on display
 f29.result,Placed {0} units on display
 f34.enabled,Choose customer goods by quote
-f34.tip,Open from negotiation or the customer goods list to compare selected goods using the customer’s quotes and budget. Get quotes at the trade counter first; staging the chosen goods can be enabled separately.
+f34.tip,Compare goods using estimated sale prices and the customer's budget without staging them first. Optionally allow confirmed staging; it stops if actual quotes change. Complete the sale yourself.
 f34.move,Allow staging the chosen goods on the counter
 f34.move.tip,After confirmation, place items one at a time and recheck each customer quote. Staging stops if quotes, budget or goods change; complete the sale yourself.
 f34.open,Choose goods within the budget
 f34.budget,Displayed customer budget · {0}
 f34.unshown,Enter the spending limit for this basket.
 f34.limit,Custom spending limit
-f34.unpriced,Get a native counter quote first
+f34.unpriced,Quote unavailable
 f34.compare,Compare baskets
-f34.noOffer,No selected and quoted goods fit within the budget.
+f34.noOffer,No selected goods with a calculable quote fit within the budget.
 f34.summary,{0} units · total {1} · remaining {2}
 f34.place,Stage on the trade counter
 f34.back,Back to item selection
@@ -77,6 +94,10 @@ f36.exclude_category,Exclude category
 f36.category_excluded,Category excluded
 f36.type_unknown,Category unknown
 f36.noPrice,Value unknown
+f36.leave_unknown,Left behind: value unknown
+f36.leave_unsafe,Left behind: transfer conditions cannot be confirmed
+f36.leave_excluded,Left behind: not selected or category excluded
+f36.leave_space,Left behind: no available space
 f36.preview,Preview packing
 f36.summary,Can pack {0} units · leave {1} stacks
 f36.pack_row,Pack: {0} × {1}
@@ -84,7 +105,7 @@ f36.leave_row,Leave: {0} × {1}
 f36.apply,Pack this selection
 f36.result,Packed {0} units
 f26.enabled,Pour multiple water sources into one container
-f26.tip,In the shop, right-click a water container or use the tools. Choose an empty target or one with an identified grade, and identified sources. Preview and confirm; remaining sources pause if the filter is exhausted.
+f26.tip,In the shop, right-click a water container or use the shortcut. Choose an empty target or one with an identified grade, and identified sources. Preview and confirm; remaining sources pause if the filter is exhausted.
 f26.mix,Allow mixing different water grades
 f26.mix.tip,Allow identified sources of different grades when gathering water. Mixing still requires confirmation.
 f26.key,Open water gathering
@@ -104,4 +125,12 @@ f26.filterPaused,Filter exhausted · outflow {0} mL · received {1} mL. Remainin
 f26.pourUnfiltered,Pour with the exhausted filter
 f25.split,New units merged with an older stack. Handle this stack manually.
 f25.handled,Mark handled
+f25.uncertain,This trip record is incomplete. Check your carried items and where they were returned.
+f25.unfinished,This trip's return could not be confirmed. Check the backpack and pockets.
+f25.unreadable,The trip record cannot be read. Check the backpack and pockets.
+f25.restart,Start a new record
+f25.restarted,A new record has started. Check the previous cargo.
+f25.location_unknown,Location unknown
+f25.manual_place,This location cannot be unloaded safely. Handle manually.
+f25.locate,Locate
 f34.limited,Compared the {0} lowest and highest priced items out of {1}. Uncheck goods to narrow the search.

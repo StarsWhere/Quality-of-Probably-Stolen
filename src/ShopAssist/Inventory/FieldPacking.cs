@@ -24,10 +24,9 @@ namespace ShopAssist
 
         private sealed class Pick
         {
-            internal GameItem Item;
-            internal GameInventory Target;
-            internal GridShape Home, Fit;
-            internal int Amount;
+            internal WholeStackTransfer.Plan Transfer;
+            internal GameItem Item => Transfer.Item;
+            internal int Amount => Transfer.Amount;
         }
         internal FieldPacking(ShopSettings settings)
         {
@@ -39,6 +38,7 @@ namespace ShopAssist
         }
         internal void Start()
         {
+            WholeStackTransfer.Acquire();
             CustomerIndicators.PublicTooltipShown += Observe; VisibleInventoryViews.ItemChanged += Forget;
             ModHook.OnGameLoadedInit += Reset; ModHook.OnReturningStoreEarly += Reset; settings.Changed += Changed;
         }
@@ -89,8 +89,22 @@ namespace ShopAssist
                 .Distinct(StringComparer.Ordinal).OrderBy(TypeHelper.GetTypeDisplayName, StringComparer.CurrentCulture).ToList();
             if (category == null || !categories.Contains(category)) category = categories.FirstOrDefault();
             var b = Window();
+            string pending = WholeStackTransfer.FieldPending();
+            if (pending != null)
+            {
+                b.AddLabel(ShopSettings.Text("f08.pending"));
+                b.AddLabel(pending);
+                if (b.Last.text != null) b.Last.text.richText = false;
+                b.AddButton(ShopSettings.Text("f36.resolve_pending"), () =>
+                {
+                    if (!enabled.Value || !AtGround()) return;
+                    if (!WholeStackTransfer.ResolveField()) ShopNotice.Show(ShopSettings.Text("f08.journal_failed"));
+                    Draw();
+                }, "resolve_pending").Show();
+                return;
+            }
             b.AddDropdown(new List<string> { ShopSettings.Text("f36.priority"), ShopSettings.Text("f36.value") },
-                byValue ? 1 : 0, i => byValue = i == 1, "mode");
+                byValue ? 1 : 0, i => { byValue = i == 1; Draw(); }, "mode");
             if (categories.Count != 0)
             {
                 int selected = categories.IndexOf(category);
@@ -111,9 +125,11 @@ namespace ShopAssist
             b.AddToggle(ShopSettings.Text("f36.priority_edit"), choosingPriority, value => { choosingPriority = value; Draw(); });
             ItemGrid.Add(b, Ground().Select(item => new ItemGrid.Entry(item)
             {
-                Selected = CategoryAllowed(item) && (choosingPriority ? priority.Contains(item) : !excluded.Contains(item)),
-                Enabled = CategoryAllowed(item),
-                Badge = !CategoryAllowed(item) ? ShopSettings.Text("f36.category_excluded") : priority.Contains(item) ? ShopSettings.Text("f36.first") :
+                Selected = CategoryAllowed(item) && (!byValue || values.ContainsKey(item)) &&
+                    (choosingPriority ? priority.Contains(item) : !excluded.Contains(item)),
+                Enabled = CategoryAllowed(item) && (!byValue || values.ContainsKey(item)),
+                Badge = !CategoryAllowed(item) ? ShopSettings.Text("f36.category_excluded") :
+                    byValue && !values.ContainsKey(item) ? ShopSettings.Text("f36.noPrice") : priority.Contains(item) ? ShopSettings.Text("f36.first") :
                     values.TryGetValue(item, out long amount) ? amount.ToString(CultureInfo.InvariantCulture) : ShopSettings.Text("f36.noPrice")
             }), new ItemGrid.Options { Cards = true, Columns = 4, CardWidth = 130, CardHeight = 98, OnClick = entry =>
             {
@@ -154,61 +170,64 @@ namespace ShopAssist
             var bag = e.afterhourPocketSlotInvBackpack.childItem;
             var grid = ShopInventory.OutingBag(bag);
             var free = Free(grid);
-            var reserved = new List<GridShape>();
-            var pockets = new[] { e.afterhourPocketSlotInvLeft, e.afterhourPocketSlotInvRight }.Where(p => p != null && p.childItem == null && !p.IsInsertLocked()).ToList();
+            var reserved = new WholeStackTransfer.Reservations();
+            var pockets = new[] { e.afterhourPocketSlotInvLeft, e.afterhourPocketSlotInvRight }.Where(p => p != null && !p.IsInsertLocked()).ToList();
             var items = Ground().Where(i => !excluded.Contains(i) && CategoryAllowed(i));
             items = byValue ? items.Where(i => values.ContainsKey(i)).OrderByDescending(i => values[i]).ThenByDescending(priority.Contains) :
                 items.OrderByDescending(priority.Contains).ThenBy(i => Cells(i.modifiedShape));
             foreach (var item in items)
             {
-                SlotMarker marker = null;
+                WholeStackTransfer.Plan transfer = grid == null ? null : WholeStackTransfer.Stack(item, grid, reserved);
                 int cells = Cells(item.modifiedShape);
-                if (grid != null && free - cells >= reserve.Value && !ShopInventory.WouldContainSelf(item, grid))
-                    marker = GridPlacements.Empty(grid, item, reserved);
-                if (marker != null) { free -= cells; reserved.Add(marker.itemGridShape.Clone()); }
-                else
+                if (transfer == null)
                 {
-                    foreach (var pocket in pockets.ToArray())
-                    {
-                        marker = pocket.TryFindOneValidInventorySlot(item);
-                        if (marker?.inventory == pocket && marker.targetItem == null && marker.numTransfer >= item.unitCount)
-                        { pockets.Remove(pocket); break; }
-                        marker = null;
-                    }
+                    foreach (var pocket in pockets)
+                        if ((transfer = WholeStackTransfer.Stack(item, pocket, reserved)) != null) break;
                 }
-                if (marker != null) picks.Add(new Pick { Item = item, Target = marker.inventory, Amount = item.unitCount,
-                    Fit = marker.itemGridShape.Clone(), Home = item.modifiedShape.Clone() });
+                if (transfer == null && grid != null && free - cells >= reserve.Value && !ShopInventory.WouldContainSelf(item, grid))
+                {
+                    transfer = WholeStackTransfer.Empty(item, grid, reserved);
+                    if (transfer != null) free -= cells;
+                }
+                if (transfer == null)
+                    foreach (var pocket in pockets.ToArray())
+                        if (pocket.childItem == null && (transfer = WholeStackTransfer.EmptySlot(item, pocket)) != null)
+                        { pockets.Remove(pocket); break; }
+                if (transfer != null) picks.Add(new Pick { Transfer = transfer });
             }
             return picks;
         }
         private void Preview()
         {
             if (!enabled.Value || !AtGround()) return;
+            if (!WholeStackTransfer.Ready) { ShopNotice.Show(ShopSettings.Text("f08.pending")); return; }
             showingPreview = true;
             redraw = false;
             var b = Window(); var picks = Plan();
+            string expectedRun = PlayerStore.Instance.runID; int expectedSlot = PlayerStore.Instance.saveSlotId;
             b.AddLabel(ShopSettings.Format("f36.summary", picks.Sum(p => p.Amount), Ground().Count() - picks.Count));
             b.BeginScrollFlexible(110);
-            ItemGrid.Add(b, picks.Select(p => new ItemGrid.Entry(p.Item) { Selected = true, Badge = ShopSettings.Text("f36.take") }),
+            ItemGrid.Add(b, picks.Select(p => new ItemGrid.Entry(p.Item) { Selected = true,
+                Badge = ShopSettings.Text(p.Transfer.IsStack ? "f36.merge" : "f36.take") }),
                 new ItemGrid.Options { Columns = 20, CellSize = 23 });
             var selected = new HashSet<GameItem>(picks.Select(p => p.Item));
             var left = Ground().Where(item => !selected.Contains(item)).ToList();
-            if (left.Count > 0)
+            foreach (var group in left.GroupBy(item => !CategoryAllowed(item) || excluded.Contains(item) ? "f36.leave_excluded" :
+                !WholeStackTransfer.SafeSource(item) ? "f36.leave_unsafe" :
+                byValue && !values.ContainsKey(item) ? "f36.leave_unknown" : "f36.leave_space"))
             {
-                b.AddLabel(ShopSettings.Text("f36.leave"));
-                ItemGrid.Add(b, left.Select(item => new ItemGrid.Entry(item)), new ItemGrid.Options { Columns = 20, CellSize = 23 });
+                b.AddLabel(ShopSettings.Text(group.Key));
+                ItemGrid.Add(b, group.Select(item => new ItemGrid.Entry(item)), new ItemGrid.Options { Columns = 20, CellSize = 23 });
             }
             b.End().BeginRow().AddButton(ShopSettings.Text("f34.back"), Draw)
-                .AddButton(ShopSettings.Text("f36.apply"), () => Commit(picks), "apply").End().Show();
+                .AddButton(ShopSettings.Text("f36.apply"), () => Commit(picks, expectedRun, expectedSlot), "apply").End().Show();
         }
-        private void Commit(List<Pick> expected)
+        private void Commit(List<Pick> expected, string expectedRun, int expectedSlot)
         {
-            if (!enabled.Value || !AtGround()) return;
+            if (!enabled.Value || !AtGround() || PlayerStore.Instance.runID != expectedRun || PlayerStore.Instance.saveSlotId != expectedSlot) return;
+            if (!WholeStackTransfer.Ready) { ShopNotice.Show(ShopSettings.Text("f08.pending")); return; }
             var live = Plan();
-            if (live.Count != expected.Count || live.Where((p, i) => p.Item != expected[i].Item || p.Target != expected[i].Target ||
-                p.Amount != expected[i].Amount || p.Fit.minX != expected[i].Fit.minX || p.Fit.minY != expected[i].Fit.minY ||
-                p.Fit.orientation != expected[i].Fit.orientation || p.Fit.flipped != expected[i].Fit.flipped ||
-                !InventorySortPlan.SameShape(p.Home, expected[i].Home)).Any())
+            if (live.Count != expected.Count || live.Where((p, i) => !WholeStackTransfer.Same(p.Transfer, expected[i].Transfer)).Any())
             { Preview(); ShopNotice.Show(ShopSettings.Text("inv.changed")); return; }
             var ground = EmporiumEntry.Instance.afterhourInventory;
             var result = new OperationResult("f36.open");
@@ -216,50 +235,33 @@ namespace ShopAssist
             foreach (var p in live)
             {
                 if (stopped) { result.Skip(p.Item, p.Amount, "operation.not_attempted"); continue; }
-                if (p.Item.parentInventory != ground || p.Item.unitCount != p.Amount ||
-                    !InventorySortPlan.SameShape(p.Item.modifiedShape, p.Home) || !ShopInventory.Movable(p.Item) || p.Target.IsInsertLocked())
-                { result.Skip(p.Item, p.Amount, "inv.changed"); stopped = true; continue; }
-                var marker = p.Target.TryInventorySlot(p.Item, p.Amount, p.Fit);
-                if (marker == null || marker.inventory != p.Target || marker.targetItem != null || marker.numTransfer < p.Amount)
-                { result.Skip(p.Item, p.Amount, "inv.noSpace"); stopped = true; continue; }
-                int accepted = 0;
-                try { accepted = marker.TryAcceptOnce(p.Amount); }
-                catch (Exception error) { Debug.LogWarning("[ShopAssist] F36 native placement interrupted: " + error); }
-                if (accepted == p.Amount && ReferenceEquals(marker.item, p.Item) && p.Item.parentInventory == p.Target &&
-                    p.Item.unitCount == p.Amount && p.Target.childItems.Contains(p.Item) && !ground.childItems.Contains(p.Item) &&
-                    InventorySortPlan.SameShape(p.Item.modifiedShape, p.Fit))
+                var identity = OperationResult.Capture(p.Item);
+                bool Scope()
                 {
-                    result.Complete(p.Item, p.Amount);
-                    if (GenericConfirmationUIManager.Instance?.panel.activeInHierarchy == true) stopped = true;
-                    continue;
+                    if (!enabled.Value || !AtGround() || PlayerStore.Instance.runID != expectedRun || PlayerStore.Instance.saveSlotId != expectedSlot ||
+                        EmporiumEntry.Instance.afterhourInventory != ground) return false;
+                    var e = EmporiumEntry.Instance;
+                    var bag = e.afterhourPocketSlotInvBackpack.childItem;
+                    return ReferenceEquals(p.Transfer.To, ShopInventory.OutingBag(bag)) ||
+                        ReferenceEquals(p.Transfer.To, e.afterhourPocketSlotInvLeft) || ReferenceEquals(p.Transfer.To, e.afterhourPocketSlotInvRight);
                 }
-                bool restored = Restore(p, ground);
-                result.Skip(p.Item, p.Amount, restored ? "inv.changed" : "inv.inspect", needsInspection: !restored);
-                stopped = true;
+                var field = EmporiumEntry.Instance;
+                var bagItem = field.afterhourPocketSlotInvBackpack.childItem;
+                bool toBag = ReferenceEquals(p.Transfer.To, ShopInventory.OutingBag(bagItem));
+                bool toLeft = ReferenceEquals(p.Transfer.To, field.afterhourPocketSlotInvLeft);
+                string destination = toBag ? ShopSettings.Text("f36.backpack") :
+                    ShopSettings.Text(toLeft ? "f36.left_pocket" : "f36.right_pocket");
+                string destinationKey = toBag ? "field:bag:" + bagItem.GetUniqueID() : toLeft ? "field:left" : "field:right";
+                string path = ShopSettings.Text("f36.ground") + " → " + destination;
+                var outcome = WholeStackTransfer.Apply(p.Transfer, "f36.open", path, "field:ground", destinationKey, Scope);
+                if (outcome == WholeStackTransfer.Result.Applied)
+                {
+                    result.CompleteCaptured(identity, p.Amount, path);
+                    if (GenericConfirmationUIManager.Instance?.panel.activeInHierarchy == true) stopped = true;
+                }
+                else { result.SkipCaptured(identity, p.Amount, outcome == WholeStackTransfer.Result.Unchanged ? "inv.changed" : "f08.pending", path); stopped = true; }
             }
             ShopNotice.ReportField(result, ground, Draw);
-        }
-        private static bool Restore(Pick pick, GameGridInventory ground)
-        {
-            try
-            {
-                if (pick.Item.unitCount != pick.Amount) return false;
-                if (pick.Item.parentInventory != null && pick.Item.parentInventory != ground && pick.Item.parentInventory != pick.Target)
-                    return false;
-                if (pick.Item.parentInventory != ground)
-                    GridPlacements.Exact(ground, pick.Item, pick.Home, pick.Amount)?.TryAcceptOnce(pick.Amount);
-                if (pick.Item.parentInventory == ground && ground.childItems.Contains(pick.Item) &&
-                    !InventorySortPlan.SameShape(pick.Item.modifiedShape, pick.Home) &&
-                    ground.CheckShapePlacement(pick.Item, pick.Home, new List<GameItem> { pick.Item }))
-                {
-                    pick.Item.modifiedShape = new GridShapeBuilder(pick.Item.modifiedShape).SetTransform(pick.Home);
-                    pick.Item.ValidateShapeState(); ground.Validate();
-                }
-                return pick.Item.parentInventory == ground && ground.childItems.Contains(pick.Item) &&
-                    !pick.Target.childItems.Contains(pick.Item) && pick.Item.unitCount == pick.Amount &&
-                    InventorySortPlan.SameShape(pick.Item.modifiedShape, pick.Home);
-            }
-            catch (Exception error) { Debug.LogWarning("[ShopAssist] F36 placement recovery interrupted: " + error); return false; }
         }
         internal void Tick()
         {
@@ -275,6 +277,7 @@ namespace ShopAssist
         }
         public void Dispose()
         {
+            WholeStackTransfer.Release();
             CustomerIndicators.PublicTooltipShown -= Observe; VisibleInventoryViews.ItemChanged -= Forget;
             ModHook.OnGameLoadedInit -= Reset; ModHook.OnReturningStoreEarly -= Reset; settings.Changed -= Changed; Reset();
         }

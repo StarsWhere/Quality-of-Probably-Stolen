@@ -10,7 +10,7 @@ public sealed class FieldScenario
     private const string Mod = "starswhere.shopassist";
     private const BindingFlags Fields = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
     private readonly QaNewRun start = new QaNewRun();
-    private readonly string sampleName = "QA label " + Guid.NewGuid().ToString("N").Substring(0, 6);
+    private readonly string sampleName = "日常补货";
     private float since = Time.realtimeSinceStartup;
     private int step, attempts;
     private GameItem tool, sample, labelTarget, displayItem, bag, keep, loot, excludedLoot, unknownLoot;
@@ -19,7 +19,7 @@ public sealed class FieldScenario
 
     private static void Need(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
     private static CustomUIWindow W(string id) => CustomUIManager.Instance.GetWindow(Mod + "." + id);
-    private static void Action(string key) => RoutingScenario.OpenOptionAction(key);
+    private static void Action(string key) => RoutingScenario.RunFeatureAction(key);
     private static GameItem New(string id, GameInventory target)
     {
         var it = DirectoryMaster.Item(id); Need(it != null, "Missing fixture " + id); GeneralHelper.SetItemOwned(it); Put(target, it); return it;
@@ -54,6 +54,7 @@ public sealed class FieldScenario
             case 1:
                 if (e.storeInteractables == null || !e.storeInteractables.activeInHierarchy || ItemSelectHandler.current == null) return false;
                 TradeScenario.SetOptions(true, "f22.enabled", "f25.enabled", "f29.enabled", "f36.enabled");
+                TradeScenario.SetOptions(false, "f15.enabled", "f17.enabled", "f21.enabled");
                 tool = New("labeler_blue", e.invElement); sample = New("wine_yeast", e.invElement); labelTarget = New("wine_yeast", e.invElement);
                 ItemSelectHandler.current.TryEquipItem(tool); Need(ItemSelectHandler.current.GetEquippedItem() == tool, "Labeler did not equip");
                 tool.Target(sample);
@@ -107,11 +108,11 @@ public sealed class FieldScenario
                     e.afterhourPocketSlotInvBackpack.childItem != bag) return false;
                 attempts = p.scavengingAttempts;
                 loot = New("wine_berry", e.afterhourInventory); loot.RemoveGameItemType("WATER");
-                GeneralHelper.SetCustomName(loot, "QA included loot");
+                GeneralHelper.SetCustomName(loot, "带回的浆果");
                 excludedLoot = New("processed_meat", e.afterhourInventory); excludedLoot.SetGameItemType("WATER");
-                GeneralHelper.SetCustomName(excludedLoot, "QA excluded category");
+                GeneralHelper.SetCustomName(excludedLoot, "罐装食品");
                 unknownLoot = New("processed_juice", e.afterhourInventory); unknownLoot.SetGameItemType("WATER");
-                GeneralHelper.SetCustomName(unknownLoot, "QA unknown category");
+                GeneralHelper.SetCustomName(unknownLoot, "待辨认货物");
                 unknownLoot.tooltipRichTextFunc = (item, inventory, slot, shape, state) => new RichTextBuilder(40).AddLine("QA undisclosed category");
                 Next(); return false;
             case 6:
@@ -127,10 +128,14 @@ public sealed class FieldScenario
                 Need(CellFlag(field, loot, "Enabled") && !CellFlag(field, excludedLoot, "Enabled") && !CellFlag(field, unknownLoot, "Enabled"),
                     "The public exclusion did not conservatively retain unknown-category loot");
                 field.Get("preview").button.onClick.Invoke(); field = W("packing");
-                Need(QaItemUi.Hit(field.root, loot) != null && QaItemUi.Hit(field.root, excludedLoot) != null &&
+                bool packingPreviewOk = QaItemUi.Hit(field.root, loot) != null && QaItemUi.Hit(field.root, excludedLoot) != null &&
                     QaItemUi.Hit(field.root, unknownLoot) != null && CellFlag(field, loot, "Selected") &&
                     !CellFlag(field, excludedLoot, "Selected") && !CellFlag(field, unknownLoot, "Selected") &&
-                    SpriteShown(field, loot) && SpriteShown(field, excludedLoot) && SpriteShown(field, unknownLoot),
+                    SpriteShown(field, loot) && SpriteShown(field, excludedLoot) && SpriteShown(field, unknownLoot);
+                if (!packingPreviewOk)
+                    Debug.Log("[PLAYER-QA] field guard " + RoutingScenario.GuardDiagnostics(loot, excludedLoot, e.afterhourInventory, inside, bag) +
+                        " preview=" + string.Join(" | ", field.root.GetComponentsInChildren<TMPro.TMP_Text>(true).Select(text => text.text)));
+                Need(packingPreviewOk,
                     "Packing preview did not show the actual included, excluded, and unknown-category items");
                 plan = "included=" + loot.GetDisplayName(true) + "; excluded=" + excludedLoot.GetDisplayName(true) + "; unknown=" + unknownLoot.GetDisplayName(true);
                 Need(loot.parentInventory == e.afterhourInventory && p.scavengingAttempts == attempts, "Packing preview consumed or rolled loot");
@@ -146,10 +151,33 @@ public sealed class FieldScenario
                     "Packing state: plan=" + plan + " bag=" + (loot.parentInventory == inside) + " onGround=" + (loot.parentInventory == e.afterhourInventory) +
                     " pocket=" + (loot.parentInventory == e.afterhourPocketSlotInvLeft || loot.parentInventory == e.afterhourPocketSlotInvRight) +
                     " original=" + (keep.parentInventory == inside) + " rolls=" + (p.scavengingAttempts - attempts));
-                W("packing").Close(); MapUIManager.Instance.ReturnNow(); Next(); return false;
+                W("packing").Close(); step = 70; since = Time.realtimeSinceStartup; return false;
+            case 70:
+            {
+                var action = QaItemUi.WindowAction(e.afterhourWindow, "result");
+                if (action == null || action.isDisabled) return false;
+                Need(QaItemUi.WindowAction(e.afterhourWindow, "attention") == null,
+                    "Field result incorrectly showed the store attention action");
+                action.Select();
+                var details = W("operation");
+                Need(details?.IsAlive == true && details.root.GetComponentsInChildren<TMPro.TMP_Text>(true)
+                    .Any(text => text.text.Contains(loot.GetDisplayName(true))),
+                    "The field result action did not show the packed item");
+                details.Close(); MapUIManager.Instance.ReturnNow(); step = 8; since = Time.realtimeSinceStartup; return false;
+            }
             case 8:
                 if (MapUIManager.Instance.IsOutside || p.playerLocation != PlayerStore.PlayerLocation.IN_STORE ||
-                    bag.parentInventory == e.afterhourPocketSlotInvBackpack) return false;
+                    StoreUIManager.Instance.blackscreen?.gameObject.activeInHierarchy == true ||
+                    bag.parentInventory == e.afterhourPocketSlotInvBackpack || Time.realtimeSinceStartup - since < 4f) return false;
+                if (ReferenceEquals(bag.parentInventory, e.backInvinvElement))
+                {
+                    var mod = ModLoader.Mods.FirstOrDefault(value => value.Manifest?.ID == Mod && value.Instance != null);
+                    var cargoGuard = mod?.Instance.GetType().Assembly.GetType("ShopAssist.TripCargo")?.GetMethod("IsReturnedCargoInCounter",
+                        BindingFlags.Static | BindingFlags.NonPublic);
+                    Need(cargoGuard != null && (bool)cargoGuard.Invoke(null, new object[] { loot }) &&
+                        !(bool)cargoGuard.Invoke(null, new object[] { keep }),
+                        "The counter exception must allow only the recorded returned goods");
+                }
                 Action("f25.open");
                 var cargo = W("cargo");
                 Need(cargo?.Get("unload")?.button != null && QaItemUi.Hit(cargo.root, loot) != null && SpriteShown(cargo, loot) &&
@@ -160,9 +188,14 @@ public sealed class FieldScenario
                 Shot("qa-field-cargo-grid.png"); Next(); return false;
             case 9:
                 W("cargo").Get("unload").button.onClick.Invoke();
+                if (W("cargo").Get("confirm")?.button?.interactable != true)
+                    Debug.Log("[PLAYER-QA] unload guard " + RoutingScenario.GuardDiagnostics(loot, loot, inside, e.invElement, bag) +
+                        " preview=" + string.Join(" | ", W("cargo").root.GetComponentsInChildren<TMPro.TMP_Text>(true).Select(text => text.text)));
+                Need(W("cargo").Get("confirm")?.button?.interactable == true, "Unload preview did not offer confirmation");
+                W("cargo").Get("confirm").button.onClick.Invoke();
                 Need(loot.parentInventory == e.invElement && keep.parentInventory == inside, "Previous equipment unloaded or new loot not transferred");
                 Action("f25.open"); Need(W("cargo").Get("unload") == null, "Trip gain could be unloaded twice");
-                result = "PASS real labeler and restock cards, public exclusions and unknown-category packing, stale-preview rejection, original equipment and native return unloading";
+                result = "PASS real labeler and restock cards, public exclusions, stale-preview rejection, direct field result, original equipment and native return unloading";
                 return true;
         }
         return false;

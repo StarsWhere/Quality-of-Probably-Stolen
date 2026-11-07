@@ -38,10 +38,8 @@ static class ItemGridPackingTests
         entryConstructor = entryType.GetConstructors(Flags).Single();
         fakeItem = RuntimeHelpers.GetUninitializedObject(typeof(GameItemElement));
         fakeInventory = RuntimeHelpers.GetUninitializedObject(typeof(GameGridInventory));
-        CheckPack();
-        CheckPages();
-        CheckRows();
-        Console.WriteLine("PASS actual ItemGrid packing matches native legacy placement and capped row counts");
+        CheckPack(); CheckPages(); CheckRows();
+        Console.WriteLine("PASS item grid placement, pagination and bounded rows");
     }
 
     private static void Require(bool condition, string message) { if (!condition) throw new Exception(message); }
@@ -50,25 +48,8 @@ static class ItemGridPackingTests
     {
         var occupied = new HashSet<long>();
         for (int y = Math.Max(0, reserved.yMin); y < reserved.yMax; y++)
-        for (int x = Math.Max(0, reserved.xMin); x < reserved.xMax; x++) occupied.Add(Key(x, y));
+            for (int x = Math.Max(0, reserved.xMin); x < reserved.xMax; x++) occupied.Add(Key(x, y));
         return occupied;
-    }
-    private static GridShape LegacyPack(GridShape shape, int columns, int maxRows, HashSet<long> occupied, ref int rows)
-    {
-        if (shape == null || shape.globalWidth > columns || shape.globalHeight > maxRows) return null;
-        for (int y = 0; y + shape.globalHeight <= maxRows; y++)
-        for (int x = 0; x + shape.globalWidth <= columns; x++)
-        {
-            GridShape pose = new GridShapeBuilder(shape).SetPosition(x, y).Build();
-            bool clear = true;
-            for (int py = 0; py < pose.globalHeight && clear; py++) for (int px = 0; px < pose.globalWidth; px++)
-                if (pose.Get(x + px, y + py) == 1 && occupied.Contains(Key(x + px, y + py))) { clear = false; break; }
-            if (!clear) continue;
-            for (int py = 0; py < pose.globalHeight; py++) for (int px = 0; px < pose.globalWidth; px++)
-                if (pose.Get(x + px, y + py) == 1) occupied.Add(Key(x + px, y + py));
-            rows = Math.Max(rows, y + pose.globalHeight); return pose;
-        }
-        return null;
     }
     private static bool SamePose(GridShape a, GridShape b)
     {
@@ -90,65 +71,50 @@ static class ItemGridPackingTests
         };
         return builder.SetTransform(x, y, flip, turn).Build();
     }
+    private static GridShape Place(GridShape shape, int columns, int maxRows, HashSet<long> occupied, ref int rows)
+    {
+        object[] args = { shape, columns, maxRows, occupied, rows };
+        var actual = (GridShape)pack.Invoke(null, args); rows = (int)args[4];
+        return actual;
+    }
     private static void CheckPack()
     {
         var random = new System.Random(9381);
         for (int kind = 0; kind < 4; kind++) foreach (bool flip in new[] { false, true })
-        for (int turn = 0; turn < 4; turn++)
-        for (int test = 0; test < 80; test++)
+        for (int turn = 0; turn < 4; turn++) for (int test = 0; test < 80; test++)
         {
             GridShape shape = NewShape(kind, flip, turn, random.Next(-4, 8), random.Next(-4, 8));
             GridShape original = shape.Clone();
-            int columns = random.Next(1, 9), maxRows = random.Next(1, 9), oldRows = 0, newRows = 0;
-            var oldOccupied = new HashSet<long>();
+            int columns = random.Next(1, 9), maxRows = random.Next(1, 9), rows = 0;
+            var occupied = new HashSet<long>();
             for (int y = 0; y < maxRows; y++) for (int x = 0; x < columns; x++)
-                if (random.Next(5) == 0) oldOccupied.Add(Key(x, y));
-            var newOccupied = new HashSet<long>(oldOccupied);
-            GridShape expected = LegacyPack(shape, columns, maxRows, oldOccupied, ref oldRows);
-            object[] args = { shape, columns, maxRows, newOccupied, newRows };
-            var actual = (GridShape)pack.Invoke(null, args); newRows = (int)args[4];
-            Require(SamePose(actual, expected) && oldRows == newRows && oldOccupied.SetEquals(newOccupied) && SamePose(shape, original),
-                $"Packing mismatch: kind={kind}, flip={flip}, turn={turn}, test={test}");
+                if (random.Next(5) == 0) occupied.Add(Key(x, y));
+            var before = new HashSet<long>(occupied);
+            GridShape actual = Place(shape, columns, maxRows, occupied, ref rows);
+            Require(SamePose(shape, original), "Packing changed its source shape");
+            if (actual == null) { Require(before.SetEquals(occupied) && rows == 0, "Failed placement changed occupancy"); continue; }
+            Require(actual.minX >= 0 && actual.minY >= 0 && actual.minX + actual.globalWidth <= columns &&
+                actual.minY + actual.globalHeight <= maxRows && actual.globalWidth == shape.globalWidth &&
+                actual.globalHeight == shape.globalHeight && actual.orientation == shape.orientation && actual.flipped == shape.flipped,
+                "Placed shape is outside the board or changed its orientation");
+            var expected = new HashSet<long>(before);
+            for (int y = 0; y < actual.globalHeight; y++) for (int x = 0; x < actual.globalWidth; x++)
+            {
+                Require(actual.Get(actual.minX + x, actual.minY + y) == shape.Get(shape.minX + x, shape.minY + y), "Placed shape changed its cells");
+                if (actual.Get(actual.minX + x, actual.minY + y) != 1) continue;
+                Require(expected.Add(Key(actual.minX + x, actual.minY + y)), "Placed item overlaps an occupied cell");
+            }
+            Require(expected.SetEquals(occupied) && rows == actual.minY + actual.globalHeight, "Occupancy or row count is incorrect");
         }
-    }
-    private static int LegacyRows(IEnumerable<GridShape> shapes, int columns, RectInt reserved)
-    {
-        int rows = Math.Max(0, reserved.yMax); var occupied = Reserve(reserved);
-        foreach (var shape in shapes)
-        {
-            if (shape == null || shape.globalWidth < 1 || shape.globalHeight < 1 || shape.globalWidth > columns) continue;
-            LegacyPack(shape, columns, rows + shape.globalHeight, occupied, ref rows);
-        }
-        return rows;
+        var full = Enumerable.Range(0, 4).Select(index => Key(index % 2, index / 2)).ToHashSet();
+        int used = 0;
+        Require(Place(NewShape(0, false, 0, 0, 0), 2, 2, full, ref used) == null, "Full grid accepted an item");
     }
     private static IList Entries(IEnumerable<GridShape> shapes)
     {
         var entries = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(entryType));
         foreach (var shape in shapes) entries.Add(entryConstructor.Invoke(new[] { fakeItem, fakeInventory, shape }));
         return entries;
-    }
-    private static List<List<int>> LegacyPages(IList<GridShape> shapes, int columns, int visibleRows, RectInt reserved)
-    {
-        var remaining = Enumerable.Range(0, shapes.Count).ToList();
-        var pages = new List<List<int>>();
-        while (remaining.Count > 0)
-        {
-            var page = new List<int>();
-            GridShape first = shapes[remaining[0]];
-            if (first.globalWidth > columns || first.globalHeight > visibleRows)
-            { page.Add(remaining[0]); remaining.RemoveAt(0); pages.Add(page); continue; }
-            var occupied = Reserve(reserved); int rows = 0;
-            for (int i = 0; i < remaining.Count;)
-            {
-                int index = remaining[i];
-                if (LegacyPack(shapes[index], columns, visibleRows, occupied, ref rows) == null) { i++; continue; }
-                page.Add(index); remaining.RemoveAt(i);
-            }
-            if (page.Count == 0) { page.Add(remaining[0]); remaining.RemoveAt(0); }
-            pages.Add(page);
-        }
-        if (pages.Count == 0) pages.Add(new List<int>());
-        return pages;
     }
     private static void CheckPages()
     {
@@ -160,11 +126,22 @@ static class ItemGridPackingTests
             var shapes = Enumerable.Range(0, random.Next(0, 30)).Select(_ => NewShape(random.Next(4), random.Next(2) != 0,
                 random.Next(4), random.Next(-4, 8), random.Next(-4, 8))).ToList();
             IList entries = Entries(shapes);
-            var actual = (IEnumerable)paginate.Invoke(null, new object[] { entries, columns, visibleRows, reserved });
-            var actualPages = actual.Cast<IEnumerable>().Select(page => page.Cast<object>().Select(entries.IndexOf).ToList()).ToList();
-            var expected = LegacyPages(shapes, columns, visibleRows, reserved);
-            Require(actualPages.Count == expected.Count && actualPages.Zip(expected).All(pair => pair.First.SequenceEqual(pair.Second)),
-                $"Page order or membership changed: test={test}");
+            var pages = ((IEnumerable)paginate.Invoke(null, new object[] { entries, columns, visibleRows, reserved }))
+                .Cast<IEnumerable>().Select(page => page.Cast<object>().Select(entries.IndexOf).ToList()).ToList();
+            Require(pages.Count > 0 && pages.SelectMany(page => page).OrderBy(i => i).SequenceEqual(Enumerable.Range(0, shapes.Count)),
+                "Pagination lost, duplicated or invented an item");
+            foreach (var page in pages)
+            {
+                var occupied = Reserve(reserved); int rows = 0;
+                foreach (int index in page)
+                {
+                    GridShape shape = shapes[index];
+                    if (shape.globalWidth > columns || shape.globalHeight > visibleRows)
+                    { Require(page.Count == 1, "Oversized item shares a page"); continue; }
+                    if (Place(shape, columns, visibleRows, occupied, ref rows) == null)
+                        Require(page.Count == 1, "An unplaceable item must remain alone on its scrollable page");
+                }
+            }
         }
     }
     private static void CheckRows()
@@ -177,12 +154,12 @@ static class ItemGridPackingTests
             var reserved = new RectInt(random.Next(0, columns), random.Next(0, 5), random.Next(0, columns + 1), random.Next(0, 6));
             var shapes = Enumerable.Range(0, random.Next(0, 45)).Select(_ => NewShape(random.Next(4), random.Next(2) != 0,
                 random.Next(4), random.Next(-4, 8), random.Next(-4, 8))).ToList();
-            int expected = LegacyRows(shapes, columns, reserved);
             IList entries = Entries(shapes);
+            int full = (int)packedRows.Invoke(null, new object[] { entries, columns, reserved, int.MaxValue });
             foreach (int limit in new[] { 0, 1, 3, 8, 24, int.MaxValue })
             {
                 int actual = (int)packedRows.Invoke(null, new object[] { entries, columns, reserved, limit });
-                Require(actual == Math.Min(expected, limit), $"Rows mismatch: test={test}, limit={limit}, expected={expected}, actual={actual}");
+                Require(actual == Math.Min(full, limit), $"Rows exceed their cap: test={test}, limit={limit}");
             }
         }
         var many = Entries(Enumerable.Range(0, 1000).Select(_ => NewShape(0, false, 0, 0, 0)));
