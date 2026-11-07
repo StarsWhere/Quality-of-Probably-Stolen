@@ -62,7 +62,7 @@ public class LayoutReflowScenario
             baseline = machine.GetTagReadonly("TOTAL_PERCENTAGE_PERFORMANCE_BONUS_INT").GetInt();
             ItemMouseDoubleClickHandler.current.OpenContentAction(machine, new Vector2(300, 180));
             machine.contentWindow.ToFront();
-            RoutingScenario.OpenOptionAction("f10.open");
+            RoutingScenario.RunFeatureAction("f10.open");
             step++; return false;
         }
         var browser = CustomUIManager.Instance.GetWindow(Mod + ".f10");

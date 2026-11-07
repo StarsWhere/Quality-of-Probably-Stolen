@@ -52,7 +52,7 @@ public sealed class LayoutScenario
             options.Get(Mod + ":f15.enabled").SetBool(false, true);
             options.Get("apply").button.onClick.Invoke();
             StoreUIManager.Instance.gameOptionUIManager.CloseUI();
-            RoutingScenario.OpenOptionAction("f10.open");
+            RoutingScenario.RunFeatureAction("f10.open");
             step++; return false;
         }
         if (step == 2)

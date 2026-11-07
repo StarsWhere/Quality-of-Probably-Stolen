@@ -27,7 +27,7 @@ internal static class DailyDesktopFixture
     internal static CustomUIWindow OpenGroups()
     {
         StoreUIManager.Instance.gameOptionUIManager.OpenUI();
-        RoutingScenario.OpenOptionAction("f13.groups");
+        RoutingScenario.RunFeatureAction("f13.groups");
         StoreUIManager.Instance.gameOptionUIManager.CloseUI();
         var groups = CustomUIManager.Instance.GetWindow(GroupsId);
         Need(groups?.IsVisible == true, "F13 group control did not open"); return groups;

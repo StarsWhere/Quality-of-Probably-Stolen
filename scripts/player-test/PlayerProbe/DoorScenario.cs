@@ -16,7 +16,7 @@ public sealed class DoorScenario
     private readonly QaNewRun start = new QaNewRun();
     private int step, today;
     private int checkFrame;
-    private string firstId;
+    private string firstId, secondId;
     private float after, started = Time.realtimeSinceStartup;
     private float closedPaperY;
     private bool sawMotion;
@@ -35,12 +35,14 @@ public sealed class DoorScenario
                 StoreUIManager.Instance.ToggleControlHintOverlay();
             today = StoreStation.GetDayCounter();
             var data = new StringBuilder("{\"schemaVersion\":1,\"rows\":[");
+            string[] taskNames = { "补充饮料", "整理主仓", "检查滤芯", "准备订单", "清点货架", "查看委托", "检查机器", "核对账本" };
             for (int i = 0; i < 8; i++)
             {
                 string id = Guid.NewGuid().ToString("N");
                 if (i == 0) firstId = id;
+                if (i == 1) secondId = id;
                 if (i > 0) data.Append(',');
-                data.Append("{\"id\":\"").Append(id).Append("\",\"text\":\"QA task ").Append(i + 1)
+                data.Append("{\"id\":\"").Append(id).Append("\",\"text\":\"").Append(taskNames[i])
                     .Append("\",\"repeat\":0,\"checkedDay\":0}");
             }
             data.Append("]}");
@@ -164,10 +166,12 @@ public sealed class DoorScenario
                 Need(Find("ShopAssist_DoorNote")?.activeInHierarchy == true && Children(Find("ShopAssist_DoorNote"), "ShopAssist_DoorTask_").Count == 5,
                     "Open shutter badge did not show the compact task board");
                 Capture("qa-door-open.png");
-                Children(Find("ShopAssist_DoorNote"), "ShopAssist_DoorTask_" + firstId)[0].GetComponent<Button>().onClick.Invoke();
+                var task = Children(Find("ShopAssist_DoorNote"), "ShopAssist_DoorTask_" + secondId).SingleOrDefault();
+                Need(task != null, "An unfinished task is missing from the compact note");
+                task.GetComponent<Button>().onClick.Invoke();
                 after = Time.realtimeSinceStartup + 0.8f; step++; return false;
             case 11:
-                Need(CheckedDay(ModHelper.GetModData(Mod, "todo", "")) == 0, "Wall note did not update the task book");
+                Need(CheckedDay(ModHelper.GetModData(Mod, "todo", ""), secondId) == today, "Wall note did not update the task book");
                 Need(AdvCalendarUIManager.Instance.UIPanel.activeSelf == false, "Original calendar opened unexpectedly");
                 result = "PASS shutter calendar and independent switches; shared task checking; motion clipping and noninteractive animation; housing badge and open-shutter note";
                 return true;
@@ -181,7 +185,7 @@ public sealed class DoorScenario
         .Where(item => item.name.StartsWith(prefix, StringComparison.Ordinal) && item.scene.IsValid() && item.activeInHierarchy).ToList();
     private static List<GameObject> Children(GameObject root, string prefix) => root == null ? new List<GameObject>() :
         root.GetComponentsInChildren<Transform>().Where(item => item.name.StartsWith(prefix, StringComparison.Ordinal)).Select(item => item.gameObject).ToList();
-    private int CheckedDay(string raw) => JsonUtility.FromJson<TaskBook>(raw)?.rows?.FirstOrDefault(row => row.id == firstId)?.checkedDay ?? -1;
+    private int CheckedDay(string raw, string id = null) => JsonUtility.FromJson<TaskBook>(raw)?.rows?.FirstOrDefault(row => row.id == (id ?? firstId))?.checkedDay ?? -1;
     private static Button ButtonFor(string name) => Find(name)?.GetComponent<Button>() ?? throw new InvalidOperationException("Missing button: " + name);
     private static void Capture(string file)
     {

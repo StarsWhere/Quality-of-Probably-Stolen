@@ -290,7 +290,7 @@ public sealed class DesktopScenario
     private static void Apply(CustomUIWindow options) => options.Get("apply").button.onClick.Invoke();
     private static void Action(CustomUIWindow options, string key)
     {
-        RoutingScenario.OpenOptionAction(key);
+        RoutingScenario.RunFeatureAction(key);
     }
     private static CustomUIWindow Groups() => CustomUIManager.Instance.GetWindow(GroupsId);
     private Vector2 SourceAtMaskCenter()
