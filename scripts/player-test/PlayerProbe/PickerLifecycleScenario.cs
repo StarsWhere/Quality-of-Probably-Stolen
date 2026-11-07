@@ -41,7 +41,7 @@ public sealed class PickerLifecycleScenario
             Put(firstGrid, ore);
             ItemMouseDoubleClickHandler.current.OpenContentAction(furnace, new Vector2(250, 200));
             furnace.contentWindow.ToFront();
-            RoutingScenario.OpenOptionAction("f33.open");
+            RoutingScenario.RunFeatureAction("f33.open");
             parent = Window("f33");
             picker = QaItemUi.OpenPicker(parent, "source");
             Capture("feed-source"); step = 11; return false;
@@ -69,11 +69,12 @@ public sealed class PickerLifecycleScenario
             Need(search != null, "Picker search is unavailable");
             search.text = "QA moved picker material";
             Need(QaItemUi.Hit(picker.root, ore) == null, "Searching rebound the moved item to its new source");
-            Need(picker.Get("changed")?.root?.activeInHierarchy == true, "Moved source was not reported to the player");
+            Need(picker.root.GetComponentsInChildren<TMP_Text>(true).Any(text => text.gameObject.activeInHierarchy &&
+                text.text == ModHelper.GetLocalized(Mod, "visual.no_items")), "The refreshed picker did not report an empty result");
             Need(QaItemUi.Hit(parent.root, ore) == null && string.IsNullOrEmpty(ModHelper.GetModData(Mod, "f33.rules", "")),
                 "A moved material was selected or persisted against the old source");
             picker.Close(); parent.Close();
-            RoutingScenario.OpenOptionAction("f26.open");
+            RoutingScenario.RunFeatureAction("f26.open");
             parent = Window("water"); picker = QaItemUi.OpenPicker(parent, "target");
             Capture("water-target"); step = 13; return false;
         }
@@ -89,7 +90,7 @@ public sealed class PickerLifecycleScenario
             QaItemUi.Click(delayed);
             Need(!parent.IsAlive && !picker.IsAlive && CustomUIManager.Instance.GetWindow(Mod + ".water")?.IsAlive != true,
                 "A delayed picker click reopened its closed parent");
-            RoutingScenario.OpenOptionAction("f26.open");
+            RoutingScenario.RunFeatureAction("f26.open");
             parent = Window("water"); picker = QaItemUi.OpenPicker(parent, "target");
             Need(QaItemUi.Hit(picker.root, jug) != null, "Water selector did not reopen");
             parent.Close(); frame = Time.frameCount + 3; step = 2; return false;

@@ -14,6 +14,11 @@ namespace ShopAssist
             internal string Name, Location, Reason;
             internal OperationItemStatus Status;
         }
+        internal sealed class ItemIdentity
+        {
+            internal int ItemId;
+            internal string Name;
+        }
 
         internal string ActionKey { get; }
         internal Guid EventId { get; } = Guid.NewGuid();
@@ -24,6 +29,18 @@ namespace ShopAssist
         internal bool NeedsInspection => Items.Any(i => i.Status == OperationItemStatus.NeedsInspection);
 
         internal OperationResult(string actionKey) { ActionKey = actionKey ?? throw new ArgumentNullException(nameof(actionKey)); }
+        internal static ItemIdentity Capture(GameItem item) => new ItemIdentity
+        { ItemId = item == null ? 0 : item.GetUniqueID(), Name = item?.GetDisplayName(true) ?? "" };
+        internal void CompleteCaptured(ItemIdentity item, int quantity, string location = null) =>
+            AddCaptured(item, quantity, null, location, OperationItemStatus.Completed);
+        internal void SkipCaptured(ItemIdentity item, int quantity, string reason, string location = null) =>
+            AddCaptured(item, quantity, reason, location, OperationItemStatus.Skipped);
+        private void AddCaptured(ItemIdentity item, int quantity, string reason, string location, OperationItemStatus status)
+        {
+            if (quantity <= 0) return;
+            Items.Add(new ItemResult { ItemId = item?.ItemId ?? 0, Name = item?.Name ?? "", Quantity = quantity,
+                Reason = reason, Location = location ?? "", Status = status });
+        }
         internal void Complete(GameItem item, int quantity, string location = null) => Add(item, quantity, null, location, OperationItemStatus.Completed);
         internal void Skip(GameItem item, int quantity, string reason, string location = null, bool needsInspection = false) =>
             Add(item, quantity, reason, location, needsInspection || reason == "inv.inspect" ? OperationItemStatus.NeedsInspection : OperationItemStatus.Skipped);
