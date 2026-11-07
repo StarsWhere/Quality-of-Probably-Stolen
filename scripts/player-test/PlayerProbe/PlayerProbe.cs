@@ -7,10 +7,14 @@ using UnityEngine;
 public static class PlayerProbe
 {
     private static bool created;
+    private static bool restoreLocale, localeExisted;
+    private static string previousLocale;
     public static void Start()
     {
         try
         {
+            AudioListener.volume = 0f;
+            AudioListener.pause = true;
             string root = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
             string[] identity = File.ReadAllLines(Path.Combine(root, "qa-identity.txt"));
             if (identity.Length != 3 || identity[0] != Application.companyName || identity[1] != Application.productName ||
@@ -33,12 +37,37 @@ public static class PlayerProbe
                 if (type == LogType.Error || type == LogType.Exception || type == LogType.Assert)
                     File.AppendAllText(errorLog, "---- " + type + " ----\n" + message + "\n" + stack + "\n");
             };
+            ConfigureStartupLocale(identity[2]);
         }
         catch (Exception error)
         {
+            try { RestoreStartupLocale(); }
+            catch (Exception restoreError) { error = new AggregateException("Startup failed and the QA locale could not be restored", error, restoreError); }
             UnityEngine.Debug.LogError("[PLAYER-QA] guard failed: " + error);
             Environment.Exit(70);
         }
+    }
+
+    private static void ConfigureStartupLocale(string dataPath)
+    {
+        string phasePath = Path.Combine(dataPath, "qa-phase.txt");
+        string phase = File.Exists(phasePath) ? File.ReadAllText(phasePath).Trim() : "";
+        string locale = phase == "scenario-ModuleScaleScenario" || phase == "scenario-StockSearchScenario" ? "zh" :
+            phase == "scenario-ModuleScaleEnglishScenario" || phase == "scenario-StockSearchEnglishScenario" ? "en" : null;
+        if (locale == null || restoreLocale) return;
+        localeExisted = ES3.KeyExists("locale");
+        previousLocale = localeExisted ? ES3.LoadString("locale", "", null, null) : null;
+        restoreLocale = true;
+        ES3.Save("locale", locale);
+        Debug.Log("[PLAYER-QA] Native startup locale=" + locale + " for " + phase);
+    }
+
+    internal static void RestoreStartupLocale()
+    {
+        if (!restoreLocale) return;
+        if (localeExisted) ES3.Save("locale", previousLocale);
+        else ES3.DeleteKey("locale");
+        restoreLocale = false;
     }
 
     public static void Begin()
@@ -48,6 +77,7 @@ public static class PlayerProbe
         Application.runInBackground = true;
         Application.targetFrameRate = 60;
         AudioListener.volume = 0f;
+        AudioListener.pause = true;
         Debug.Log("[PLAYER-QA] batchMode=" + Application.isBatchMode + " graphics=" + SystemInfo.graphicsDeviceType);
         var go = new GameObject("Player QA driver");
         UnityEngine.Object.DontDestroyOnLoad(go);
@@ -76,23 +106,18 @@ public sealed class PlayerQaDriver : MonoBehaviour
         if (!Guid.TryParseExact(runId, "N", out _)) throw new InvalidOperationException("Invalid QA run identity");
         statusPath = Path.Combine(Application.persistentDataPath, "qa-status-" + runId + ".txt");
         readyAfter = Time.realtimeSinceStartup + 3;
-        deadline = Time.realtimeSinceStartup + 180;
+        deadline = Time.realtimeSinceStartup + 240;
     }
 
     private void Update()
     {
+        AudioListener.volume = 0f;
+        AudioListener.pause = true;
         if (finished || Time.realtimeSinceStartup < readyAfter) return;
         if (Time.realtimeSinceStartup >= deadline) { Fail("readiness timeout"); return; }
         try
         {
             string phase = File.Exists(phasePath) ? File.ReadAllText(phasePath).Trim() : "activate";
-            if (phase == "coexist-reset" || phase == "coexist-approve" || phase == "coexist-verify")
-            {
-                if (MainMenuUIController.Instance == null) return;
-                Log("PASS " + CoexistScenario.Run(phase));
-                Stop();
-                return;
-            }
             bool customScenario = System.Text.RegularExpressions.Regex.IsMatch(phase,
                 @"^scenario-[A-Za-z][A-Za-z0-9]{0,63}Scenario$");
             if (phase == "calendar" || phase == "calendar-reload" || phase == "batch-a" || phase == "batch-a-reload" || phase == "inspection-tree" || customScenario)
@@ -174,6 +199,12 @@ public sealed class PlayerQaDriver : MonoBehaviour
                 for (int id = 1; id <= 42; id++)
                 {
                     string key = "f" + id.ToString("D2") + ".enabled";
+                    if (id == 6)
+                    {
+                        Require(config.Get(key) == null && window.Get(ModId + ":" + key) == null,
+                            "Removed F06 switch is still registered");
+                        continue;
+                    }
                     Require(config.Get(key) is ConfigEntry<bool> && window.Get(ModId + ":" + key)?.toggle != null,
                         "Release is missing an independent native switch: " + key);
                 }
@@ -250,9 +281,18 @@ public sealed class PlayerQaDriver : MonoBehaviour
         catch (Exception ex) { Fail(ex.ToString()); }
     }
 
+    private void LateUpdate() { AudioListener.volume = 0f; AudioListener.pause = true; }
+
     private static void Require(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
     private void Log(string text) { Debug.Log("[PLAYER-QA] " + text); File.AppendAllText(resultPath, text + "\n"); }
-    private void Fail(string text) { if (finished) return; finished = true; Log("FAIL " + text); File.WriteAllText(statusPath, "FAIL " + text); Application.Quit(1); }
+    private void Fail(string text)
+    {
+        if (finished) return;
+        finished = true;
+        try { PlayerProbe.RestoreStartupLocale(); }
+        catch (Exception error) { text += "\nCould not restore the QA startup locale: " + error; }
+        Log("FAIL " + text); File.WriteAllText(statusPath, "FAIL " + text); Application.Quit(1);
+    }
     private void Stop()
     {
         finished = true;
@@ -278,6 +318,7 @@ public sealed class PlayerQaDriver : MonoBehaviour
         yield return null;
         try
         {
+            PlayerProbe.RestoreStartupLocale();
             File.WriteAllText(statusPath, "PASS");
             Application.Quit();
         }

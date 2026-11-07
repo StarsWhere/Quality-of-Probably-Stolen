@@ -62,6 +62,18 @@ try {
     if (@($beforeScene).Count -ne 1 -or @($probeMethod).Count -ne 1) { throw 'Unexpected runtime initializer or bootstrap' }
     $il = $beforeScene.Body.GetILProcessor()
     $il.InsertBefore($beforeScene.Body.Instructions[0], $il.Create([Mono.Cecil.Cil.OpCodes]::Call, [Mono.Cecil.MethodReference]$game.MainModule.ImportReference($probeMethod)))
+    # The native options screen can restore its saved master volume after the
+    # startup mute. Keep that setter at zero in this isolated QA copy only.
+    $optionType = $game.MainModule.Types | Where-Object FullName -eq 'EmporiumOption'
+    $applyOption = @($optionType.Methods | Where-Object { $_.Name -eq 'ApplySetting' -and $_.Parameters.Count -eq 1 })
+    if ($applyOption.Count -ne 1) { throw 'Unexpected QA audio settings method' }
+    $volumeCalls = @($applyOption[0].Body.Instructions | Where-Object {
+        $_.Operand -is [Mono.Cecil.MethodReference] -and $_.Operand.DeclaringType.FullName -eq 'UnityEngine.AudioListener' -and $_.Operand.Name -eq 'set_volume'
+    })
+    if ($volumeCalls.Count -ne 1) { throw 'Cannot enforce the QA master-volume mute' }
+    $audioIl = $applyOption[0].Body.GetILProcessor()
+    $audioIl.InsertBefore($volumeCalls[0], $audioIl.Create([Mono.Cecil.Cil.OpCodes]::Pop))
+    $audioIl.InsertBefore($volumeCalls[0], $audioIl.Create([Mono.Cecil.Cil.OpCodes]::Ldc_R4, [single]0))
     $loader = $game.MainModule.Types | Where-Object FullName -eq 'ModLoader'
     $loaderStart = $loader.Methods | Where-Object Name -eq 'Start'
     $begin = ($probe.MainModule.Types | Where-Object FullName -eq 'PlayerProbe').Methods | Where-Object Name -eq 'Begin'
