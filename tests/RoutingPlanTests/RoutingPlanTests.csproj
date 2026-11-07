@@ -7,6 +7,8 @@
   <ItemGroup>
     <Compile Include="../../src/ShopAssist/Inventory/RoutingRules.cs" />
     <Compile Include="../../src/ShopAssist/Inventory/RoutingPlan.cs" />
+    <Compile Include="../../src/ShopAssist/Inventory/WholeStackTransfer.cs" />
+    <Compile Include="../../src/ShopAssist/Inventory/CheckedModData.cs" />
     <Compile Include="RoutingFakeGame.cs" />
     <Compile Include="RoutingPlanTests.cs" />
   </ItemGroup>

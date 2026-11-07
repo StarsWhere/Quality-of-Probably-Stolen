@@ -98,7 +98,7 @@ public sealed class RoutingScenario
 
     internal static void CreateCategoryRule(GameItem target, string type)
     {
-        OpenOptionAction("f07.open");
+        RunFeatureAction("f07.open");
         var window = Window(Rules);
         QaItemUi.Choose(window, "area", target.GetDisplayName(true));
         window = Window(Rules);
@@ -117,13 +117,16 @@ public sealed class RoutingScenario
     private void OpenPreview()
     {
         SetSelection(first, second);
-        OpenOptionAction("f08.open");
+        RunFeatureAction("f08.open");
         Require(CustomUIManager.Instance.GetWindow(Preview) != null, "F09 preview did not open");
     }
 
     private void VerifyPreview()
     {
         var preview = Window(Preview);
+        if (!preview.root.GetComponentsInChildren<TMP_Text>(true).Any(text => text.text.Contains(target.GetDisplayName(true))))
+            Debug.Log("[PLAYER-QA] routing guard " + GuardDiagnostics(first, second, EmporiumEntry.Instance.invElement, inside, target) + " preview=" +
+                string.Join(" | ", preview.root.GetComponentsInChildren<TMP_Text>(true).Select(text => text.text)));
         Require(preview.root.GetComponentsInChildren<TMP_Text>(true).Any(text => text.text.Contains(target.GetDisplayName(true))),
             "F09 did not show the renamed destination");
         Button apply = Button(preview, "f08.apply");
@@ -131,6 +134,50 @@ public sealed class RoutingScenario
         Require(ReferenceEquals(first.parentInventory, EmporiumEntry.Instance.invElement) &&
             ReferenceEquals(second.parentInventory, EmporiumEntry.Instance.invElement) && inside.childItems.Count == 0,
             "F09 preview changed the inventory");
+    }
+
+    internal static string GuardDiagnostics(GameItem first, GameItem second, GameInventory source, GameGridInventory inside, GameItem target)
+    {
+        var mod = ModLoader.Mods.FirstOrDefault(value => value.Manifest?.ID == Mod && value.Instance != null);
+        var assembly = mod?.Instance.GetType().Assembly;
+        var safety = assembly?.GetType("ShopAssist.InventoryAutoInsert");
+        var transfer = assembly?.GetType("ShopAssist.WholeStackTransfer");
+        var cargo = assembly?.GetType("ShopAssist.TripCargo");
+        const BindingFlags flags = BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public;
+        string Inspect(Type type, string method, params object[] args)
+        {
+            try { return method + "=" + type?.GetMethod(method, flags)?.Invoke(null, args); }
+            catch (Exception error) { return method + "=" + error.GetBaseException().Message; }
+        }
+        string Callbacks(object obj)
+        {
+            string[] names = { "mayInventoryAddItemFunc", "mayInventoryRemoveItemFunc", "mayStackItemFunc", "maxSlotAddItemFunc",
+                "maxSlotRemoveItemFunc", "maxSlotAmountItemFunc", "minSlotAmountItemFunc", "isItemStateValidFunc", "onSlotAddItemFunc",
+                "onSlotAddItemEndFunc", "onSlotAddItemLateFunc", "onSlotRemoveItemFunc", "onSlotRemoveItemEndFunc",
+                "onSlotRemoveItemLateFunc", "onSlotChangeAmountItemFunc", "onChangeAmountItemFunc", "parentItemShapeModifierForItemFunc",
+                "parentItemStateModifierForItemFunc", "parentItemSpriteModifierForItemFunc", "getItemSpriteModifierForItemFunc", "slotPriorityFunc" };
+            return string.Join("/", names.Select(name => (name, callback: obj.GetType().GetProperty(name)?.GetValue(obj) as Delegate))
+                .Where(pair => pair.callback != null).SelectMany(pair => pair.callback.GetInvocationList().Select(callback =>
+                    pair.name + ":" + callback.Method.DeclaringType?.FullName + "." + callback.Method.Name + "@" + callback.Method.Module.Assembly.GetName().Name)));
+        }
+        string Item(GameItem item) => item.identifier + "[" + Callbacks(item) + "] features=" +
+            (item.itemFeatures == null ? "null" : string.Join("/", item.itemFeatures.Select(feature => feature == null ? "null" :
+                feature.featureType + ":" + feature.category))) + " " + Inspect(safety, "SafeItem", item, true, true) +
+            " " + Inspect(transfer, "SafeSource", item) + " back=" + (item.GetParentWithIdentifier("backInv") != null) +
+            " " + Inspect(cargo, "IsReturnedCargoInCounter", item);
+        var methods = safety?.GetField("NativeMutations", flags)?.GetValue(null) as MethodBase[];
+        string badPatches = methods == null ? "unavailable" : string.Join("/", methods.Where(method => method == null ||
+            !(bool)safety.GetMethod("KnownPatches", flags).Invoke(null, new object[] { method })).Select(method => method?.ToString() ?? "missing"));
+        string UnsafeContents(GameInventory inventory) => string.Join("/", inventory.childItems.Where(item =>
+            !(bool)safety.GetMethod("SafeVisualItem", flags).Invoke(null, new object[] { item }))
+            .Select(item => item.identifier + "[" + Callbacks(item) + "]"));
+        return Inspect(safety, "KnownMutationPatches") + " bad=" + badPatches + " source=" + Inspect(safety, "SafeGrid", source) +
+            " " + Inspect(safety, "SafeTransferInventory", source, first) + "[" + Callbacks(source) + "] unsafe children=" + UnsafeContents(source) +
+            " target=" + Inspect(safety, "SafeGrid", inside) + " " + Inspect(safety, "SafeTransferInventory", inside, null) +
+            "[" + Callbacks(inside) + "] unsafe children=" + UnsafeContents(inside) + " parent=" + Inspect(safety, "SafeVisualItem", target) +
+            "[" + Callbacks(target) + "] parent inventory=" + target.parentInventory?.identifier +
+            " unsafe ancestor children=" + (target.parentInventory == null ? "none" : UnsafeContents(target.parentInventory)) +
+            " " + Item(first) + " " + Item(second);
     }
 
     internal static void SetSelection(params GameItemElement[] items)
@@ -165,22 +212,15 @@ public sealed class RoutingScenario
             slot.numTransfer >= item.unitCount && slot.TryAcceptOnce(item.unitCount) == item.unitCount && item.parentInventory == inventory,
             "Could not place test fixture " + item.identifier);
     }
-    internal static void OpenOptionAction(string id)
+    internal static void RunFeatureAction(string id)
     {
         var options = StoreUIManager.Instance.gameOptionUIManager;
-        options.OpenUI();
-        var launcher = CustomUIManager.Instance.GetWindow("game_options")?.Get(Mod + ":tools");
-        Require(launcher?.button != null, "Tools launcher unavailable");
-        launcher.button.onClick.Invoke();
-        CustomUIElement action = null;
-        for (int category = 0; category < 4 && action == null; category++)
+        if (options != null && options.IsOpen)
         {
-            Window(Mod + ".tools").Get("category_" + category).button.onClick.Invoke();
-            action = Window(Mod + ".tools").Get(Mod + ":" + id);
+            options.CloseUI();
+            Require(!options.IsOpen, "Close the options draft before invoking " + id);
         }
-        Require(action?.button != null && action.button.interactable, "Option action unavailable: " + id);
-        action.button.onClick.Invoke();
-        options.CloseUI();
+        QaFeatureGallery.Action(id);
     }
     internal static CustomUIWindow Window(string id) => CustomUIManager.Instance.GetWindow(id) ??
         throw new InvalidOperationException("Missing window " + id);

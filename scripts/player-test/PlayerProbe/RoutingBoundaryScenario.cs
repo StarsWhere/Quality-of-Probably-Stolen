@@ -100,13 +100,13 @@ public sealed class RoutingBoundaryScenario
 
     private void OpenRuleEditorForMovedBag()
     {
-        RoutingScenario.OpenOptionAction("f07.open");
+        RoutingScenario.RunFeatureAction("f07.open");
         QaItemUi.Choose(RoutingScenario.Window(Rules), "area", movedBag.GetDisplayName(true));
     }
 
     private void AssertRuleEditorHidesMovedBag()
     {
-        RoutingScenario.OpenOptionAction("f07.open");
+        RoutingScenario.RunFeatureAction("f07.open");
         var picker = QaItemUi.OpenPicker(RoutingScenario.Window(Rules), "area");
         Require(QaItemUi.Hit(picker.root, movedBag) == null && QaItemUi.Hit(picker.root, goodBag) != null,
             "F07 displayed an area outside the main-stock branch");
@@ -117,7 +117,7 @@ public sealed class RoutingBoundaryScenario
     private static void OpenPreview(GameItemElement item)
     {
         RoutingScenario.SetSelection(item);
-        RoutingScenario.OpenOptionAction("f08.open");
+        RoutingScenario.RunFeatureAction("f08.open");
     }
     private static void AssertNoMove(GameItemElement item, string message)
     {

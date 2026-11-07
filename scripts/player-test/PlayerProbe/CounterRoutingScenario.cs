@@ -178,7 +178,7 @@ public sealed class CounterRoutingScenario
     private static void OpenPreview(params GameItemElement[] items)
     {
         RoutingScenario.SetSelection(items);
-        RoutingScenario.OpenOptionAction("f08.open");
+        RoutingScenario.RunFeatureAction("f08.open");
     }
     private static void RequireNoMoves(string error)
     {

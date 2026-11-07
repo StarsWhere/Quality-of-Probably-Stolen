@@ -1,8 +1,8 @@
 f07.enabled,设置储藏区收货规则
-f07.tip,右键储藏区网格或从工具入口打开，指定接收物品、排除项和优先级；归仓时按规则选择目标，同一容器各页可分别设置。
+f07.tip,右键储藏区网格，指定接收物品、排除项和优先级；归仓时按规则选择目标，同一容器各页可分别设置。
 f07.open,设置这个储藏区收什么
 f07.receive,允许收货
-f07.exclusive,专用目标
+f07.exclusive,目标不可用时不转其他区域
 f07.priority,优先级 -100 至 100
 f07.exclude,添加为排除项
 f07.add_category,添加品类
@@ -14,16 +14,37 @@ f07.failed,无法保存区域规则。
 f07.invalid,请输入 -100 至 100 的优先级。
 f07.unreadable,无法读取本档区域规则。
 f07.no_area,没有可编辑的区域。
+f07.order,同级匹配的区域顺序
+f07.order_up,上移顺序
+f07.order_down,下移顺序
+f07.unknown_area,区域不可用
+f07.area_unavailable,原区域暂不可用；草稿仍保留。
+f07.limit,此类规则已达到数量上限。
 f08.enabled,按规则归仓选中货物
-f08.tip,选中货物后通过工具入口或快捷键归仓，按储藏区收货规则选择目标；未匹配或无法移动的货物留在原处。
-f08.occupied_drag,允许从物品上框选归仓货物
-f08.occupied_drag.tip,开启归仓后，按住游戏框选键和 Alt，从已有物品的格子拖出选框。
+f08.tip,选中货物后右键或使用快捷键归仓，按储藏区收货规则选择目标；未匹配或无法移动的货物留在原处。
+f40.occupied_drag,允许从物品上开始框选
+f40.occupied_drag.tip,按住游戏框选键和 Alt，从已有物品的格子拖出选框；归仓、整组旋转或精确放置启用时可用。
 f08.key,归仓选中货物
 f08.key.tip,对当前选区执行归仓；是否先预览由归仓预览设置决定。
 f08.open,按规则归仓选中物品
 f08.apply,确认归仓
 f08.select,请先选中货物。
 f08.no_rule,没有匹配的收货规则
+f08.excluded,收货规则排除了此物品
+f08.unknown_type,无法确认品类排除条件
+f08.pending,转移结果待核对，请先处理待办
+f08.journal_failed,无法保存转移记录
+f08.journal_title,转移记录
+f08.journal_read_failed,暂时无法读取转移记录，请重试。
+f08.journal_unreadable,无法读取转移记录，原记录已保留。
+f08.journal_reset_action,核对后重置记录
+f08.journal_reset_warning,请先检查近期转移的来源和目标。重置后可继续转移，原记录会保留。
+f08.journal_reset_confirm,已核对并重置
+f08.journal_reset_cancel,取消
+f08.journal_reset_done,转移记录已重置。
+f08.journal_detail,{0} · 来源 {1}:{2} → 目标 {3}:{4} · 来源原堆 {5} 件 · 目标原堆 {6} 件
+f08.source_area,来源容器
+f08.target_area,目标容器
 f08.missing,目标不可用
 f08.full,目标没有空间
 f08.locked,物品或区域不可移动
@@ -46,3 +67,4 @@ f09.conflicts,有未移动物品时预览归仓
 f09.simulate,只预览归仓，不移动货物
 f09.open,确认物品和归仓位置
 f09.target,{0}　{1} 件
+f09.merged,其中 {0} 件合入已有堆叠

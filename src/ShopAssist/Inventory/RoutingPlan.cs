@@ -8,10 +8,10 @@ namespace ShopAssist
     {
         internal sealed class Move
         {
-            internal GameItem Item;
+            internal WholeStackTransfer.Plan Transfer;
             internal ShopInventory.Location Source, Target;
-            internal GridShape Before, After;
-            internal int Quantity;
+            internal GameItem Item => Transfer.Item;
+            internal int Quantity => Transfer.Amount;
         }
         internal sealed class Skip { internal GameItem Item; internal string Reason; }
 
@@ -35,11 +35,13 @@ namespace ShopAssist
             foreach (string duplicate in duplicates) byKey.Remove(duplicate);
             var chosen = new HashSet<GameItem>(selection.Where(item => item != null));
             var seen = new HashSet<GameItem>();
-            var reserved = new Dictionary<GameInventory, List<GridShape>>();
+            var reserved = new WholeStackTransfer.Reservations();
+            reserved.ExcludedStacks.UnionWith(chosen);
             foreach (GameItem item in selection)
             {
                 if (item == null || !seen.Add(item)) continue;
                 string reason = "f08.changed";
+                if (!WholeStackTransfer.Ready) { result.Skipped.Add(new Skip { Item = item, Reason = "f08.pending" }); continue; }
                 if (!(item is GameItemElement element) || !VisibleInventoryViews.Visible(element) ||
                     !byInventory.TryGetValue(item.parentInventory, out ShopInventory.Location source) ||
                     !source.Inventory.childItems.Contains(item)) { result.Skipped.Add(new Skip { Item = item, Reason = reason }); continue; }
@@ -48,7 +50,7 @@ namespace ShopAssist
                     !ShopInventory.CanRouteFromCounter(item, source)))
                 { result.Skipped.Add(new Skip { Item = item, Reason = "f08.special" }); continue; }
                 if (!(source.Inventory is GameGridInventory sourceGrid) || sourceGrid.GetType() != typeof(GameGridInventory) ||
-                    !InventorySortPlan.SafeToCheck(sourceGrid, item))
+                    !InventorySortPlan.SafeToCheck(sourceGrid, item) || !WholeStackTransfer.SafeSource(item))
                 { result.Skipped.Add(new Skip { Item = item, Reason = "f08.unknown" }); continue; }
                 if (!ShopInventory.Movable(item) || RequestBook.Reserved(item))
                 { result.Skipped.Add(new Skip { Item = item, Reason = "f08.locked" }); continue; }
@@ -57,7 +59,7 @@ namespace ShopAssist
                 ICollection<string> types = clues.KnownTypes(element);
                 bool complete = CustomerIndicators.HasOrdinaryTooltip(element);
                 var candidates = RoutingRules.Ranked(book, item.identifier, types, complete).ToList();
-                if (candidates.Count == 0) { result.Skipped.Add(new Skip { Item = item, Reason = "f08.no_rule" }); continue; }
+                if (candidates.Count == 0) { result.Skipped.Add(new Skip { Item = item, Reason = NoRuleReason(book, item.identifier, types, complete) }); continue; }
                 Move move = null;
                 reason = "f08.missing";
                 foreach (RoutingRule rule in candidates)
@@ -74,20 +76,15 @@ namespace ShopAssist
                     }
                     else if (ShopInventory.WouldContainSelf(item, target.Inventory)) reason = "f08.cycle";
                     else if (target.Inventory.IsInsertLocked() || !GeneralHelper.MayPlayerInsertInto(target.Inventory)) reason = "f08.locked";
-                    else if (!SafeToPreview(grid, item)) reason = "f08.unknown";
                     else
                     {
-                        if (!reserved.TryGetValue(target.Inventory, out List<GridShape> shadow))
-                            reserved[target.Inventory] = shadow = new List<GridShape>();
-                        SlotMarker slot = GridPlacements.Empty(grid, item, shadow);
-                        if (slot?.itemGridShape == null || slot.targetItem != null || slot.numTransfer < item.unitCount)
-                            reason = "f08.full";
+                        WholeStackTransfer.Plan transfer = WholeStackTransfer.Stack(item, grid, reserved);
+                        if (transfer == null) transfer = WholeStackTransfer.Empty(item, grid, reserved);
+                        if (transfer == null)
+                            reason = WholeStackTransfer.SafeTarget(grid) ? "f08.full" : "f08.unknown";
                         else
                         {
-                            GridShape after = slot.itemGridShape.Clone();
-                            shadow.Add(after);
-                            move = new Move { Item = item, Source = source, Target = target, Quantity = item.unitCount,
-                                Before = item.modifiedShape.Clone(), After = after };
+                            move = new Move { Transfer = transfer, Source = source, Target = target };
                             break;
                         }
                     }
@@ -99,25 +96,20 @@ namespace ShopAssist
             return result;
         }
 
-        private static bool SafeToPreview(GameGridInventory grid, GameItem item)
+        private static string NoRuleReason(RoutingBook book, string id, ICollection<string> types, bool complete)
         {
-            if (grid.GetType() != typeof(GameGridInventory) || item.GetType() != typeof(GameItemElement) ||
-                grid.isItemStateValidFunc != null || item.isItemStateValidFunc != null || item.mayInventoryAddItemFunc != null ||
-                grid.maxSlotAmountItemFunc != null || item.maxSlotAmountItemFunc != null ||
-                grid.maxSlotAddItemFunc != null || item.maxSlotAddItemFunc != null ||
-                grid.slotPriorityFunc != null || item.slotPriorityFunc != null ||
-                grid.parentItemShapeModifierForItemFunc != null || item.parentItemShapeModifierForItemFunc != null ||
-                grid.parentItemStateModifierForItemFunc != null || item.parentItemStateModifierForItemFunc != null) return false;
-            // Ordinary backpacks and boxes use this game-owned, read-only ownership
-            // and nesting predicate. Unknown callbacks are not run in a preview.
-            if (grid.mayInventoryAddItemFunc != null)
-                foreach (Delegate callback in grid.mayInventoryAddItemFunc.GetInvocationList())
-                {
-                    Type owner = callback.Method.DeclaringType;
-                    if (owner == null || owner.DeclaringType != typeof(ContainerHelper) ||
-                        owner.Assembly != typeof(ContainerHelper).Assembly) return false;
-                }
-            return true;
+            bool excluded = false, unknown = false;
+            foreach (RoutingRule rule in book.rules.Where(value => value.receive))
+            {
+                bool itemMatch = rule.itemIds.Contains(id);
+                bool categoryMatch = types != null && types.Any(rule.categories.Contains);
+                bool possible = itemMatch || categoryMatch || !complete && rule.categories.Count != 0;
+                if (!possible) continue;
+                bool blocked = rule.excludedIds.Contains(id) || types != null && types.Any(rule.excludedCategories.Contains);
+                if (blocked) excluded = true;
+                else if (!complete && rule.excludedCategories.Count != 0) unknown = true;
+            }
+            return unknown ? "f08.unknown_type" : excluded ? "f08.excluded" : "f08.no_rule";
         }
 
         private static bool HasSelectedAncestor(GameItem item, HashSet<GameItem> chosen)
@@ -136,9 +128,8 @@ namespace ShopAssist
             for (int i = 0; i < Moves.Count; i++)
             {
                 Move a = Moves[i], b = other.Moves[i];
-                if (!ReferenceEquals(a.Item, b.Item) || a.Quantity != b.Quantity ||
-                    !ReferenceEquals(a.Source.Inventory, b.Source.Inventory) || !ReferenceEquals(a.Target.Inventory, b.Target.Inventory) ||
-                    !InventorySortPlan.SameShape(a.Before, b.Before) || !InventorySortPlan.SameShape(a.After, b.After)) return false;
+                if (!ReferenceEquals(a.Source.Inventory, b.Source.Inventory) || !ReferenceEquals(a.Target.Inventory, b.Target.Inventory) ||
+                    !WholeStackTransfer.Same(a.Transfer, b.Transfer)) return false;
             }
             for (int i = 0; i < Skipped.Count; i++)
                 if (!ReferenceEquals(Skipped[i].Item, other.Skipped[i].Item) || Skipped[i].Reason != other.Skipped[i].Reason) return false;

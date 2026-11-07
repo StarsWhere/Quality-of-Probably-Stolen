@@ -1,8 +1,8 @@
 f07.enabled,Set receiving rules for storage areas
-f07.tip,Right-click a storage grid or use its tools to choose accepted items, exclusions and priority. Routing uses these rules; each container page can have its own rules.
+f07.tip,Right-click a storage grid to choose accepted items, exclusions and priority. Routing uses these rules; each container page can have its own rules.
 f07.open,Set what this area receives
 f07.receive,Allow receiving goods
-f07.exclusive,Exclusive destination
+f07.exclusive,Do not use other areas if unavailable
 f07.priority,Priority -100 to 100
 f07.exclude,Add as exclusion
 f07.add_category,Add category
@@ -14,16 +14,37 @@ f07.failed,Could not save the area rule.
 f07.invalid,Enter a priority from -100 to 100.
 f07.unreadable,Could not read this save's routing rules.
 f07.no_area,No editable storage area is available.
+f07.order,Order for equally ranked areas
+f07.order_up,Move up
+f07.order_down,Move down
+f07.unknown_area,Area unavailable
+f07.area_unavailable,This area is unavailable; the draft is retained.
+f07.limit,This rule list has reached its limit.
 f08.enabled,Route selected goods using storage rules
-f08.tip,Select goods and route them from the tools or with a shortcut. Receiving rules choose the destination; unmatched or immovable goods stay where they are.
-f08.occupied_drag,Start routing selections on occupied cells
-f08.occupied_drag.tip,When routing is enabled, hold the game selection key and Alt to drag a selection from an occupied cell.
+f08.tip,Select goods and right-click or use a shortcut to route them. Receiving rules choose the destination; unmatched or immovable goods stay where they are.
+f40.occupied_drag,Start selections on occupied cells
+f40.occupied_drag.tip,Hold the game selection key and Alt to start on an occupied cell when routing, group rotation or precise placement is enabled.
 f08.key,Route selected goods
 f08.key.tip,Route the current selection. The routing preview settings determine whether a preview appears first.
 f08.open,Route selected goods by rule
 f08.apply,Move goods
 f08.select,Select goods first.
 f08.no_rule,No matching receiving rule
+f08.excluded,Receiving rules exclude this item
+f08.unknown_type,Cannot confirm the excluded categories
+f08.pending,Transfer needs inspection; resolve it before continuing
+f08.journal_failed,Could not save the transfer record
+f08.journal_title,Transfer record
+f08.journal_read_failed,The transfer record could not be read. Try again.
+f08.journal_unreadable,The transfer record is unreadable. The original was retained.
+f08.journal_reset_action,Reset after checking
+f08.journal_reset_warning,Check the source and destination of recent transfers first. Resetting allows transfers to continue and retains the original record.
+f08.journal_reset_confirm,Checked and reset
+f08.journal_reset_cancel,Cancel
+f08.journal_reset_done,Transfer record reset.
+f08.journal_detail,{0} · source {1}:{2} → target {3}:{4} · source before {5} · target before {6}
+f08.source_area,Source container
+f08.target_area,Target container
 f08.missing,Destination unavailable
 f08.full,Destination has no space
 f08.locked,Item or area is locked
@@ -46,3 +67,4 @@ f09.conflicts,Preview routing when goods will not move
 f09.simulate,Preview routing without moving goods
 f09.open,Check items and storage destinations
 f09.target,{0}　{1} units
+f09.merged,{0} units will merge into existing stacks
