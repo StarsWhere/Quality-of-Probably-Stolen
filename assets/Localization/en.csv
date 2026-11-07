@@ -1,10 +1,18 @@
 f15.enabled,Show the two-week calendar on the shutter
 f15.tip,When the shutter is down, show dates and public events for this week and next week directly on it. Hover a date for event information, or select it to show that day's details on the door. The display moves away when the shutter opens.
 settings.find,Find features and settings
-settings.title,Shop Assist settings
+settings.playback_key,Playback shortcut: {0}
+settings.key_unbound,Not bound
+settings.unsaved_title,Unapplied changes
+settings.unsaved_message,Leaving will discard your unapplied changes.
+settings.recovered_message,Your unapplied changes from before the scene change have been restored.
+settings.discard_draft,Discard changes
+settings.continue_editing,Continue editing
+settings.discard,Discard and close
+settings.title,Quality of Probably Stolen settings
 settings.query,Search name, purpose or feature ID
 settings.go,Find
-settings.any,All categories
+settings.any,All levels
 settings.only,Enabled features only
 settings.none,No matching settings.
 settings.page,Page {0}/{1} · {2} entries
@@ -13,15 +21,21 @@ settings.kind.toggle,Extra option
 settings.kind.value,Numeric setting
 settings.kind.choice,Choice
 settings.kind.key,Shortcut
-settings.kind.action,Action
 section.category1,Items and storage
 section.category2,Trade and requests
 section.category3,Machines and production
 section.category4,Calendar and workspace
 section.category5,Fast playback
+section.tier1,1 · Essentials
+section.tier1.description,Fewer clicks and missed cues
+section.tier2,2 · Rules
+section.tier2.description,Batch actions by rule
+section.tier3,3 · Planning
+section.tier3.description,View and configure across containers and machines
+settings.tier_heading,{0} · {1}
+settings.parent_required,Requires: {0}
 settings.group7,Storage rules and routing
 settings.group10,Machine modules
-settings.open,Open settings
 availability.disabled,Feature is off
 availability.selection,Select items first
 availability.object,Open the required object first
@@ -33,6 +47,18 @@ availability.store,Enter the shop first
 availability.labeler,Use a labeler first
 availability.label_sample,Select a labeler sample first
 availability.label_equipped,Put down the equipped tool first
+availability.label_busy,Wait for the current labeling batch
+availability.label_target,This item cannot use the current sample label
+availability.item_reserved,This item is reserved for a request
+availability.item_movable,This item cannot be moved right now
+availability.water_inspect,Review the previous water operation in Attention first
+availability.water_reserved,This vessel is reserved for a request
+availability.water_test,Test the water quality first
+availability.water_unavailable,This vessel cannot safely pour water right now
+availability.water_full,This vessel is full
+availability.water_location,Open the vessel's accessible container first
+availability.module_locked,Unlock the machine and its module bay first
+availability.module_unavailable,The machine's module bay is not currently accessible
 availability.machine,Open an owned machine in the shop first
 availability.coordinator,Make a storage coordinator available in the shop
 availability.liquid,Open a machine with selectable liquids first
