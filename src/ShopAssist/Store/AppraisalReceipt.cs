@@ -12,16 +12,36 @@ namespace ShopAssist
     {
         private const string DataKey = "f24.target";
         private static AppraisalReceipt active;
-        internal static bool CanBind(GameItem item) => active?.enabled.Value == true && ShopInventory.InStore &&
-            item != null && ShopInventory.SafeContainerForPeek(item) && ShopInventory.OwnedLocations(false)
-                .Any(l => l.Owner == item && l.Ordinary && l.Inventory is GameGridInventory && !l.IsMachine);
+        internal static bool AppliesTo(GameItem item) => item != null && ShopInventory.Owned(item) &&
+            ShopInventory.IsOrdinaryContainer(item);
+        internal static ActionAvailability AvailabilityFor(GameItem item)
+        {
+            if (active?.enabled.Value != true)
+                return ActionAvailability.Blocked(ActionUnavailableReason.Disabled, "availability.disabled");
+            if (!ShopInventory.InStore)
+                return ActionAvailability.Blocked(ActionUnavailableReason.MissingObject, "availability.store");
+            if (!AppliesTo(item) || !ShopInventory.SafeContainerForPeek(item) || !ShopInventory.OwnedLocations(false)
+                .Any(l => l.Owner == item && l.Ordinary && l.Inventory is GameGridInventory && !l.IsMachine && !l.Inventory.IsInsertLocked()))
+                return ActionAvailability.Blocked(ActionUnavailableReason.MissingObject, "f24.no_targets");
+            return ActionAvailability.Ready;
+        }
+        internal static bool CanBind(GameItem item) => AvailabilityFor(item).Allowed;
         internal static void OpenBind(GameItem item)
         {
             if (!CanBind(item)) return;
-            var candidates = ShopInventory.OwnedLocations(false).Where(l => l.Owner == item && l.Ordinary &&
-                l.Inventory is GameGridInventory && !l.IsMachine).ToList();
+            AppraisalReceipt owner = active;
+            string run = PlayerStore.Instance.runID;
+            int slot = PlayerStore.Instance.saveSlotId;
+            bool Current() => ReferenceEquals(active, owner) && ShopInventory.InStore && PlayerStore.Instance.runID == run &&
+                PlayerStore.Instance.saveSlotId == slot && CanBind(item);
+            IList<ShopInventory.Location> Candidates() => Current() ? ShopInventory.OwnedLocations(false)
+                .Where(l => l.Owner == item && l.Ordinary && l.Inventory is GameGridInventory && !l.IsMachine &&
+                    !l.Inventory.IsInsertLocked()).ToList() :
+                new List<ShopInventory.Location>();
+            var candidates = Candidates();
             if (candidates.Count == 1) active.Bind(candidates[0]);
-            else VisualChoices.ChooseLocation(ShopSettings.Text("f24.choose"), candidates, null, active.Bind);
+            else VisualChoices.ChooseLocation(ShopSettings.Text("f24.choose"), Candidates, null,
+                location => { if (Current() && location.Owner == item) owner.Bind(location); });
         }
         [ThreadStatic] private static Scope scope;
         private readonly ConfigEntry<bool> enabled;
@@ -73,18 +93,21 @@ namespace ShopAssist
         {
             if (!enabled.Value || !ShopInventory.InStore || CustomUIManager.Instance == null || !ReadBinding(out _)) return;
             if (window != null && window.IsAlive) { Close(); return; }
-            var options = ShopInventory.OwnedLocations(false)
+            string run = PlayerStore.Instance.runID;
+            int slot = PlayerStore.Instance.saveSlotId;
+            bool Current() => enabled.Value && ShopInventory.InStore && PlayerStore.Instance.runID == run && PlayerStore.Instance.saveSlotId == slot;
+            IList<ShopInventory.Location> Options() => Current() ? ShopInventory.OwnedLocations(false)
                 .Where(l => l.Ordinary && !l.IsMachine && l.Owner != null && l.Inventory is GameGridInventory &&
-                    ShopInventory.SafeContainerForPeek(l.Owner) && (l.Role == "contents" || l.Role == "storage"))
-                .Take(128).ToList();
-            VisualChoices.ChooseLocation(ShopSettings.Text("f24.choose"), options, null, Bind);
+                    !l.Inventory.IsInsertLocked() && ShopInventory.SafeContainerForPeek(l.Owner) &&
+                    (l.Role == "contents" || l.Role == "storage")).ToList() : new List<ShopInventory.Location>();
+            VisualChoices.ChooseLocation(ShopSettings.Text("f24.choose"), Options, null, location => { if (Current()) Bind(location); });
         }
 
         private void Bind(ShopInventory.Location location)
         {
             if (!enabled.Value || !ShopInventory.InStore || !ReadBinding(out _) ||
                 !ShopInventory.TryRefresh(location, out ShopInventory.Location current) || !current.Ordinary || current.IsMachine ||
-                current.Owner == null || !ShopInventory.SafeContainerForPeek(current.Owner) ||
+                current.Owner == null || current.Inventory.IsInsertLocked() || !ShopInventory.SafeContainerForPeek(current.Owner) ||
                 (current.Role != "contents" && current.Role != "storage") || current.Page < -1 || current.Page > 4 ||
                 !Guid.TryParse(PlayerStore.Instance.runID, out Guid run) || run == Guid.Empty || PlayerStore.Instance.saveSlotId < 0) return;
             int id = current.Owner.GetUniqueID(); // A binding is created only by this explicit player action.

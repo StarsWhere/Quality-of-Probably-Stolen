@@ -8,8 +8,28 @@ namespace ShopAssist
     internal sealed class DisplayRestock : IDisposable
     {
         private static DisplayRestock active;
-        internal static bool CanOpenFor(GameItem item) => active?.enabled.Value == true && ShopInventory.InStore && active.Eligible(item) &&
+        internal static bool AppliesTo(GameItem item) => item != null && ShopInventory.Owned(item) && item.contentWindow == null &&
+            !item.IsTag("STOLEN_TAG") && !item.IsTag("CONTRABAND_ITEM_TAG") && !item.IsTag("IMPORTANT_TAG") &&
             ShopInventory.OwnedLocations(false).Any(l => l.Ordinary && l.Inventory == item.parentInventory);
+        internal static ActionAvailability AvailabilityFor(GameItem item)
+        {
+            if (active?.enabled.Value != true)
+                return ActionAvailability.Blocked(ActionUnavailableReason.Disabled, "availability.disabled");
+            if (!ShopInventory.InStore)
+                return ActionAvailability.Blocked(ActionUnavailableReason.MissingObject, "availability.store");
+            if (!AppliesTo(item))
+                return ActionAvailability.Blocked(ActionUnavailableReason.MissingObject, "f29.source_unavailable");
+            if (RequestBook.Reserved(item))
+                return ActionAvailability.Blocked(ActionUnavailableReason.Conflict, "f11.reserved");
+            if (!ShopInventory.Movable(item))
+                return ActionAvailability.Blocked(ActionUnavailableReason.Conflict, "f08.locked");
+            if (active.costRequired.Value && !item.IsTag("BOUGHT_PRICE_TAG"))
+                return ActionAvailability.Blocked(ActionUnavailableReason.MissingResource, "f29.context_price");
+            if (!active.Ready())
+                return ActionAvailability.Blocked(ActionUnavailableReason.Unknown, "f29.context_data");
+            return ActionAvailability.Ready;
+        }
+        internal static bool CanOpenFor(GameItem item) => AvailabilityFor(item).Allowed;
         internal static void OpenFor(GameItem item)
         {
             if (!CanOpenFor(item) || !active.Ready()) return;
@@ -103,13 +123,30 @@ namespace ShopAssist
             if (source != null) source = locations.Find(l => l.Inventory == source.Inventory);
             if (source == null) source = locations.FirstOrDefault();
             if (source == null) { b.AddLabel(ShopSettings.Text("inv.changed")).Show(); return; }
+            string expectedRun = run;
+            int expectedSlot = slot;
+            bool Current() => enabled.Value && ShopInventory.InStore && PlayerStore.Instance.runID == expectedRun &&
+                PlayerStore.Instance.saveSlotId == expectedSlot && run == expectedRun && slot == expectedSlot && rules != null;
+            IList<ShopInventory.Location> Sources() => Current() ? ShopInventory.OwnedLocations(false).Where(l => l.Ordinary).ToList() :
+                new List<ShopInventory.Location>();
             b.BeginRow();
-            VisualChoices.Location(b, ShopSettings.Text("visual.source"), source, locations, picked =>
-            { source = picked; type = null; Draw(); }, "source");
+            VisualChoices.Location(b, ShopSettings.Text("visual.source"), source, Sources, picked =>
+            {
+                if (!Current() || !ShopInventory.TryRefresh(picked, out var live) || !live.Ordinary) return;
+                source = live; type = null; Draw();
+            }, "source");
             var samples = source.Inventory.childItems.Where(item => !reserved.Contains(item) && EligibleStock(item)).GroupBy(i => i.identifier).Select(g => g.First()).ToList();
             var selected = samples.FirstOrDefault(i => i.identifier == type);
+            ShopInventory.Location expectedSource = source;
+            IList<GameItem> Samples()
+            {
+                if (!Current() || source == null || source.Inventory != expectedSource.Inventory ||
+                    !ShopInventory.TryRefresh(expectedSource, out var live) || !live.Ordinary) return new List<GameItem>();
+                return live.Inventory.childItems.Where(Eligible).GroupBy(i => i.identifier).Select(g => g.First()).ToList();
+            }
             VisualChoices.Slot(b, ShopSettings.Text("f29.choose"), selected, selected?.GetDisplayName(true), () =>
-                VisualChoices.ChooseItem(ShopSettings.Text("f29.choose"), samples, selected, i => { type = i.identifier; Draw(); }), "type");
+                VisualChoices.ChooseItem(ShopSettings.Text("f29.choose"), Samples, selected, i =>
+                { if (Samples().Contains(i)) { type = i.identifier; Draw(); } }), "type");
             b.End();
             b.AddButton(ShopSettings.Format("f29.add", goal.Value, keep.Value), () =>
             {

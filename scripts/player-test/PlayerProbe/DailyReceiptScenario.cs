@@ -29,8 +29,6 @@ public sealed class DailyReceiptScenario
         {
             if (EmporiumEntry.Instance?.storeInteractables?.activeInHierarchy != true ||
                 StoreUIManager.Instance?.gameOptionUIManager == null) return false;
-            var peer = ModLoader.Mods.Find(mod => mod.Manifest != null && mod.Manifest.ID == "reputation_pop");
-            Need(peer == null || !peer.IsEnabled || peer.Instance == null, "F16 standalone receipt test requires Reputation Pop disabled");
             SetOptions(true, true, true);
             PlayerStore.Instance.playerCash = 200000;
             seller = StoreClientList.CreateJunkerSellOnly();

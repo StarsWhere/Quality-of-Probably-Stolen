@@ -55,7 +55,7 @@ public sealed class ReceiptScenario
                 options.Get(ModId + ":f24.destination").SetIndex(1, true);
                 options.Get("apply").button.onClick.Invoke();
                 StoreUIManager.Instance.gameOptionUIManager.CloseUI();
-                RoutingScenario.OpenOptionAction("f24.choose");
+                RoutingScenario.RunFeatureAction("f24.choose");
                 var picker = CustomUIManager.Instance.GetWindow(ModId + ".choose");
                 Require(picker != null && picker.IsVisible, "F24 target picker unavailable");
                 QaItemUi.Click(picker, box);

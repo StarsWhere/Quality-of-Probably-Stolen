@@ -17,6 +17,7 @@ public sealed class AppraisalWorksheetScenario
     private long cash;
     private int impatience;
     private int step, waitFrame;
+    private readonly ArrangeCapture capture = new ArrangeCapture();
     private float started = Time.realtimeSinceStartup;
 
     public bool Tick(out string result)
@@ -65,7 +66,7 @@ public sealed class AppraisalWorksheetScenario
                 OpenWorksheet();
                 var sheet = Worksheet();
                 Require(sheet.Get("base").GetString() == "" && !sheet.Get("apply").button.interactable, "New F23 sheet leaked data or allowed an incomplete estimate");
-                Fill(sheet, "100", "Chosen feature", "1234");
+                Fill(sheet, "100", "鉴定特征", "1234");
                 sheet = Worksheet();
                 Require(Total(sheet, "1334") && sheet.Get("apply").button.interactable, "F23 did not add the player's feature amount");
                 sheet.Get("row_0").SetBool(false, true);
@@ -91,8 +92,13 @@ public sealed class AppraisalWorksheetScenario
                 var sheet = Worksheet();
                 Require(sheet.root.activeInHierarchy, "F23 worksheet is not rendered");
                 Require(IsRaycastTarget(sheet.Get("apply").button, out string raycast), "F23 Apply is not reachable on the rendered UI: " + raycast);
-                if (SystemInfo.graphicsDeviceType != UnityEngine.Rendering.GraphicsDeviceType.Null)
-                    ScreenCapture.CaptureScreenshot(Path.Combine(Application.persistentDataPath, "qa-appraisal-worksheet.png"));
+                capture.Start("qa-appraisal-worksheet.png");
+                Next(21, "Capturing the visible worksheet before applying its estimate"); return false;
+            }
+            case 21:
+            {
+                if (!capture.Ready()) return false;
+                var sheet = Worksheet();
                 sheet.Get("apply").button.onClick.Invoke();
                 InspectionUIManager.Instance.UpdateAppraisalPanel();
                 Require(first.GetTagReadonly("APPRAISAL_DEFAULT_VALUE").GetInt() == 1334 && InspectionUIManager.Instance.apprisalServiceInputField.text == "1334",
@@ -113,7 +119,7 @@ public sealed class AppraisalWorksheetScenario
                 OpenWorksheet();
                 var sheet = Worksheet();
                 Require(sheet.Get("base").GetString() == "" && Total(sheet, "—"), "F23 copied the first item's notes to another item");
-                Fill(sheet, "100", "Chosen feature", "1234");
+                Fill(sheet, "100", "鉴定特征", "1234");
                 sheet = Worksheet();
                 Require(Total(sheet, "1334"), "Same player inputs produced different output for a different hidden item");
                 sheet.Get("apply").button.onClick.Invoke();
@@ -181,7 +187,7 @@ public sealed class AppraisalWorksheetScenario
     }
     private static void OpenWorksheet()
     {
-        RoutingScenario.OpenOptionAction("f23.open");
+        RoutingScenario.RunFeatureAction("f23.open");
         Worksheet();
     }
     private static bool IsRaycastTarget(Button button, out string details)

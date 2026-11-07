@@ -45,7 +45,7 @@ namespace ShopAssist
             internal int? cost;
             internal Span parent;
             internal StoreReputation faction;
-            internal double rep, reportedRep;
+            internal double rep;
         }
 
         private History history;
@@ -56,6 +56,8 @@ namespace ShopAssist
         private Span current;
         private CustomUIWindow window;
         private int viewedDay, viewedKind;
+        private string dayDraft = "";
+        private readonly Dictionary<(string Run, int Slot), int> lastViewedDays = new Dictionary<(string, int), int>();
 
         internal ShopLedger(ShopSettings settings, Action<string> log)
         {
@@ -174,13 +176,20 @@ namespace ShopAssist
             if (ledger.Value) Reconcile();
         }
 
+        // Native purchase records are transaction totals, not reconstructed per-unit costs.
+        internal static int? PurchasePrice(GameItem item)
+        {
+            if (item == null || !item.IsTag("BOUGHT_PRICE_TAG")) return null;
+            int value = item.GetTagReadonly("BOUGHT_PRICE_TAG").GetInt();
+            return value >= 0 ? value : (int?)null;
+        }
+
         private Span Enter(Kind kind, GameItem sold = null)
         {
             if (!Ensure()) return null;
             if (current == null) Reconcile();
             var span = new Span { id = ++nextReceipt, parent = current, kind = kind, cash = owner.playerCash };
-            if (sold != null && sold.IsTag("BOUGHT_PRICE_TAG"))
-                span.cost = sold.GetTagReadonly("BOUGHT_PRICE_TAG").GetInt();
+            span.cost = PurchasePrice(sold);
             if (current == null && receipts.Value && showRep.Value && owner.currentClientInstance != null)
             {
                 var client = owner.currentClientInstance.GetClientBlueprint();
@@ -205,38 +214,9 @@ namespace ShopAssist
                 span.kind == Kind.Barter || span.kind == Kind.Appraisal;
             if (!failed && trade && receipts.Value)
             {
-                double delta = span.faction == null ? 0 : span.faction.GetReputationExact() - span.rep - span.reportedRep;
+                double delta = span.faction == null ? 0 : span.faction.GetReputationExact() - span.rep;
                 TradeFeedback.Show(span.id, change, span.faction, delta, showCash.Value, showRep.Value,
                     seconds.Value, sound.Value, volume.Value);
-            }
-        }
-
-        // Reputation Pop observes this specific native callback, not every change to the
-        // customer's faction. Subtract only the changes it will actually report.
-        [HarmonyPatch(typeof(StoreReputation), nameof(StoreReputation.OnItemTraded))]
-        private static class PopOverlap
-        {
-            private sealed class Observation
-            {
-                internal Span span;
-                internal double before;
-            }
-
-            private static void Prefix(string factionId, out Observation __state)
-            {
-                __state = null;
-                var span = active?.current;
-                if (span == null || !ShopPeers.Running("reputation_pop") || StoreUIManager.Instance == null) return;
-                while (span.parent != null) span = span.parent;
-                if (span.faction == null || span.faction.factionId != factionId) return;
-                __state = new Observation { span = span, before = span.faction.GetReputationExact() };
-            }
-
-            private static void Postfix(Observation __state)
-            {
-                if (__state == null) return;
-                double delta = __state.span.faction.GetReputationExact() - __state.before;
-                if (Math.Abs(delta) >= 0.005) __state.span.reportedRep += delta;
             }
         }
 
@@ -316,40 +296,79 @@ namespace ShopAssist
         private void OpenHistory()
         {
             if (!Ensure() || CustomUIManager.Instance == null) return;
-            viewedDay = StoreStation.GetDayCounter();
+            int today = Math.Max(1, StoreStation.GetDayCounter());
+            viewedDay = lastViewedDays.TryGetValue((run, slot), out int last) ? Math.Max(1, Math.Min(today, last)) : today;
+            dayDraft = viewedDay.ToString(CultureInfo.InvariantCulture);
             viewedKind = 0;
             DrawHistory();
+        }
+
+        private bool HistoryScope(string expectedRun, int expectedSlot) => ledger.Value && PlayerStore.HasInstance &&
+            ReferenceEquals(owner, PlayerStore.Instance) && run == expectedRun && slot == expectedSlot &&
+            PlayerStore.Instance.runID == expectedRun && PlayerStore.Instance.saveSlotId == expectedSlot;
+
+        private void ViewDay(int day, string expectedRun, int expectedSlot)
+        {
+            if (!HistoryScope(expectedRun, expectedSlot) || !Ensure() || day < 1 || day > StoreStation.GetDayCounter()) return;
+            viewedDay = day;
+            dayDraft = day.ToString(CultureInfo.InvariantCulture);
+            lastViewedDays[(run, slot)] = day;
+            DrawHistory();
+        }
+
+        private void ApplyDay(string expectedRun, int expectedSlot)
+        {
+            if (!HistoryScope(expectedRun, expectedSlot) || !Ensure() || window?.IsAlive != true) return;
+            if (!int.TryParse(dayDraft.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out int day) ||
+                day < 1 || day > StoreStation.GetDayCounter())
+            {
+                var feedback = window.Get("day_feedback");
+                feedback.SetText(ShopSettings.Format("f28.invalid_day", Math.Max(1, StoreStation.GetDayCounter())));
+                feedback.SetVisible(true);
+                return;
+            }
+            ViewDay(day, expectedRun, expectedSlot);
         }
 
         private void DrawHistory()
         {
             if (!Ensure() || !ledger.Value || CustomUIManager.Instance == null) return;
+            string expectedRun = run;
+            int expectedSlot = slot;
             var b = UiLayout.Rebuild(ref window, WindowId, ShopSettings.Text("f28.open"), 620, 390);
             b.OnClose(() => window = null);
             if (history == null) { b.AddLabel(ShopSettings.Text("f28.invalid")).Show(); return; }
-            b.BeginRow().AddButton("‹", () => { if (viewedDay > 1) { viewedDay--; DrawHistory(); } });
+            b.BeginRow().AddButton("‹", () => ViewDay(viewedDay - 1, expectedRun, expectedSlot));
             b.Last.SetFixedWidth(34).SetInteractable(viewedDay > 1);
-            b.AddLabel(ShopSettings.Format("f28.day", viewedDay))
-                .AddButton("›", () => { if (viewedDay < StoreStation.GetDayCounter()) { viewedDay++; DrawHistory(); } });
+            void SetDayDraft(string value) { if (HistoryScope(expectedRun, expectedSlot)) dayDraft = value ?? ""; }
+            b.AddInput(ShopSettings.Text("f28.day_input"), dayDraft, SetDayDraft, "day_input", SetDayDraft);
+            if (b.Last.input != null) b.Last.input.characterLimit = 10;
+            b.Last.SetPreferredSize(130, 28);
+            b.AddButton(ShopSettings.Text("f28.go"), () => ApplyDay(expectedRun, expectedSlot), "day_go");
+            b.AddButton("›", () => ViewDay(viewedDay + 1, expectedRun, expectedSlot));
             b.Last.SetFixedWidth(34).SetInteractable(viewedDay < StoreStation.GetDayCounter());
             b.End();
+            b.AddLabel("", "day_feedback"); b.Last.SetVisible(false);
             var kinds = new List<string> { ShopSettings.Text("f28.all") };
             foreach (Kind kind in Enum.GetValues(typeof(Kind)))
                 kinds.Add(ShopSettings.Text("f28." + kind.ToString().ToLowerInvariant()));
-            b.AddDropdown(kinds, viewedKind, index => { viewedKind = index; DrawHistory(); }, "kind");
+            b.AddDropdown(kinds, viewedKind, index => { if (HistoryScope(expectedRun, expectedSlot)) { viewedKind = index; DrawHistory(); } }, "kind");
             long income = 0, expense = 0, margin = 0;
             int unknown = 0, known = 0;
             b.AddLabel(ShopSettings.Format("f28.cash", PlayerStore.Instance.playerCash));
             LedgerRow(b, ShopSettings.Text("f28.kind"), ShopSettings.Text("f28.income"), ShopSettings.Text("f28.expense"));
             b.BeginScrollFlexible(110);
+            bool any = false;
             foreach (var row in history.entries)
             {
                 if (row.day != viewedDay || (viewedKind > 0 && (int)row.kind != viewedKind - 1)) continue;
+                any = true;
                 LedgerRow(b, ShopSettings.Text("f28." + row.kind.ToString().ToLowerInvariant()),
                     row.income.ToString("N0"), row.expense.ToString("N0"));
                 income += row.income; expense += row.expense; margin += row.knownMargin;
                 known += row.knownCostCount; unknown += row.unknownCost;
             }
+            if (!any) b.AddLabel(ShopSettings.Text("f28.empty"));
             b.End().AddLabel(ShopSettings.Format("f28.total", income - expense));
             if (known > 0 || unknown > 0) b.AddLabel(ShopSettings.Format("f28.margin", margin, unknown));
             b.Show();
