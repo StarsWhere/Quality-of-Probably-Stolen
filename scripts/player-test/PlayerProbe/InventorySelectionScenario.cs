@@ -64,7 +64,7 @@ public sealed class CargoDestinationScenario
         {
             if (MapUIManager.Instance.IsOutside || p.playerLocation != PlayerStore.PlayerLocation.IN_STORE ||
                 bag.parentInventory == e.afterhourPocketSlotInvBackpack || e.storeInteractables?.activeInHierarchy != true) return false;
-            RoutingScenario.OpenOptionAction("f25.open"); var cargo = Window();
+            RoutingScenario.RunFeatureAction("f25.open"); var cargo = Window();
             Need(cargo?.Get("unload")?.button != null && QaItemUi.Hit(cargo.root, first) != null &&
                 QaItemUi.Hit(cargo.root, second) != null && QaItemUi.Hit(cargo.root, keep) == null &&
                 QaItemUi.Selected(cargo, first) && QaItemUi.Selected(cargo, second),
@@ -75,6 +75,11 @@ public sealed class CargoDestinationScenario
             QaItemUi.Click(cargo, second);
             Need(QaItemUi.Selected(cargo, first) && !QaItemUi.Selected(cargo, second), "Could not deselect exactly the second trip gain");
             cargo.Get("unload").button.onClick.Invoke();
+            var preview = Window();
+            Need(preview?.Get("confirm")?.button?.interactable == true && first.parentInventory == inside &&
+                second.parentInventory == inside && keep.parentInventory == inside,
+                "Unload preview changed inventory or did not offer confirmation");
+            preview.Get("confirm").button.onClick.Invoke();
             Need(first.parentInventory == target && second.parentInventory == inside && keep.parentInventory == inside &&
                 destination.parentInventory == e.invElement && !ReferenceEquals(first.parentInventory, e.invElement),
                 "Unloading did not move only the selected gain to the chosen container");
@@ -85,6 +90,10 @@ public sealed class CargoDestinationScenario
             QaItemUi.Hit(remaining.root, second) != null && !QaItemUi.Selected(remaining, second),
             "The remaining unselected gain was not retained after the first unload");
         QaItemUi.Click(remaining, second); remaining.Get("unload").button.onClick.Invoke();
+        var retry = Window();
+        Need(retry?.Get("confirm")?.button?.interactable == true && second.parentInventory == inside,
+            "Retry preview changed inventory or did not offer confirmation");
+        retry.Get("confirm").button.onClick.Invoke();
         Need(first.parentInventory == target && second.parentInventory == target && keep.parentInventory == inside,
             "Retry did not move the remaining selected gain to the same target or retained the original equipment incorrectly");
         result = "PASS F25 chosen non-default container and partial selection, exact separate unloading and original equipment"; return true;
@@ -145,7 +154,7 @@ public sealed class BasketDifferentQuotesScenario
         .Select(Items).Where(items => items.Length > 0).ToArray();
     private GameItem[][] Compare(int limit, bool allowMove)
     {
-        RoutingScenario.OpenOptionAction("f34.open"); var window = Window();
+        RoutingScenario.RunFeatureAction("f34.open"); var window = Window();
         Need(window?.Get("limit") != null && window.Get("compare")?.button != null, "Budget comparison controls unavailable");
         foreach (var item in offered.Except(pair))
         {
@@ -160,9 +169,10 @@ public sealed class BasketDifferentQuotesScenario
                 "The selection grid did not retain a native quoted price and selection");
         }
         var unseen = Entry(window, unquoted);
-        Need(unseen != null && Field(unseen, "Enabled") is bool enabled && !enabled &&
-            Field(unseen, "Badge") as string == ModHelper.GetLocalized(Mod, "f34.unpriced"),
-            "An item without an observed quote was not marked unavailable");
+        Need(unseen != null && Field(unseen, "Enabled") is bool enabled && enabled &&
+            Field(unseen, "Badge") as string != ModHelper.GetLocalized(Mod, "f34.unpriced"),
+            "A matching item in storage did not receive a calculated quote");
+        if (QaItemUi.Selected(window, unquoted)) QaItemUi.Click(window, unquoted);
         window.Get("limit").SetString(limit.ToString(), true); window.Get("compare").button.onClick.Invoke(); window = Window();
         var grids = Grids(window);
         Need(grids.Length > 0, "No quoted combination was offered within the entered budget");
@@ -170,7 +180,7 @@ public sealed class BasketDifferentQuotesScenario
         foreach (var grid in grids)
         {
             Need(grid.All(item => pair.Contains(item)) && grid.Distinct().Count() == grid.Length,
-                "A result included an excluded or unquoted instance");
+                "A result included an explicitly excluded instance");
             int total = grid.Sum(item => quotes[item]);
             Need(total <= limit && text.Contains(ModHelper.GetLocalized(Mod, "f34.summary", grid.Sum(item => item.unitCount), total, limit - total)),
                 "Displayed combination or total exceeded the entered budget or differed from the observed quotes");
@@ -219,7 +229,7 @@ public sealed class BasketDifferentQuotesScenario
                 "Native food fixtures did not yield two different quotes within the buyer's budget: " +
                 string.Join(", ", offered.Select(item => item.identifier + "=" + quotes[item])));
             cash = p.playerCash;
-            RoutingScenario.OpenOptionAction("f34.open"); var observed = Window();
+            RoutingScenario.RunFeatureAction("f34.open"); var observed = Window();
             foreach (var item in offered)
                 Need(Field(Entry(observed, item), "Badge") as string == quotes[item].ToString(), "F34 did not retain the displayed native quote");
             observed.Close(); foreach (var item in offered) Move(item, e.invElement); NegociationUIManager.Instance.RefreshUI();

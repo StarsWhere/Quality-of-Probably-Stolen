@@ -1,10 +1,22 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace ShopAssist
 {
     internal static class ShopInventory
     {
+        private sealed class DisplayIdentity
+        {
+            internal string Name;
+            internal int Number;
+        }
+        private static readonly Dictionary<GameInventory, DisplayIdentity> displayIdentities = new Dictionary<GameInventory, DisplayIdentity>();
+        private static readonly Dictionary<string, int> nextDisplayNumber = new Dictionary<string, int>(StringComparer.Ordinal);
+        private static readonly HashSet<string> ambiguousNames = new HashSet<string>(StringComparer.Ordinal);
+        private static string displayRun;
+        private static int displaySlot = -1;
+
         internal sealed class Location
         {
             internal GameInventory Inventory;
@@ -44,9 +56,11 @@ namespace ShopAssist
         private static bool IsStorageBay(string id) => id == "storage_bay" || id == "storage_bay_large" ||
             id == "storage_bay_chem" || id == "storage_bay_gun";
 
-        internal static bool SafeContainerForPeek(GameItem item)
+        internal static bool SafeContainerForPeek(GameItem item) => AccessibleWindow(item) && IsOrdinaryContainer(item);
+
+        internal static bool IsOrdinaryContainer(GameItem item)
         {
-            if (!AccessibleWindow(item) || item.contentWindow.openCallback != null) return false;
+            if (item?.contentWindow == null || item.contentWindow.openCallback != null) return false;
             if (IsStorageBay(item.identifier)) return true;
             if (!(item.contentWindow.childElement is GameGridInventory)) return false;
             switch (item.identifier)
@@ -102,6 +116,32 @@ namespace ShopAssist
         internal static List<Location> MachineLocations() => Locations(false, true);
         internal static List<Location> CustomerLocations() => Locations(false, true, true);
 
+        // These are public sources of owned goods, not automatic routing targets.
+        // In particular, allowing a counter to be searched must not make it an
+        // ordinary destination for unrelated batch operations.
+        internal static bool SearchableGoods(Location location)
+        {
+            if (!InStore || location?.Inventory == null || location.IsMachine || location.Inventory.IsRemoveLocked()) return false;
+            if (location.Owner != null)
+                return location.Ordinary && location.Path != null && location.Path.Length > 0 &&
+                    location.Path.All(AccessibleWindow);
+            var entry = EmporiumEntry.Instance;
+            return location.Role == "stock" && ReferenceEquals(location.Inventory, entry.invElement) ||
+                location.Role == "counter" && ReferenceEquals(location.Inventory, entry.backInvinvElement) ||
+                location.Role == "front" && ReferenceEquals(location.Inventory, entry.frontInvinvElement) ||
+                location.Role == "showcase" && ReferenceEquals(location.Inventory, entry.showcaseElement);
+        }
+
+        internal static bool VisibleGoods(Location location)
+        {
+            if (!SearchableGoods(location)) return false;
+            if (location.Owner != null) return VisibleInventoryViews.Visible(location.Owner.contentWindow);
+            var entry = EmporiumEntry.Instance;
+            PixelWindow window = location.Role == "stock" ? entry.invWindow : location.Role == "counter" ? entry.backInvWindow :
+                location.Role == "front" ? entry.frontInvWindow : location.Role == "showcase" ? entry.showcaseWindow : null;
+            return VisibleInventoryViews.Visible(window);
+        }
+
         private static List<Location> Locations(bool onlyOpen, bool includeClosedMachines, bool customerQuery = false)
         {
             var result = new List<Location>();
@@ -156,7 +196,9 @@ namespace ShopAssist
                             for (int page = 0; page < tabs.count; page++)
                             {
                                 if (onlyOpen && page != tabs.selected) continue;
-                                Add(tabs.GetTabInventory(page), item, path + " › " + tabs.GetCaption(page),
+                                GameInventory pageInventory = tabs.GetTabInventory(page);
+                                if (tabs.GetPage(page) == null || pageInventory == null) continue;
+                                Add(pageInventory, item, path + " › " + tabs.GetCaption(page),
                                     role, page, !storage || role != "storage", storage && role == "storage", hosts);
                             }
                             continue;
@@ -175,7 +217,36 @@ namespace ShopAssist
                     }
                 }
             }
+            Disambiguate(result);
             return result;
+        }
+
+        // Display identities are session-only. Merely browsing must not assign an item ID.
+        private static void Disambiguate(List<Location> locations) =>
+            Disambiguate(locations, PlayerStore.Instance.runID, PlayerStore.Instance.saveSlotId);
+
+        private static void Disambiguate(List<Location> locations, string run, int slot)
+        {
+            if (displayRun != run || displaySlot != slot)
+            {
+                displayIdentities.Clear(); nextDisplayNumber.Clear(); ambiguousNames.Clear();
+                displayRun = run; displaySlot = slot;
+            }
+            foreach (var group in locations.Where(location => location.Owner != null && !string.IsNullOrEmpty(location.Name))
+                .GroupBy(location => location.Name, StringComparer.Ordinal))
+                if (group.Skip(1).Any()) ambiguousNames.Add(group.Key);
+            foreach (Location location in locations)
+            {
+                string name = location.Name;
+                if (location.Owner == null || string.IsNullOrEmpty(name) || !ambiguousNames.Contains(name)) continue;
+                if (!displayIdentities.TryGetValue(location.Inventory, out DisplayIdentity identity) || identity.Name != name)
+                {
+                    int number = nextDisplayNumber.TryGetValue(name, out int previous) ? previous + 1 : 1;
+                    nextDisplayNumber[name] = number;
+                    displayIdentities[location.Inventory] = identity = new DisplayIdentity { Name = name, Number = number };
+                }
+                location.Name = "#" + identity.Number + " " + name;
+            }
         }
 
         // A closed window disables an ancestor above the panel. Hidden nested
@@ -203,7 +274,7 @@ namespace ShopAssist
         // Moves a complete existing instance into an empty grid placement. This
         // path intentionally excludes split/merge and callback-heavy machine slots.
         internal static bool TryMoveIntact(GameItem item, Location source, Location target, out string reason, GridShape expected = null) =>
-            MoveIntact(item, source, target, false, out reason, expected);
+            MoveIntact(item, source, target, out reason, expected);
 
         internal static bool CanRouteFromCounter(GameItem item, Location source) => InStore && source != null && source.Owner == null &&
             source.Role == "counter" && source.Inventory == EmporiumEntry.Instance.backInvinvElement &&
@@ -217,17 +288,10 @@ namespace ShopAssist
             return location.Path != null && location.Path.Length > 0 && location.Path[0].parentInventory == stock;
         }
 
-        internal static bool TryMoveToTaggedStock(GameItem item, Location source, Location target, out string reason, GridShape expected)
+        private static bool MoveIntact(GameItem item, Location source, Location target, out string reason, GridShape expected)
         {
             reason = "inv.changed";
-            if (!IsMainStockBranch(target) || !target.Ordinary || source == null) return false;
-            return MoveIntact(item, source, target, !IsMainStockBranch(source), out reason, expected);
-        }
-
-        private static bool MoveIntact(GameItem item, Location source, Location target, bool fromCounter, out string reason, GridShape expected)
-        {
-            reason = "inv.changed";
-            if (!InStore || source == null || target == null || (fromCounter ? !CanRouteFromCounter(item, source) : !source.Ordinary) || !target.Ordinary ||
+            if (!InStore || source == null || target == null || !source.Ordinary || !target.Ordinary ||
                 !ReferenceEquals(item?.parentInventory, source.Inventory) || !Movable(item) ||
                 item.MaxNumRemove() < item.unitCount || WouldContainSelf(item, target.Inventory) ||
                 target.Inventory.IsInsertLocked() || !GeneralHelper.MayPlayerInsertInto(target.Inventory)) return false;

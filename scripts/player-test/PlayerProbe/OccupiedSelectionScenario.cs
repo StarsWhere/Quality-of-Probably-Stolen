@@ -29,7 +29,7 @@ public sealed class OccupiedSelectionScenario
             if (StoreUIManager.Instance?.gameOptionUIManager == null || ItemMultiSelectHandler.current == null ||
                 ItemMouseDoubleClickHandler.current == null || EmporiumEntry.Instance?.storeInteractables?.activeInHierarchy != true) return false;
             if (AdvCalendarUIManager.Instance?.UIPanel?.activeSelf == true) StoreUIManager.Instance.storeCalendar.OnClick();
-            TradeScenario.SetOptions(true, "f08.enabled", "f08.occupied_drag");
+            TradeScenario.SetOptions(true, "f08.enabled", "f40.occupied_drag");
             bag = DirectoryMaster.Item("fanny_pack");
             Require(bag != null, "Fanny pack fixture unavailable");
             GeneralHelper.SetItemOwned(bag, true); Put(EmporiumEntry.Instance.invElement, bag);

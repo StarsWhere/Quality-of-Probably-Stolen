@@ -50,7 +50,7 @@ public sealed class LabelOverwriteScenario
             var ui = LabelerBlueUIManager.Instance;
             Need(ui.panel.activeSelf, "Native blue labeler did not open");
             ui.inputField.SetTextWithoutNotify(label); ui.OnEditEnd(label); ui.CloseUI();
-            RoutingScenario.OpenOptionAction("f22.open"); var window = Window();
+            RoutingScenario.RunFeatureAction("f22.open"); var window = Window();
             Need(window?.Get("apply")?.button != null && QaItemUi.Hit(window.root, fresh) != null &&
                 QaItemUi.Hit(window.root, named) == null && QaItemUi.Hit(window.root, different) == null,
                 "Overwrite disabled did not limit the grid to unlabeled same-type items");
@@ -62,7 +62,7 @@ public sealed class LabelOverwriteScenario
             Need(GeneralHelper.GetCustomName(fresh) == label && GeneralHelper.GetCustomName(named) == "QA existing label" &&
                 fresh.parentInventory == EmporiumEntry.Instance.invElement && named.parentInventory == fresh.parentInventory,
                 "First batch changed an existing label or failed to label the selected instance");
-            TradeScenario.SetOptions(true, "f22.overwrite"); RoutingScenario.OpenOptionAction("f22.open");
+            TradeScenario.SetOptions(true, "f22.overwrite"); RoutingScenario.RunFeatureAction("f22.open");
             var window = Window();
             Need(window?.Get("apply")?.button != null && QaItemUi.Hit(window.root, named) != null &&
                 QaItemUi.Hit(window.root, different) == null, "Overwrite enabled did not expose the existing same-type label");
@@ -122,7 +122,7 @@ public sealed class DisplaySourceScenario
             settings.Get(Mod + ":f29.keep").SetFloat(1, true); settings.Get("apply").button.onClick.Invoke(); options.CloseUI();
             Need(((ConfigEntry<int>)ModConfig.Find(Mod).Get("f29.goal")).Value == baseline + 2 &&
                 ((ConfigEntry<int>)ModConfig.Find(Mod).Get("f29.keep")).Value == 1, "Custom stock limits were not applied");
-            RoutingScenario.OpenOptionAction("f29.open"); QaItemUi.Choose(Window(), "source", name);
+            RoutingScenario.RunFeatureAction("f29.open"); QaItemUi.Choose(Window(), "source", name);
             QaItemUi.Choose(Window(), "type", goods[0].GetDisplayName(true));
             Window().Get("add").button.onClick.Invoke(); Window().Get("preview").button.onClick.Invoke();
             var planned = goods.Where(i => QaItemUi.Hit(Window().root, i) != null).ToArray();
@@ -135,7 +135,7 @@ public sealed class DisplaySourceScenario
             step++; return false;
         }
         // Reopen to obtain a fresh plan after the stale preview was rejected.
-        Window().Close(); RoutingScenario.OpenOptionAction("f29.open"); Window().Get("preview").button.onClick.Invoke();
+        Window().Close(); RoutingScenario.RunFeatureAction("f29.open"); Window().Get("preview").button.onClick.Invoke();
         Need(goods.Count(i => QaItemUi.Hit(Window().root, i) != null) == 2, "Fresh preview did not retain two available items");
         Window().Get("apply").button.onClick.Invoke();
         Need(goods.Count(i => i.parentInventory == e.showcaseElement) == 2 && goods.Count(i => i.parentInventory == inside) == 1 &&
@@ -175,7 +175,7 @@ public sealed class LedgerMarginScenario
         Need(sale != null && sale.events == 2 && sale.income == knownSale + unknownSale && sale.expense == 0 &&
             sale.knownCostCount == 1 && sale.unknownCost == 1 && sale.knownMargin == knownSale - cost,
             "Known/unknown sale costs or margin differ from native transactions: " + raw);
-        RoutingScenario.OpenOptionAction("f28.open");
+        RoutingScenario.RunFeatureAction("f28.open");
         var book = CustomUIManager.Instance.GetWindow(Mod + ".ledger");
         Need(book?.IsAlive == true && book.Get("kind")?.dropdown != null, "Ledger UI unavailable");
         int index = book.Get("kind").dropdown.options.FindIndex(o => o.text == ModHelper.GetLocalized(Mod, "f28.sale"));
@@ -267,8 +267,6 @@ public sealed class WaterFilterPauseScenario
         if (step == 1)
         {
             if (e?.storeInteractables?.activeInHierarchy != true) return false;
-            var peer = ModLoader.Mods.FirstOrDefault(m => m.Manifest?.ID == "chiqingsan.AquaSense");
-            Need(peer == null || !peer.IsEnabled || peer.Instance == null, "Use the single-MOD profile for this scenario");
             TradeScenario.SetOptions(true, "f26.enabled", "f26.mix");
             destination = Put("water_pitcher", "QA manual filter target", e.invElement);
             filterSlot = destination.contentWindow?.childElement as GameSlotInventory;
@@ -284,7 +282,7 @@ public sealed class WaterFilterPauseScenario
                 WaterHelper.Remove(source, WaterHelper.GetCurrentCapacityUL(source));
                 WaterHelper.AddWater(source, 5, 250000); WaterFeatureHelper.HandleWaterCheckTestingStrip(source);
             }
-            RoutingScenario.OpenOptionAction("f26.open"); QaItemUi.Choose(Window(), "target", "QA manual filter target");
+            RoutingScenario.RunFeatureAction("f26.open"); QaItemUi.Choose(Window(), "target", "QA manual filter target");
             QaItemUi.Click(Window(), first); QaItemUi.Click(Window(), second);
             Window().Get("preview").button.onClick.Invoke();
             Need(QaItemUi.Hit(Window().root, first) != null && QaItemUi.Hit(Window().root, second) != null &&
@@ -301,7 +299,7 @@ public sealed class WaterFilterPauseScenario
             Window().Get("preview").button.onClick.Invoke();
             Need(Window().Get("pour").GetText() == ModHelper.GetLocalized(Mod, "f26.pourUnfiltered"),
                 "An exhausted filter did not require the unfiltered confirmation");
-            Window().Close(); RoutingScenario.OpenOptionAction("f26.open");
+            Window().Close(); RoutingScenario.RunFeatureAction("f26.open");
             QaItemUi.Choose(Window(), "target", "QA manual filter target");
             Need(!QaItemUi.Selected(Window(), remaining), "A closed water session retained its previous selection");
             QaItemUi.Click(Window(), remaining); Window().Get("preview").button.onClick.Invoke();
@@ -352,7 +350,7 @@ public sealed class BasketBudgetScenario
         .Select(t => items.Where(item => QaItemUi.Hit(t.gameObject, item) != null).ToArray()).Where(g => g.Length > 0).ToArray();
     private GameItem[] Compare(bool shouldAllowMove)
     {
-        RoutingScenario.OpenOptionAction("f34.open"); var w = Window();
+        RoutingScenario.RunFeatureAction("f34.open"); var w = Window();
         Need(w?.Get("limit") != null && w.Get("compare")?.button != null, "Basket controls unavailable");
         w.Get("limit").SetString(limit.ToString(), true); w.Get("compare").button.onClick.Invoke(); w = Window();
         var grids = ResultGrids(w);
@@ -387,7 +385,7 @@ public sealed class BasketBudgetScenario
         if (step == 2)
         {
             if (!NegociationUIManager.Instance.IsOpen) return false;
-            RoutingScenario.OpenOptionAction("f34.open"); var w = Window();
+            RoutingScenario.RunFeatureAction("f34.open"); var w = Window();
             int[] quotes = items.Select(i => Quote(w, i)).ToArray();
             Need(quotes.All(q => q == quotes[0]) && quotes[0] * 2 < 9000 && items.All(i => i.unitCount == 1),
                 "Native quotes are not three equal positive single-item offers");
@@ -454,7 +452,7 @@ public sealed class DisplayCapacityScenario
         var settings = CustomUIManager.Instance.GetWindow("game_options");
         settings.Get(Mod + ":f29.goal").SetFloat(baseline + 1, true); settings.Get(Mod + ":f29.keep").SetFloat(0, true);
         settings.Get("apply").button.onClick.Invoke(); options.CloseUI();
-        RoutingScenario.OpenOptionAction("f29.open"); QaItemUi.Choose(Window(), "type", goods.GetDisplayName(true));
+        RoutingScenario.RunFeatureAction("f29.open"); QaItemUi.Choose(Window(), "type", goods.GetDisplayName(true));
         Window().Get("add").button.onClick.Invoke(); Window().Get("preview").button.onClick.Invoke();
         Need(QaItemUi.Hit(Window().root, goods) == null && goods.parentInventory == e.invElement,
             "Full showcase preview offered or moved a candidate without physical room");
@@ -492,16 +490,63 @@ public sealed class LedgerDaysScenario
     }
     internal static void VerifyDays(int day, int first, int second, int balance)
     {
-        RoutingScenario.OpenOptionAction("f28.open"); var book = Window();
+        RoutingScenario.RunFeatureAction("f28.open"); var book = Window();
         Need(book?.IsAlive == true, "Daily ledger UI unavailable");
-        Need(SaleRow(book, second) && !SaleRow(book, first) && Text(book, ModHelper.GetLocalized(Mod, "f28.day", day + 1)) &&
+        Need(Day(book) == day + 1 && SaleRow(book, second) && !SaleRow(book, first) &&
             Text(book, ModHelper.GetLocalized(Mod, "f28.cash", balance)), "Current-day sale or cash mismatch");
-        var previous = book.root.GetComponentsInChildren<Button>(true).FirstOrDefault(b => b.gameObject.activeInHierarchy &&
-            b.GetComponentInChildren<TMP_Text>(true)?.text == "‹");
-        Need(previous != null && previous.interactable, "Previous-day action unavailable"); previous.onClick.Invoke(); book = Window();
-        Need(SaleRow(book, first) && !SaleRow(book, second) && Text(book, ModHelper.GetLocalized(Mod, "f28.day", day)),
-            "Previous-day navigation did not show the first day's actual sale");
+
+        var input = book.Get("day_input");
+        Need(input?.input != null && book.Get("day_go")?.button != null, "Ledger date input or jump action unavailable");
+        input.SetString("0", true); input.input.onEndEdit.Invoke("0"); book.Get("day_go").button.onClick.Invoke();
+        var feedback = book.Get("day_feedback");
+        Need(feedback?.root?.activeInHierarchy == true && feedback.GetText() == ModHelper.GetLocalized(Mod, "f28.invalid_day", day + 1) &&
+            SaleRow(book, second) && !SaleRow(book, first), "Invalid date changed the viewed ledger or gave no feedback");
+
+        book = Jump(book, day);
+        Need(Day(book) == day && SaleRow(book, first) && !SaleRow(book, second),
+            "Date input did not jump to the first day's actual sale");
+        book.Close(); RoutingScenario.RunFeatureAction("f28.open"); book = Window();
+        Need(Day(book) == day && SaleRow(book, first) && !SaleRow(book, second),
+            "Reopening the ledger in the same session did not retain the selected day");
+
+        book = Navigate(book, "›");
+        Need(Day(book) == day + 1 && SaleRow(book, second) && !SaleRow(book, first),
+            "Next-day navigation did not show the second day's actual sale");
+        book = Navigate(book, "‹");
+        Need(Day(book) == day && SaleRow(book, first) && !SaleRow(book, second),
+            "Previous-day navigation did not return to the first day's actual sale");
+        book = Jump(book, day + 1);
+        Need(Day(book) == day + 1 && SaleRow(book, second) && !SaleRow(book, first),
+            "Date input did not jump back to the current day's sale");
+        book = Jump(book, day);
+        Need(Day(book) == day && SaleRow(book, first), "Could not retain the historical day before closing");
         book.Close();
+    }
+
+    private static int Day(CustomUIWindow book)
+    {
+        var input = book?.Get("day_input");
+        Need(input?.input != null && int.TryParse(input.GetString(), System.Globalization.NumberStyles.None,
+            System.Globalization.CultureInfo.InvariantCulture, out _), "Ledger day input is missing or invalid");
+        return int.Parse(input.GetString(), System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private static CustomUIWindow Jump(CustomUIWindow book, int day)
+    {
+        var input = book.Get("day_input"); var go = book.Get("day_go")?.button;
+        Need(input?.input != null && go != null && go.interactable, "Ledger date jump is unavailable");
+        string value = day.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        input.SetString(value, true); input.input.onEndEdit.Invoke(value); go.onClick.Invoke();
+        var updated = Window(); Need(updated?.IsAlive == true, "Ledger closed while changing date"); return updated;
+    }
+
+    private static CustomUIWindow Navigate(CustomUIWindow book, string label)
+    {
+        var button = book.root.GetComponentsInChildren<Button>(true).FirstOrDefault(value => value.gameObject.activeInHierarchy &&
+            value.GetComponentInChildren<TMP_Text>(true)?.text == label);
+        Need(button != null && button.interactable, "Ledger day navigation unavailable: " + label);
+        button.onClick.Invoke();
+        var updated = Window(); Need(updated?.IsAlive == true, "Ledger closed while navigating dates"); return updated;
     }
     private static bool Text(CustomUIWindow book, string value) => book.root.GetComponentsInChildren<TMP_Text>(true)
         .Any(t => t.gameObject.activeInHierarchy && t.text == value);
@@ -547,7 +592,7 @@ public sealed class LedgerDaysScenario
                 VerifyDays(day, firstSale, secondSale, p.playerCash);
                 p.SaveGame(); File.WriteAllText(Path.Combine(Application.persistentDataPath, "qa-ledger-days-run.txt"),
                     string.Join("|", p.runID, p.saveSlotId, day, firstSale, secondSale, p.playerCash));
-                result = "PASS F28 native day transition and distinct daily sales; saved for cold reload"; return true;
+                result = "PASS F28 day input, validation, daily navigation and same-session day memory; saved for cold reload"; return true;
             default: throw new InvalidOperationException("Unknown daily ledger QA step " + step);
         }
     }
@@ -573,7 +618,7 @@ public sealed class LedgerDaysReloadScenario
         LedgerDaysScenario.Need(StoreStation.GetDayCounter() == day + 1 && PlayerStore.Instance.playerCash == balance,
             "Cold reload restored a different day or balance");
         LedgerDaysScenario.VerifyDays(day, first, second, balance);
-        result = "PASS F28 distinct daily transaction rows and cash survive a cold process reload"; return true;
+        result = "PASS F28 cold reload restores both daily transactions and cash, with day input and session navigation"; return true;
     }
 }
 
@@ -652,7 +697,7 @@ public sealed class PackingPriorityScenario
         }
         if (step == 3)
         {
-            RoutingScenario.OpenOptionAction("f36.open"); var window = Window();
+            RoutingScenario.RunFeatureAction("f36.open"); var window = Window();
             Need(window?.Get("preview")?.button != null && QaItemUi.Hit(window.root, ordinary) != null && QaItemUi.Hit(window.root, priority) != null,
                 "Packing grid omitted real ground items");
             var toggle = PriorityToggle(); Need(toggle != null && !toggle.isOn, "Priority selection toggle unavailable");
@@ -763,7 +808,7 @@ public sealed class RequestColdReloadScenario
             Need(goods != null && request != null && p.playerCash == int.Parse(context[5]) && Reserved(goods),
                 "Cold load lost the exact physical reservation or request");
             ItemMouseDoubleClickHandler.current.OpenContentAction(bag, new Vector2(Screen.width * .7f, Screen.height * .7f));
-            RoutingScenario.OpenOptionAction("f27.open"); var book = CustomUIManager.Instance.GetWindow(Mod + ".requests");
+            RoutingScenario.RunFeatureAction("f27.open"); var book = CustomUIManager.Instance.GetWindow(Mod + ".requests");
             var open = book?.root.GetComponentsInChildren<Button>(true).FirstOrDefault(b =>
                 b.GetComponentInChildren<TMP_Text>(true)?.text == ModHelper.GetLocalized(Mod, "f27.prepare") &&
                 b.transform.parent.GetComponentsInChildren<TMP_Text>(true).Any(t => t.text == context[2]));
@@ -796,26 +841,16 @@ public sealed class CustomerCounterDropScenario
     private static void Need(bool ok, string message) { if (!ok) throw new InvalidOperationException(message); }
     private static object Field(object value, string name) => value?.GetType().GetField(name,
         BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(value);
-    private static void CheckDropGuards(MonoBehaviour hit, GameItem item, GameGridInventory target)
+    private static void CheckCounterFallback(MonoBehaviour hit, GameItem item, GameGridInventory target)
     {
         var entry = Field(hit, "entry"); var view = Field(hit, "view");
-        var allow = Field(Field(view, "Options"), "CanDrop") as Delegate;
+        var allow = Field(Field(view, "Options"), "CanDropTarget") as Delegate;
         var slot = target.TryFindOneValidInventorySlot(item);
         Need(allow != null && entry != null && slot != null && slot.targetItem == null && slot.itemGridShape != null,
             "The live counter drop predicate or an empty native slot is unavailable");
-        bool Allowed() => (bool)allow.DynamicInvoke(entry, target, slot.itemGridShape);
-        var player = PlayerStore.Instance; var current = player.currentClientInstance;
-        try
-        {
-            player.currentClientInstance = StoreClientInstance.CreateClientInstance(StoreClientList.CreateSpacerClientFood());
-            Need(!Allowed(), "A changed customer retained a stale counter drop");
-        }
-        finally { player.currentClientInstance = current; }
-        try { ItemPinHelper.SetPinned(item, true); Need(!Allowed(), "A pinned item was allowed onto the counter"); }
-        finally { ItemPinHelper.SetPinned(item, false); }
-        bool wasLocked = target.overrideLockInsert;
-        try { target.overrideLockInsert = true; Need(!Allowed(), "A locked native counter accepted a drop"); }
-        finally { target.overrideLockInsert = wasLocked; }
+        bool Allowed() => (bool)allow.DynamicInvoke(entry, target, null, slot.itemGridShape);
+        Need((bool)Field(entry, "Draggable") && !Allowed(),
+            "The counter's customer callbacks should reject the assisted drop while leaving the source draggable elsewhere");
     }
     public bool Tick(out string result)
     {
@@ -838,9 +873,14 @@ public sealed class CustomerCounterDropScenario
         if (step == 2)
         {
             if (!NegociationUIManager.Instance.IsOpen || !e.backInvWindow.IsVisible()) return false;
-            RoutingScenario.OpenOptionAction("f11.open");
+            RoutingScenario.RunFeatureAction("f11.open");
             var list = CustomUIManager.Instance.GetWindow(Mod + ".customer_inventory");
-            Need(list?.IsAlive == true && QaItemUi.Hit(list.root, goods) != null, "Demand grid does not contain the actual owned item");
+            var demandButton = list?.Get("demand")?.button;
+            Need(list?.IsAlive == true && demandButton != null && demandButton.interactable, "Demand mode is unavailable");
+            demandButton.onClick.Invoke();
+            var demandHit = QaItemUi.Hit(list.root, goods);
+            Need(demandHit != null && !string.IsNullOrEmpty(Field(Field(demandHit, "entry"), "QuoteLabel") as string),
+                "Demand grid does not contain the actual owned item and its customer quote");
             // Keep the card visible while exposing the native negotiation grid for a real raycast.
             var canvas = list.Rect.GetComponentInParent<Canvas>();
             var parent = list.Rect.parent as RectTransform;
@@ -853,19 +893,17 @@ public sealed class CustomerCounterDropScenario
             if (Time.frameCount < frame) return false;
             var view = CustomUIManager.Instance.GetWindow(Mod + ".customer_inventory");
             var hit = view == null ? null : QaItemUi.Hit(view.root, goods); Need(hit != null, "Demand card disappeared before drag");
-            CheckDropGuards(hit, goods, e.backInvinvElement);
+            CheckCounterFallback(hit, goods, e.backInvinvElement);
             var drag = typeof(ModuleGridScenario).GetMethod("DragToNative", BindingFlags.Static | BindingFlags.NonPublic);
             Need(drag != null, "Native event/raycast drag helper unavailable");
             bool reached = (bool)drag.Invoke(null, new object[] { hit, goods, e.backInvinvElement });
             Need(reached, "No unobstructed valid position in the native negotiation counter could be reached");
-            if (goods.parentInventory != e.backInvinvElement)
-            {
-                var native = e.backInvinvElement.TryFindOneValidInventorySlot(goods);
-                bool accepted = native != null && native.inventory == e.backInvinvElement && native.targetItem == null &&
-                    native.TryAcceptOnce(goods.unitCount) == goods.unitCount && goods.parentInventory == e.backInvinvElement;
-                throw new InvalidOperationException("F11 card drag did not place the selected item on the real negotiation counter; " +
-                    "the native counter " + (accepted ? "accepted" : "did not accept") + " the same item as a control");
-            }
+            Need(goods.parentInventory == e.invElement && GeneralHelper.IsItemOwned(goods) && p.playerCash == cash,
+                "An assisted drop entered the unsafe customer callback path");
+            var native = e.backInvinvElement.TryFindOneValidInventorySlot(goods);
+            Need(native != null && native.inventory == e.backInvinvElement && native.targetItem == null &&
+                native.TryAcceptOnce(goods.unitCount) == goods.unitCount && goods.parentInventory == e.backInvinvElement,
+                "The native counter did not accept the item after the assisted drop was rejected");
             Need(GeneralHelper.IsItemOwned(goods) && p.playerCash == cash && p.currentNegociatedItem == goods,
                 "Dragging to counter sold the item or missed the native counter callback");
             Need(e.backInvinvElement.childItems.Count(i => GeneralHelper.IsItemOwned(i) &&
@@ -902,6 +940,6 @@ public sealed class CustomerCounterDropScenario
         Need(goods.parentInventory == e.backInvinvElement && GeneralHelper.IsItemOwned(goods) && p.playerCash == cash &&
             p.currentNegociatedItem == goods,
             "Showing the native quote changed ownership or cash");
-        result = "PASS F11 independent of F34: guarded counter event drop, native callback and visible quote without sale"; return true;
+        result = "PASS F11 rejects counter callbacks, preserves the source and leaves native counter placement and visible quote available"; return true;
     }
 }

@@ -51,8 +51,7 @@ namespace ShopAssist
             bool ordinary = false;
             foreach (ShopInventory.Location location in ShopInventory.OwnedLocations(true))
                 if (location.Inventory == inventory && !location.IsMachine &&
-                    ((location.Ordinary && ShopInventory.IsMainStockBranch(location)) ||
-                        ShopInventory.CanRouteFromCounter(item, location))) { ordinary = true; break; }
+                    (location.Ordinary || ShopInventory.CanRouteFromCounter(item, location))) { ordinary = true; break; }
             PixelWindow window = item.handler.FindParentWindow();
             if (!ordinary || !VisibleInventoryViews.Visible(window)) return false;
             if (state == "Selected") handler.Cancel();
