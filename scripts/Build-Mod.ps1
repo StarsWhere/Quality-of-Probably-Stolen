@@ -104,7 +104,7 @@ try {
     if ($Release) {
         $releases = Join-Path $root "releases/$version"
         $null = New-Item -ItemType Directory -Path $releases -Force
-        $name = "ShopAssist-$version-win64.zip"
+        $name = "QualityOfProbablyStolen-$version-win64.zip"
         $archive = Join-Path $task $name
         [IO.Compression.ZipFile]::CreateFromDirectory($package, $archive, [IO.Compression.CompressionLevel]::Optimal, $true)
         Copy-Item -LiteralPath $archive -Destination (Join-Path $releases $name) -Force
