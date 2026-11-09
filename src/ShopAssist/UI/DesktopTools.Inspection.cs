@@ -14,6 +14,7 @@ namespace ShopAssist
         private ConfigEntry<int> inspectionZoom;
         private ConfigEntry<int> inspectionFrameOpacity;
         private ConfigEntry<int> inspectionTrayOpacity;
+        private ConfigEntry<bool> inspectionHideLens;
         private InspectionUIManager inspection;
         private GameItem inspectionItem;
         private Transform inspectionLens;
@@ -40,6 +41,7 @@ namespace ShopAssist
         private int lastFramePercent = -1;
         private int lastTrayPercent = -1;
         private int lastZoomPercent = -1;
+        private bool lastHideLens;
         private Guid inspectionRun;
         private int inspectionSlot;
         private bool inspectionBadPosition;
@@ -55,6 +57,7 @@ namespace ShopAssist
             inspectionZoom = settings.Integer("f18.zoom", "f18.zoom.tip", 100, 100, 300);
             inspectionFrameOpacity = settings.Integer("f18.frame", "f18.frame.tip", 100, 0, 100);
             inspectionTrayOpacity = settings.Integer("f18.tray", "f18.tray.tip", 100, 0, 100);
+            inspectionHideLens = settings.Toggle("f18.hide_lens", "f18.hide_lens.tip");
             settings.Action("f18.reset", ResetInspectionSettings, () => inspectionEnabled.Value && PlayerStore.HasInstance);
         }
 
@@ -105,6 +108,7 @@ namespace ShopAssist
             int zoom = Mathf.Clamp(inspectionZoom.Value, 100, 300);
             int frame = Mathf.Clamp(inspectionFrameOpacity.Value, 0, 100);
             int tray = Mathf.Clamp(inspectionTrayOpacity.Value, 0, 100);
+            bool hideLens = inspectionHideLens.Value;
             if (!OwnsInspectionValues())
             {
                 log("F18 stopped adjusting this view because its original components changed.");
@@ -126,13 +130,16 @@ namespace ShopAssist
                 inspectionAppliedZoom = next;
                 lastZoomPercent = zoom;
             }
-            if (frame != lastFramePercent)
+            if (frame != lastFramePercent || hideLens != lastHideLens)
             {
                 Color color = inspectionFrameImage.color;
-                color.a = inspectionOriginalFrameAlpha * frame / 100f;
+                // The lens Image is only the frame; the inspection art remains
+                // under the native mask and stays visible when the frame is hidden.
+                color.a = hideLens ? 0f : inspectionOriginalFrameAlpha * frame / 100f;
                 inspectionFrameImage.color = color;
                 inspectionAppliedFrameAlpha = color.a;
                 lastFramePercent = frame;
+                lastHideLens = hideLens;
             }
             if (tray != lastTrayPercent)
             {
@@ -201,6 +208,7 @@ namespace ShopAssist
             inspectionAppliedMultiplier = artMultiplier;
             inspectionBadPosition = false;
             lastZoomPercent = lastFramePercent = lastTrayPercent = -1;
+            lastHideLens = !inspectionHideLens.Value;
 
             // Restore lens position as though the original drag had moved it, so
             // both the enlarged image and backing tray retain their native mapping.
@@ -336,6 +344,7 @@ namespace ShopAssist
             inspectionZoom.Set(100);
             inspectionFrameOpacity.Set(100);
             inspectionTrayOpacity.Set(100);
+            inspectionHideLens.Set(false);
             try
             {
                 ModHelper.GetConfig(ModEntry.Id).Save();

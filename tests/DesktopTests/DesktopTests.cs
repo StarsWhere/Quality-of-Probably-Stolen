@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using ShopAssist;
 
 internal static class DesktopTests
@@ -7,27 +6,9 @@ internal static class DesktopTests
     private static void Main()
     {
         Guid run = Guid.Parse("e4a55bd1-9123-4bb2-bf10-a0b0c0d0e0f0");
-        Check(DesktopLayoutRules.MembersKey(new[] { 27, 5 }) == "5,27", "member identity is order independent");
-        DesktopLayoutData data = Data(run);
-        Check(DesktopLayoutRules.IsValid(data, run), "valid layout");
-        Check(!DesktopLayoutRules.IsValid(data, Guid.NewGuid()), "other run rejected");
-        data.schemaVersion = 2;
-        Check(!DesktopLayoutRules.IsValid(data, run), "future version rejected");
-        data = Data(run);
-        data.layouts[0].positions[1].id = 5;
-        Check(!DesktopLayoutRules.IsValid(data, run), "duplicate item id rejected");
-        data = Data(run);
-        data.layouts[0].positions[1].order = 0;
-        Check(!DesktopLayoutRules.IsValid(data, run), "duplicate layer rejected");
-        data = Data(run);
-        data.layouts[0].positions[0].x = float.NaN;
-        Check(!DesktopLayoutRules.IsValid(data, run), "invalid coordinate rejected");
-        data = Data(run);
-        data.layouts[0].members = "5,28";
-        Check(!DesktopLayoutRules.IsValid(data, run), "membership mismatch rejected");
-        data = Data(run);
-        data.layouts.Add(data.layouts[0]);
-        Check(!DesktopLayoutRules.IsValid(data, run), "ambiguous same-coordinator group rejected");
+        Check(DesktopLayoutRules.Finite(1000000f) && !DesktopLayoutRules.Finite(float.NaN) &&
+            !DesktopLayoutRules.Finite(float.PositiveInfinity) && !DesktopLayoutRules.Finite(1000001f),
+            "desktop coordinates must be finite and within bounds");
         var viewport = new DesktopRect(0, 0, 1000, 800);
         var left = new DesktopRect(100, 100, 300, 500);
         var right = new DesktopRect(700, 100, 900, 500);
@@ -54,25 +35,6 @@ internal static class DesktopTests
             "restored lens position uses the scaled native movement mapping");
         Console.WriteLine("Desktop layout tests passed.");
     }
-
-    private static DesktopLayoutData Data(Guid run) => new DesktopLayoutData
-    {
-        schemaVersion = 1,
-        runId = run.ToString("N"),
-        layouts = new List<DesktopLayout>
-        {
-            new DesktopLayout
-            {
-                coordinatorId = 17,
-                members = "5,27",
-                positions = new List<DesktopPosition>
-                {
-                    new DesktopPosition { id = 5, x = -123, y = 300, order = 0 },
-                    new DesktopPosition { id = 27, x = 500, y = -20, order = 1 }
-                }
-            }
-        }
-    };
 
     private static void Check(bool value, string message)
     {

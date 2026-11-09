@@ -1,7 +1,6 @@
 f10.context,Module cabinet
 f11.context,Find goods
 f11.demand_context,Customer request
-f13.context,Close windows
 f30.context,Machine status
 f31.context,Spare battery
 f32.context,Replant

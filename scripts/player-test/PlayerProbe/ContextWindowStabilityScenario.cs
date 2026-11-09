@@ -71,7 +71,7 @@ public sealed class ContextWindowStabilityScenario
             rules = Window("routes");
             rules.Get("receive").SetBool(true, true);
             rules.Get("save").button.onClick.Invoke();
-            string saved = ModHelper.GetModData(Mod, "routing", "");
+            string saved = ModHelper.GetModData(Mod, "routing.v2", "");
             Need(bagB.uniqueId > 0 && saved.Contains("item:" + bagB.uniqueId + ":contents:-1") &&
                 (bagA.uniqueId <= 0 || !saved.Contains("item:" + bagA.uniqueId + ":contents:-1")),
                 "F07 saved a different container");

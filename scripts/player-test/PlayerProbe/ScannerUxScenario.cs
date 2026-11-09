@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Reflection;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -53,6 +54,23 @@ public sealed class ScannerUxScenario
         CustomUIManager.Instance.GetWindow(Mod + ".f19.pin")?.Close();
     }
 
+    private static Action LiquidTick(out object view)
+    {
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        object machines = ContextShortcutScenario.ModuleTick("F10/F19/F30").Target;
+        object liquid = machines?.GetType().GetField("liquid", flags)?.GetValue(machines);
+        view = liquid?.GetType().GetField("water", flags)?.GetValue(liquid);
+        MethodInfo tick = liquid?.GetType().GetMethod("Tick", flags);
+        Need(view != null && tick != null, "Scanner module is unavailable");
+        return () => tick.Invoke(liquid, null);
+    }
+
+    private static bool Hovered(object view)
+    {
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        return (bool)view.GetType().GetField("Hovered", flags).GetValue(view);
+    }
+
     public bool Tick(out string result)
     {
         result = null; Need(Time.realtimeSinceStartup < deadline, "Scanner UX scenario timed out at " + step);
@@ -66,7 +84,31 @@ public sealed class ScannerUxScenario
             WaterHelper.AddLiquid(sample, "water", 500000); WaterHelper.AddLiquid(sample, "organic_waste", 100000);
             WaterHelper.AddLiquid(sample, "mineral", 20000); WaterHelper.AddLiquid(sample, "microbe", 2000);
             WaterHelper.AddLiquid(other, "water", 200000);
-            WaterScannerUIManager.Instance.Open(null, sample);
+            var scanner = WaterScannerUIManager.Instance;
+            Action shortcutsTick = ContextShortcutScenario.ModuleTick("Context buttons");
+            shortcutsTick(); scanner.Open(null, sample); shortcutsTick();
+            Transform shortcut = scanner.panel.transform.Find("ShopAssist_WaterPins");
+            Need(shortcut != null && shortcut.gameObject.activeSelf, "Scanner shortcut did not appear in the opening frame");
+            scanner.panel.SetActive(false); shortcutsTick();
+            Need(!shortcut.gameObject.activeSelf, "Scanner shortcut remained active after its panel closed");
+            Need(scanner.currentWaterContainer == null, "Closing the scanner did not release its sample");
+            scanner.Open(null, sample); shortcutsTick();
+            Need(scanner.panel.GetComponentsInChildren<Transform>(true).Count(node => node.name == "ShopAssist_WaterPins" && node.gameObject.activeSelf) == 1,
+                "Reopening the scanner in the same frame did not create exactly one active shortcut");
+            RectTransform activeShortcut = scanner.panel.GetComponentsInChildren<RectTransform>(true)
+                .First(node => node.name == "ShopAssist_WaterPins" && node.gameObject.activeSelf);
+            RectTransform scannerRect = (RectTransform)scanner.panel.transform;
+            Vector2 original = scannerRect.anchoredPosition;
+            try
+            {
+                scannerRect.anchoredPosition = original + new Vector2(-Screen.width * 2, 0);
+                Canvas.ForceUpdateCanvases(); shortcutsTick(); Vector2 left = activeShortcut.anchoredPosition;
+                scannerRect.anchoredPosition = original + new Vector2(Screen.width * 2, 0);
+                Canvas.ForceUpdateCanvases(); shortcutsTick();
+                Need((activeShortcut.anchoredPosition - left).sqrMagnitude > 1,
+                    "Scanner shortcut did not follow its panel in the same frame");
+            }
+            finally { scannerRect.anchoredPosition = original; Canvas.ForceUpdateCanvases(); shortcutsTick(); }
             step = 11; return false;
         }
         if (step == 11)
@@ -77,6 +119,16 @@ public sealed class ScannerUxScenario
         if (step == 2)
         {
             var scanner = WaterScannerUIManager.Instance; Transform root = Root();
+            Action liquidTick = LiquidTick(out object view);
+            using (var input = new QaSyntheticInput())
+            {
+                input.Mouse = new Vector3(-1000, -1000); liquidTick();
+                Need(!Hovered(view), "Scanner incorrectly retained hover outside the panel");
+                input.Mouse = Center(root); liquidTick();
+                Need(Hovered(view), "Scanner did not detect pointer entry in the same frame");
+                input.Mouse = new Vector3(-1000, -1000); liquidTick();
+                Need(!Hovered(view), "Scanner did not detect pointer exit in the same frame");
+            }
             Image screen = root?.Find("ScreenCenter")?.GetComponent<Image>();
             Need(screen != null && screen.color == (Color)new Color32(41, 34, 52, 255) && !screen.raycastTarget && Row(root, "microbe") != null,
                 "Scanner did not redraw the native screen and components");
@@ -102,10 +154,33 @@ public sealed class ScannerUxScenario
             }
             using (var input = new QaSyntheticInput())
             {
-                input.Mouse = new Vector3(-1000, -1000); scanner.RefreshUI();
+                input.Mouse = new Vector3(-1000, -1000); liquidTick();
                 Need(ReferenceEquals(oldRoot, Root()) && Order(root).SequenceEqual(new[] { "microbe", "organic_waste", "mineral", "water" }),
                     "The list did not sort after the pointer left");
             }
+            Row(root, "water").GetComponent<Button>().onClick.Invoke();
+            CustomUIWindow detail = CustomUIManager.Instance.GetWindow(Mod + ".f19.detail.water");
+            Need(detail?.IsAlive == true, "Scanner detail did not open");
+            RectTransform panelRect = (RectTransform)scanner.panel.transform;
+            Vector2 original = panelRect.anchoredPosition;
+            try
+            {
+                panelRect.anchoredPosition = original + new Vector2(-Screen.width * 2, 0);
+                Canvas.ForceUpdateCanvases(); liquidTick(); Vector2 left = detail.Rect.anchoredPosition;
+                panelRect.anchoredPosition = original + new Vector2(Screen.width * 2, 0);
+                Canvas.ForceUpdateCanvases(); liquidTick();
+                Need((detail.Rect.anchoredPosition - left).sqrMagnitude > 1,
+                    "Scanner detail did not follow the panel in the same frame");
+            }
+            finally { panelRect.anchoredPosition = original; Canvas.ForceUpdateCanvases(); liquidTick(); detail.Close(); }
+            try
+            {
+                scanner.currentWaterContainer = null; liquidTick();
+                Need(scanner.contaminantTMP.enabled && Root() == null,
+                    "A scanner without its sample did not immediately restore its native text");
+            }
+            finally { scanner.currentWaterContainer = sample; scanner.RefreshUI(); }
+            Need(Root() != null, "Scanner layout did not return after its sample was restored");
             scanner.Close(); scanner.Open(null, other);
             root = Root();
             Need(root != null && Row(root, "water") != null && Row(root, "microbe") == null && Row(root, "organic_waste") == null,

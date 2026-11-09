@@ -3,7 +3,7 @@ using System.Linq;
 using TMPro;
 using UnityEngine;
 
-// Opens the actual workspace group manager, native bargaining panel and shutter data.
+// Opens the native bargaining panel and shutter data.
 public sealed class FeatureGalleryDesktopScenario
 {
     private const string Mod = "starswhere.shopassist";
@@ -12,8 +12,6 @@ public sealed class FeatureGalleryDesktopScenario
     private readonly float deadline = Time.realtimeSinceStartup + 150f;
     private int phase;
     private float after;
-    private GameItemElement first, second;
-
     public bool Tick(out string result)
     {
         result = null;
@@ -22,26 +20,12 @@ public sealed class FeatureGalleryDesktopScenario
         if (phase == 1) { if (!start.Tick()) return false; phase = 2; }
         if (phase == 2)
         {
-            if (!gallery.Screen1920() || ItemMouseDoubleClickHandler.current == null || StoreUIManager.Instance?.gameOptionUIManager == null) return false;
-            TradeScenario.SetOptions(true, "f13.enabled", "f14.enabled", "f17.enabled", "f21.enabled");
-            var stock = EmporiumEntry.Instance.invElement;
-            var coordinator = QaFeatureGallery.Item("storage_coordinator", stock, "仓储协调器");
-            first = QaFeatureGallery.Item("fanny_pack", stock, "常用物品");
-            second = QaFeatureGallery.Item("satchel", stock, "补货物品");
-            QaFeatureGallery.Need(ReferenceEquals(MachineStorageCoordinator.FindCoordinatorInReach(), coordinator), "Workspace coordinator is not in reach");
-            ItemMouseDoubleClickHandler.current.OpenContentAction(first, new Vector2(Screen.width * .16f, Screen.height * .6f));
-            ItemMouseDoubleClickHandler.current.OpenContentAction(second, new Vector2(Screen.width * .35f, Screen.height * .6f));
-            QaFeatureGallery.Action("f13.groups");
-            var groups = CustomUIManager.Instance.GetWindow("shopassist.f13.groups");
-            QaFeatureGallery.Need(groups?.IsAlive == true && groups.Get("name") != null, "Workspace group manager unavailable");
-            groups.Get("name").SetString("日常补货", true); groups.Get("save").button.onClick.Invoke();
-            gallery.Capture("f13"); phase = 3; return false;
+            if (!gallery.Screen1920() || StoreUIManager.Instance?.gameOptionUIManager == null) return false;
+            TradeScenario.SetOptions(true, "f14.enabled", "f17.enabled", "f21.enabled");
+            phase = 3;
         }
         if (phase == 3)
         {
-            if (!gallery.CaptureReady()) return false;
-            CustomUIManager.Instance.GetWindow("shopassist.f13.groups").Close();
-            first.contentWindow.Hide(); second.contentWindow.Hide();
             var p = PlayerStore.Instance; p.isBargainIntroduced = true;
             var buyer = StoreClientList.CreateSpacerClientFood(); buyer.isIntroduced = true; buyer.isBargainAvailable = true;
             p.currentClientInstance = StoreClientInstance.CreateClientInstance(buyer); p.isClientArrived = true;
@@ -107,6 +91,6 @@ public sealed class FeatureGalleryDesktopScenario
             gallery.Capture("f21"); phase = 10; return false;
         }
         if (!gallery.CaptureReady()) return false;
-        gallery.RestoreSavedLocale(); result = "PASS gallery F13 workspace, F14 bargaining, F17 checklist and F21 deadline"; return true;
+        gallery.RestoreSavedLocale(); result = "PASS gallery F14 bargaining, F17 checklist and F21 deadline"; return true;
     }
 }

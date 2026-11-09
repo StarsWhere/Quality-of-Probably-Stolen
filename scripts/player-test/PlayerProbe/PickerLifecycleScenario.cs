@@ -10,7 +10,7 @@ public sealed class PickerLifecycleScenario
     private const string Mod = "starswhere.shopassist";
     private readonly QaNewRun start = new QaNewRun();
     private readonly float deadline = Time.realtimeSinceStartup + 90;
-    private GameItem furnace, firstBag, secondBag, ore, jug;
+    private GameItem furnace, firstBag, secondBag, ore;
     private GameGridInventory firstGrid, secondGrid;
     private CustomUIWindow picker, parent;
     private int step, frame;
@@ -25,16 +25,14 @@ public sealed class PickerLifecycleScenario
         {
             if (EmporiumEntry.Instance?.storeInteractables?.activeInHierarchy != true ||
                 StoreUIManager.Instance?.gameOptionUIManager == null || ItemMouseDoubleClickHandler.current == null) return false;
-            TradeScenario.SetOptions(true, "f26.enabled", "f33.enabled");
+            TradeScenario.SetOptions(true, "f33.enabled");
             TradeScenario.SetOptions(false, "f15.enabled", "f17.enabled", "f21.enabled");
             var stock = EmporiumEntry.Instance.invElement;
             furnace = Item("furnace", "QA picker furnace");
             firstBag = Item("backpack_medium", "QA picker source A");
             secondBag = Item("backpack_medium", "QA picker source B");
             ore = Item("scrap_metal", "QA moved picker material");
-            jug = Item("water_jug", "QA picker destination jug");
-            WaterHelper.Remove(jug, WaterHelper.GetCurrentCapacityUL(jug));
-            Put(stock, furnace); Put(stock, firstBag); Put(stock, secondBag); Put(stock, jug);
+            Put(stock, furnace); Put(stock, firstBag); Put(stock, secondBag);
             firstGrid = firstBag.contentWindow.childElement as GameGridInventory;
             secondGrid = secondBag.contentWindow.childElement as GameGridInventory;
             Need(firstGrid != null && secondGrid != null, "Picker source grids unavailable");
@@ -73,32 +71,31 @@ public sealed class PickerLifecycleScenario
                 text.text == ModHelper.GetLocalized(Mod, "visual.no_items")), "The refreshed picker did not report an empty result");
             Need(QaItemUi.Hit(parent.root, ore) == null && string.IsNullOrEmpty(ModHelper.GetModData(Mod, "f33.rules", "")),
                 "A moved material was selected or persisted against the old source");
-            picker.Close(); parent.Close();
-            RoutingScenario.RunFeatureAction("f26.open");
-            parent = Window("water"); picker = QaItemUi.OpenPicker(parent, "target");
-            Capture("water-target"); step = 13; return false;
+            picker.Close();
+            picker = QaItemUi.OpenPicker(parent, "source");
+            Capture("feed-source-reopen"); step = 13; return false;
         }
         if (step == 13)
         {
             if (!CaptureReady()) return false;
-            string targetDetails = QaItemUi.Describe(picker.root, jug);
-            Debug.Log("[PLAYER-QA] water target picker: " + targetDetails);
-            var delayed = QaItemUi.Hit(picker.root, jug);
-            Need(delayed != null, "Water destination is absent from picker: " + targetDetails);
+            string sourceDetails = QaItemUi.Describe(picker.root, firstBag);
+            Debug.Log("[PLAYER-QA] feed source picker: " + sourceDetails);
+            var delayed = QaItemUi.Hit(picker.root, firstBag);
+            Need(delayed != null, "Feed source is absent from picker: " + sourceDetails);
             parent.Close();
             // A queued click can arrive before the next feature Tick closes the selector.
             QaItemUi.Click(delayed);
-            Need(!parent.IsAlive && !picker.IsAlive && CustomUIManager.Instance.GetWindow(Mod + ".water")?.IsAlive != true,
+            Need(!parent.IsAlive && !picker.IsAlive && CustomUIManager.Instance.GetWindow(Mod + ".f33")?.IsAlive != true,
                 "A delayed picker click reopened its closed parent");
-            RoutingScenario.RunFeatureAction("f26.open");
-            parent = Window("water"); picker = QaItemUi.OpenPicker(parent, "target");
-            Need(QaItemUi.Hit(picker.root, jug) != null, "Water selector did not reopen");
+            furnace.contentWindow.ToFront(); RoutingScenario.RunFeatureAction("f33.open");
+            parent = Window("f33"); picker = QaItemUi.OpenPicker(parent, "source");
+            Need(QaItemUi.Hit(picker.root, firstBag) != null, "Feed source selector did not reopen");
             parent.Close(); frame = Time.frameCount + 3; step = 2; return false;
         }
         if (step == 2)
         {
             if (Time.frameCount < frame) return false;
-            Need(!picker.IsAlive && CustomUIManager.Instance.GetWindow(Mod + ".water")?.IsAlive != true,
+            Need(!picker.IsAlive && CustomUIManager.Instance.GetWindow(Mod + ".f33")?.IsAlive != true,
                 "Closing a parent left its picker active");
             result = "PASS moved material stays bound to its original source across picker search; closed parents cancel delayed clicks and selectors";
             return true;

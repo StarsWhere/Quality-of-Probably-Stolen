@@ -5,14 +5,13 @@ using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
-// Exercises the shortcuts beside the native computer, coordinator and customer panels.
+// Exercises the shortcuts beside the native computer, negotiation and appraisal panels.
 public sealed class PanelToolsScenario
 {
     private const string Mod = "starswhere.shopassist";
     private readonly QaNewRun start = new QaNewRun();
     private int step;
     private float since = Time.realtimeSinceStartup;
-    private GameItem coordinator;
 
     public bool Tick(out string result)
     {
@@ -26,43 +25,27 @@ public sealed class PanelToolsScenario
                     InspectionUIManager.Instance == null || NegociationUIManager.Instance == null || EventSystem.current == null ||
                     StoreUIManager.Instance.blackscreen?.gameObject.activeInHierarchy == true) return false;
                 if (StoreUIManager.Instance.controlHintOverlay?.activeSelf == true) StoreUIManager.Instance.ToggleControlHintOverlay();
-                TradeScenario.SetOptions(true, "f11.enabled", "f13.enabled", "f23.enabled", "f27.enabled", "f28.enabled", "f34.enabled");
+                TradeScenario.SetOptions(true, "f23.enabled", "f28.enabled", "f34.enabled");
                 TradeScenario.SetOptions(false, "f15.enabled", "f17.enabled", "f21.enabled");
-                coordinator = DirectoryMaster.Item("storage_coordinator");
-                Need(coordinator != null, "Missing coordinator"); GeneralHelper.SetItemOwned(coordinator, true);
-                Put(coordinator, EmporiumEntry.Instance.invElement);
-                Need(ReferenceEquals(MachineStorageCoordinator.FindCoordinatorInReach(), coordinator), "Coordinator is not reachable");
                 PCUIManager.Instance.OpenUI(); Advance(2); return false;
             case 2:
             {
-                Button requests = Find("ShopAssist_RequestTools"), ledger = Find("ShopAssist_LedgerTools");
-                if (requests == null || ledger == null) return false;
-                Need(Hit(requests) && Hit(ledger), "Computer shortcuts are visually blocked");
-                requests.onClick.Invoke();
-                Need(CustomUIManager.Instance.GetWindow(Mod + ".requests")?.IsAlive == true, "Computer request shortcut did not open requests");
-                CustomUIManager.Instance.GetWindow(Mod + ".requests").Close();
+                Button ledger = Find("ShopAssist_LedgerTools");
+                if (ledger == null) return false;
+                Need(Find("ShopAssist_RequestTools") == null, "Removed request shortcut appeared on the computer");
+                Need(Hit(ledger), "Computer ledger shortcut is visually blocked");
                 ledger.onClick.Invoke();
                 Need(CustomUIManager.Instance.GetWindow(Mod + ".ledger")?.IsAlive == true, "Computer ledger shortcut did not open history");
                 CustomUIManager.Instance.GetWindow(Mod + ".ledger").Close();
-                PCUIManager.Instance.HideUI(); MachineStorageCoordinator.OpenWindow(coordinator); Advance(3); return false;
-            }
-            case 3:
-            {
-                Button groups = Find("ShopAssist_CoordinatorTools");
-                if (groups == null) return false;
-                Need(Hit(groups), "Coordinator shortcut is visually blocked");
-                groups.onClick.Invoke();
-                Need(CustomUIManager.Instance.GetWindow("shopassist.f13.groups")?.IsAlive == true, "Coordinator shortcut did not open groups");
-                CustomUIManager.Instance.GetWindow("shopassist.f13.groups").Close();
-                CustomUIManager.Instance.GetWindow("storage_coordinator")?.Close();
+                PCUIManager.Instance.HideUI();
                 var buyer = StoreClientList.CreateSpacerClientFood(); buyer.SetBudget(9000); buyer.isIntroduced = true;
                 PlayerStore.Instance.currentClientInstance = StoreClientInstance.CreateClientInstance(buyer);
                 PlayerStore.Instance.isClientArrived = true;
                 GameItem offer = DirectoryMaster.Item("cup_noodle"); GeneralHelper.SetItemOwned(offer, true);
                 Put(offer, EmporiumEntry.Instance.backInvinvElement);
-                NegociationUIManager.Instance.OpenUI(); Advance(4); return false;
+                NegociationUIManager.Instance.OpenUI(); Advance(3); return false;
             }
-            case 4:
+            case 3:
             {
                 Button basket = Find("ShopAssist_CustomerBasket");
                 if (basket == null) return false;
@@ -77,17 +60,18 @@ public sealed class PanelToolsScenario
                 GameItem item = PreBuiltItemHelper.CreateHandRandom(); AppHandHelper.InitDefault(item);
                 InspectionUIManager.Instance.OnInspectItem(item); InspectionUIManager.Instance.UpdateAppraisalPanel();
                 Need(InspectionUIManager.Instance.appraisalPanel.activeInHierarchy, "Native appraisal did not open");
-                Advance(5); return false;
+                Advance(4); return false;
             }
-            case 5:
+            case 4:
             {
                 Button appraisal = Find("ShopAssist_AppraisalWorksheet");
                 if (appraisal == null) return false;
                 Need(Hit(appraisal), "Appraisal shortcut is visually blocked");
                 appraisal.onClick.Invoke();
-                Need(CustomUIManager.Instance.GetWindow("shopassist.f23.worksheet")?.IsAlive == true,
-                    "Appraisal shortcut did not open worksheet");
-                result = "PASS native visible computer requests and ledger, coordinator groups, customer basket and appraisal worksheet shortcuts";
+                Transform worksheet = InspectionUIManager.Instance.panel.transform.Find("ShopAssist_AppraisalChoices");
+                Need(worksheet != null && worksheet.gameObject.activeInHierarchy,
+                    "Appraisal shortcut did not show its embedded worksheet");
+                result = "PASS native visible computer ledger, customer basket and appraisal worksheet shortcuts";
                 return true;
             }
             default: throw new InvalidOperationException("Unknown panel tools step");

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -15,6 +16,7 @@ public sealed class DailyPeekInputScenario
     private GameGridInventory inside;
     private int step, frame;
     private float since = Time.realtimeSinceStartup, hoverAt;
+    internal bool ReadyForFixtures => step == 1;
 
     public bool Tick(out string result)
     {
@@ -79,6 +81,34 @@ public sealed class DailyPeekInputScenario
         {
             if (Time.unscaledTime - hoverAt < 0.6f) return false;
             Need(Preview() != null && Shows(Preview(), first) && Shows(Preview(), second), "F20 did not refresh changed contents");
+            var bounds = ScreenRect((RectTransform)Preview().transform);
+            Need(bounds.xMin >= 2 && bounds.yMin >= 2 && bounds.xMax <= Screen.width - 2 && bounds.yMax <= Screen.height - 2,
+                "F20 preview extends outside the visible screen: " + bounds);
+            var tooltip = OverlayHandler.current?.GetTooltipWindow();
+            if (tooltip?.IsVisible() == true && tooltip.handler?.rectTransform != null)
+            {
+                var graphics = tooltip.handler.GetComponentsInChildren<Graphic>(true)
+                    .Where(graphic => graphic.isActiveAndEnabled && graphic.color.a > 0 &&
+                        graphic.rectTransform.rect.width > 0 && graphic.rectTransform.rect.height > 0).ToArray();
+                Need(graphics.Length > 0, "Native tooltip has no visible graphics");
+                Rect tooltipBounds = ScreenRect(graphics[0].rectTransform);
+                foreach (Graphic graphic in graphics.Skip(1))
+                {
+                    Rect part = ScreenRect(graphic.rectTransform);
+                    tooltipBounds = Rect.MinMaxRect(Mathf.Min(tooltipBounds.xMin, part.xMin), Mathf.Min(tooltipBounds.yMin, part.yMin),
+                        Mathf.Max(tooltipBounds.xMax, part.xMax), Mathf.Max(tooltipBounds.yMax, part.yMax));
+                }
+                Debug.Log("[PLAYER-QA] F20 preview=" + bounds + " tooltip=" + tooltipBounds);
+                if (tooltipBounds.xMin >= bounds.width + 16 || Screen.width - tooltipBounds.xMax >= bounds.width + 16)
+                    Need(!bounds.Overlaps(tooltipBounds), "F20 preview covers the native item tooltip");
+            }
+            if (SystemInfo.graphicsDeviceType != UnityEngine.Rendering.GraphicsDeviceType.Null)
+                ScreenCapture.CaptureScreenshot(Path.Combine(Application.persistentDataPath, "qa-peek-pointer.png"));
+            frame = Time.frameCount + 3; Next(40); return false;
+        }
+        if (step == 40)
+        {
+            if (Time.frameCount < frame) return false;
             input.Mouse = new Vector3(-200, -200, 0); frame = Time.frameCount + 5; Next(5); return false;
         }
         if (step == 5)
@@ -164,6 +194,15 @@ public sealed class DailyPeekInputScenario
     }
 
     private static GameObject Preview() => GameObject.Find("ShopAssist Container Preview");
+    private static Rect ScreenRect(RectTransform rect)
+    {
+        var canvas = rect.GetComponentInParent<Canvas>();
+        Camera camera = canvas == null || canvas.renderMode == RenderMode.ScreenSpaceOverlay ? null : canvas.worldCamera;
+        var corners = new Vector3[4]; rect.GetWorldCorners(corners);
+        Vector2 a = RectTransformUtility.WorldToScreenPoint(camera, corners[0]);
+        Vector2 b = RectTransformUtility.WorldToScreenPoint(camera, corners[2]);
+        return Rect.MinMaxRect(Mathf.Min(a.x, b.x), Mathf.Min(a.y, b.y), Mathf.Max(a.x, b.x), Mathf.Max(a.y, b.y));
+    }
     private static bool Shows(GameObject panel, GameItemElement item) => panel != null && item?.background?.image?.sprite != null &&
         panel.GetComponentsInChildren<Image>(true).Any(image => image.sprite == item.background.image.sprite && image.color.a > 0);
     private void Cleanup() { input?.Dispose(); input = null; }

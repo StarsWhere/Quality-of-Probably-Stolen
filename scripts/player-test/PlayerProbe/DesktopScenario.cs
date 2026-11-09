@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
@@ -12,14 +11,9 @@ using UnityEngine.UI;
 public sealed class DesktopScenario
 {
     private const string ModId = "starswhere.shopassist";
-    private const string GroupsId = "shopassist.f13.groups";
-    private readonly string groupName = "QA desktop " + Guid.NewGuid().ToString("N").Substring(0, 8);
     private readonly FieldInfo multiplier = typeof(CounterMoveChild).GetField("movementMultiplier", BindingFlags.Instance | BindingFlags.NonPublic);
     private QaLoadSlot load;
-    private GameItem coordinator, first, second, inspectItem;
-    private PixelWindow sentinel;
-    private Vector2 firstPosition, secondPosition;
-    private string firstTabs, secondTabs;
+    private GameItem inspectItem;
     private Transform art, lens, tray;
     private Vector3 baseScale, basePosition;
     private float baseMultiplier, frameAlpha, trayAlpha;
@@ -45,91 +39,23 @@ public sealed class DesktopScenario
                 Require(source.Length == 4 && source[0] == "1" && Guid.TryParseExact(source[1], "N", out _) &&
                     int.TryParse(source[2], out int slot) && slot >= 0, "Invalid isolated QA run context");
                 load = new QaLoadSlot(int.Parse(source[2]), Guid.ParseExact(source[1], "N"));
-                Next(1, "Loading isolated F13/F14/F18 QA save"); return false;
+                Next(1, "Loading isolated F14/F18 QA save"); return false;
             }
             case 1:
             {
-                if (!load.Tick() || !StoreReady() || ItemMouseDoubleClickHandler.current == null) return false;
+                if (!load.Tick() || !StoreReady()) return false;
                 CloseCalendar();
                 if (DialogUIManager.Instance?.currentDialog != null || DialoguePhoneUIManager.Instance?.currentDialog != null) return false;
-                EmporiumEntry.Instance.backInvWindow.Show();
-                coordinator = DirectoryMaster.Item("storage_coordinator");
-                Require(coordinator != null && coordinator.IsTag("STORAGE_COORDINATOR_TAG"), "Native QA coordinator factory unavailable");
-                GraphUtils.EmporiumTryAdd(EmporiumEntry.Instance.invElement, coordinator);
-                first = DirectoryMaster.Item("fanny_pack");
-                second = DirectoryMaster.Item("satchel");
-                GraphUtils.EmporiumTryAdd(EmporiumEntry.Instance.invElement, first);
-                GraphUtils.EmporiumTryAdd(EmporiumEntry.Instance.invElement, second);
-                Require(coordinator.parentInventory != null && first.parentInventory != null && second.parentInventory != null &&
-                    first.contentWindow != null && second.contentWindow != null && GeneralHelper.IsItemOwned(first) && GeneralHelper.IsItemOwned(second),
-                    "Could not place native QA coordinator and containers");
-                Require(ReferenceEquals(MachineStorageCoordinator.FindCoordinatorInReach(), coordinator), "QA coordinator is not in reach");
-                ItemMouseDoubleClickHandler.current.OpenContentAction(first, new Vector2(100, 100));
-                ItemMouseDoubleClickHandler.current.OpenContentAction(second, new Vector2(240, 150));
-                Require(first.contentWindow.IsVisible() && second.contentWindow.IsVisible(), "Native QA containers did not open");
-                first.contentWindow.rectTransform.anchoredPosition = new Vector2(40, -40);
-                second.contentWindow.rectTransform.anchoredPosition = new Vector2(280, -160);
-                first.contentWindow.FixBounds(); second.contentWindow.FixBounds();
-                firstPosition = first.contentWindow.rectTransform.anchoredPosition;
-                secondPosition = second.contentWindow.rectTransform.anchoredPosition;
-                firstTabs = first.GetContentTabsSelection(); secondTabs = second.GetContentTabsSelection();
-                sentinel = new PixelWindow(80, 80, true, "QA unrelated window");
-                sentinel.Show();
-                Require(sentinel.IsVisible(), "Native unrelated QA window did not open");
                 var options = Options();
-                options.Get(ModId + ":f13.enabled").SetBool(true, true);
                 options.Get(ModId + ":f14.enabled").SetBool(true, true);
                 options.Get(ModId + ":f14.side").SetIndex(1, true);
                 options.Get(ModId + ":f18.enabled").SetBool(true, true);
                 options.Get(ModId + ":f18.zoom").SetFloat(100, true);
                 options.Get(ModId + ":f18.frame").SetFloat(100, true);
                 options.Get(ModId + ":f18.tray").SetFloat(100, true);
+                options.Get(ModId + ":f18.hide_lens").SetBool(false, true);
                 Apply(options);
-                Action(options, "f13.groups");
-                Require(Groups()?.IsVisible == true, "F13 options action did not open its group window");
                 StoreUIManager.Instance.gameOptionUIManager.CloseUI();
-                Next(2, "Enabled desktop features and opened F13 through native options"); return false;
-            }
-            case 2:
-            {
-                CustomUIWindow groups = Groups();
-                Require(groups?.IsVisible == true, "F13 groups window disappeared");
-                groups.Get("name").SetString(groupName, true);
-                groups.Get("save").button.onClick.Invoke();
-                var preset = MachineStorageCoordinator.LoadPresets(coordinator).SingleOrDefault(p => p.name == groupName);
-                Require(preset != null && preset.itemIds.Contains(first.uniqueId) && preset.itemIds.Contains(second.uniqueId),
-                    "F13 did not save both actual container identities in the native coordinator");
-                string layouts = ModHelper.GetModData(ModId, "f13.layouts", null);
-                Require(layouts != null && layouts.Contains("\"positions\""), "F13 did not save layout positions");
-                Groups().Close();
-                var options = Options();
-                Action(options, "f13.close");
-                Require(!first.contentWindow.IsVisible() && !second.contentWindow.IsVisible(), "F13 close did not close the owned windows");
-                Require(sentinel.IsVisible() && EmporiumEntry.Instance.invWindow.IsVisible(), "F13 close affected an unrelated or fixed window");
-                StoreUIManager.Instance.gameOptionUIManager.CloseUI();
-                Next(3, "Saved a native coordinator group and closed only eligible windows"); return false;
-            }
-            case 3:
-            {
-                var options = Options();
-                Action(options, "f13.groups");
-                StoreUIManager.Instance.gameOptionUIManager.CloseUI();
-                CustomUIWindow groups = Groups();
-                Require(groups?.IsVisible == true, "F13 group manager did not reopen");
-                string restoreLabel = ModHelper.GetLocalized(ModId, "f13.restore");
-                var restore = groups.root.GetComponentsInChildren<Button>(true).Where(b => b.gameObject.activeInHierarchy &&
-                    b.GetComponentInChildren<TMP_Text>(true)?.text == restoreLabel).ToArray();
-                Require(restore.Length == 1, "Could not identify the saved group's native restore control");
-                restore[0].onClick.Invoke();
-                Require(first.contentWindow.IsVisible() && second.contentWindow.IsVisible(), "F13 did not reopen both grouped windows");
-                Require(Near(first.contentWindow.rectTransform.anchoredPosition, firstPosition) &&
-                    Near(second.contentWindow.rectTransform.anchoredPosition, secondPosition), "F13 did not restore the saved positions");
-                Require(first.GetContentTabsSelection() == firstTabs && second.GetContentTabsSelection() == secondTabs,
-                    "F13 did not restore native tabs");
-                Require(sentinel.IsVisible(), "F13 restore closed another window");
-                groups.Close();
-                WindowsHandler.CloseWindow(first.contentWindow); WindowsHandler.CloseWindow(second.contentWindow);
-                WindowsHandler.CloseWindow(sentinel);
                 inspectItem = PreBuiltItemHelper.CounterfeitCigarette();
                 Require(inspectItem != null && InspectionUIManager.Instance != null, "Native inspection fixture unavailable");
                 InspectionUIManager.Instance.OnInspectItem(inspectItem);
@@ -142,7 +68,7 @@ public sealed class DesktopScenario
                 baseMultiplier = (float)multiplier.GetValue(art.GetComponent<CounterMoveChild>());
                 frameAlpha = lens.GetComponent<Image>().color.a; trayAlpha = tray.GetComponent<Image>().color.a;
                 waitFrame = Time.frameCount + 3;
-                Next(4, "Restored the group by the real window control; opened native inspection"); return false;
+                Next(4, "Enabled desktop features and opened native inspection"); return false;
             }
             case 4:
             {
@@ -182,10 +108,31 @@ public sealed class DesktopScenario
             {
                 if (Time.frameCount < waitFrame) return false;
                 Require(Near(art.localScale.x, baseScale.x * 2), "F18 did not reapply after reopening inspection");
+                var options = Options(); options.Get(ModId + ":f18.hide_lens").SetBool(true, true); Apply(options);
+                StoreUIManager.Instance.gameOptionUIManager.CloseUI();
+                waitFrame = Time.frameCount + 3;
+                Next(60, "Enabled the F18 hide-lens option"); return false;
+            }
+            case 60:
+            {
+                if (Time.frameCount < waitFrame) return false;
+                Require(Near(lens.GetComponent<Image>().color.a, 0) && tray.parent.GetComponent<Mask>().enabled &&
+                    art.gameObject.activeInHierarchy, "F18 did not hide the lens while preserving the inspection image");
+                RoutingScenario.RunFeatureAction("f18.reset");
+                Require(!((ConfigEntry<bool>)ModConfig.Find(ModId).Get("f18.hide_lens")).Value,
+                    "F18 reset retained the hide-lens setting");
+                waitFrame = Time.frameCount + 3;
+                Next(61, "Reset the hidden lens through the feature action"); return false;
+            }
+            case 61:
+            {
+                if (Time.frameCount < waitFrame) return false;
+                Require(Near(art.localScale, baseScale) && Near(lens.GetComponent<Image>().color.a, frameAlpha) &&
+                    Near(tray.GetComponent<Image>().color.a, trayAlpha), "F18 reset did not restore the native view");
                 var options = Options(); options.Get(ModId + ":f18.enabled").SetBool(false, true); Apply(options);
                 StoreUIManager.Instance.gameOptionUIManager.CloseUI();
                 waitFrame = Time.frameCount + 3;
-                Next(7, "Disabled F18 while its native view was open"); return false;
+                Next(7, "Disabled F18 after resetting the native view"); return false;
             }
             case 7:
             {
@@ -265,7 +212,7 @@ public sealed class DesktopScenario
                 if (Time.frameCount < waitFrame) return false;
                 Require(!BargainUIManager.Instance.IsOpen && PlayerStore.Instance.playerCash == cashBeforeClose,
                     "F14 close did not close exactly the panel or changed cash");
-                result = "PASS F13 options/group/save/close/restore and unrelated window; F18 zoom/opacity/center mapping/close/reopen/disable; F14 left/right/auto and consumed close pointer without a cash change";
+                result = "PASS F18 zoom/opacity/center mapping/close/reopen/hide/reset/disable; F14 left/right/auto and consumed close pointer without a cash change";
                 return true;
             default: throw new InvalidOperationException("Unknown Desktop QA step " + step);
         }
@@ -288,11 +235,6 @@ public sealed class DesktopScenario
         return options;
     }
     private static void Apply(CustomUIWindow options) => options.Get("apply").button.onClick.Invoke();
-    private static void Action(CustomUIWindow options, string key)
-    {
-        RoutingScenario.RunFeatureAction(key);
-    }
-    private static CustomUIWindow Groups() => CustomUIManager.Instance.GetWindow(GroupsId);
     private Vector2 SourceAtMaskCenter()
     {
         var mask = (RectTransform)tray.parent;

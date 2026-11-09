@@ -1,6 +1,5 @@
 using System;
 using System.Globalization;
-using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
@@ -18,6 +17,10 @@ namespace ShopAssist
         private ZoomFollower bargainFollower;
         private GameObject bargainDragObject;
         private GameObject bargainCloseObject;
+        private BargainArtPart[] bargainArt;
+        private BargainArtPart bargainInner;
+        private RectTransform bargainPlate;
+        private bool bargainMirrored;
         private bool bargainWasOpen;
         private bool bargainDragging;
         private bool bargainPositionDirty;
@@ -36,6 +39,14 @@ namespace ShopAssist
         private Vector2 bargainAnchorStart;
         private Guid bargainRun;
         private int bargainSlot;
+
+        private sealed class BargainArtPart
+        {
+            internal RectTransform Rect;
+            internal Vector3 Position, Scale;
+            internal BargainArtPart(RectTransform rect)
+            { Rect = rect; Position = rect.localPosition; Scale = rect.localScale; }
+        }
 
         private void InitBargain(ShopSettings settings)
         {
@@ -117,6 +128,21 @@ namespace ShopAssist
             if (frame == null && bargain != null && bargain.uiObject != null)
                 frame = bargain.uiObject.GetComponent<BargainPanelFrame>();
             if (frame == null || frame.panel == null || frame.header == null) return false;
+            if (bargainArt == null)
+            {
+                string[] names = { "Plate", "Line", "Spine", "Scanlines", "Frame" };
+                var parts = new BargainArtPart[names.Length];
+                for (int i = 0; i < names.Length; i++)
+                {
+                    var part = frame.panel.Find(names[i]) as RectTransform;
+                    if (part == null || part.GetComponent<Image>() == null || part.parent != frame.panel) return false;
+                    parts[i] = new BargainArtPart(part);
+                }
+                if (frame.inner == null || frame.inner.parent != frame.panel) return false;
+                bargainArt = parts;
+                bargainInner = new BargainArtPart(frame.inner);
+                bargainPlate = parts[0].Rect;
+            }
             if (bargainDragObject == null)
             {
                 bargainDragObject = new GameObject("ShopAssist Bargain Drag", typeof(RectTransform), typeof(Image), typeof(DesktopBargainDrag));
@@ -135,30 +161,19 @@ namespace ShopAssist
             }
             if (bargainCloseObject == null)
             {
-                bargainCloseObject = new GameObject("ShopAssist Bargain Close", typeof(RectTransform), typeof(Image), typeof(DesktopBargainClose));
+                var native = NegociationUIManager.Instance?.uiObject?.GetComponent<NegotiationTabletFrame>()?.closeButton;
+                if (native == null || native.GetComponent<Image>() == null) return false;
+                bargainCloseObject = UnityEngine.Object.Instantiate(native.gameObject, frame.panel, false);
+                bargainCloseObject.name = "ShopAssist Bargain Close";
                 var rect = (RectTransform)bargainCloseObject.transform;
-                rect.SetParent(frame.panel, false);
-                rect.anchorMin = rect.anchorMax = new Vector2(1f, 1f);
-                rect.pivot = new Vector2(1f, 1f);
-                rect.anchoredPosition = new Vector2(-5f, -5f);
-                rect.sizeDelta = new Vector2(28f, 28f);
+                rect.anchorMin = rect.anchorMax = new Vector2(0f, 1f);
+                rect.pivot = new Vector2(0f, 1f);
+                rect.sizeDelta = new Vector2(32f, 32f);
                 var background = bargainCloseObject.GetComponent<Image>();
-                background.color = new Color(0f, 0f, 0f, 0.3f);
                 background.raycastTarget = true;
-                bargainCloseObject.GetComponent<DesktopBargainClose>().Click = () => bargainCloseFrame = Time.frameCount;
-                var labelObject = new GameObject("Close label", typeof(RectTransform), typeof(TextMeshProUGUI));
-                var labelRect = (RectTransform)labelObject.transform;
-                labelRect.SetParent(rect, false);
-                labelRect.anchorMin = Vector2.zero;
-                labelRect.anchorMax = Vector2.one;
-                labelRect.offsetMin = labelRect.offsetMax = Vector2.zero;
-                var label = labelObject.GetComponent<TextMeshProUGUI>();
-                label.font = frame.header.font;
-                label.text = "×";
-                label.fontSize = 22;
-                label.alignment = TextAlignmentOptions.Center;
-                label.color = frame.header.color;
-                label.raycastTarget = false;
+                var button = bargainCloseObject.GetComponent<Button>();
+                button.onClick = new Button.ButtonClickedEvent();
+                bargainCloseObject.AddComponent<DesktopBargainClose>().Click = () => bargainCloseFrame = Time.frameCount;
             }
             bargainCloseObject.transform.SetAsLastSibling();
             return true;
@@ -168,16 +183,51 @@ namespace ShopAssist
         {
             if (bargainRect == null || tabletRect == null || bargainFollower == null || tabletRect.localScale.x <= 0f) return;
             Vector2 offset;
-            if (!TryReadBargainOffset(mode, out offset))
+            bool customPosition = TryReadBargainOffset(mode, out offset);
+            if (!customPosition)
             {
                 float left = tabletRect.rect.xMin - bargainRect.rect.xMax - 4f;
                 float right = tabletRect.rect.xMax - bargainRect.rect.xMin + 4f;
                 bool useLeft = mode == 1 || (mode == 0 && PreferBargainLeft(left, right, item));
                 offset = new Vector2(useLeft ? left : right, 0f);
             }
+            SetBargainMirrored(offset.x < 0f);
             bargainRect.position = tabletRect.TransformPoint(new Vector3(offset.x, offset.y, 0f));
-            ClampBargainToScreen();
+            if (customPosition) ClampBargainToScreen(); else ClampBargainPairToScreen();
             bargainFollower.SetTarget(tabletRect, 1f, tabletRect.localScale.x);
+        }
+
+        private void SetBargainMirrored(bool mirrored)
+        {
+            if (bargainArt == null || bargainInner?.Rect == null || bargainPlate == null || bargainRect == null) return;
+            float center = bargainRect.rect.center.x;
+            foreach (BargainArtPart part in bargainArt)
+            {
+                if (part.Rect == null) return;
+                Vector3 position = part.Position;
+                Vector3 scale = part.Scale;
+                if (mirrored) { position.x = 2f * center - position.x; scale.x = -scale.x; }
+                part.Rect.localPosition = position;
+                part.Rect.localScale = scale;
+            }
+            Vector3 innerPosition = bargainInner.Position;
+            if (mirrored)
+            {
+                float innerCenter = innerPosition.x + bargainInner.Rect.rect.center.x * bargainInner.Scale.x;
+                innerPosition.x += 2f * (center - innerCenter);
+            }
+            bargainInner.Rect.localPosition = innerPosition;
+            bargainInner.Rect.localScale = bargainInner.Scale;
+            bargainMirrored = mirrored;
+            if (bargainCloseObject != null)
+            {
+                var corners = new Vector3[4];
+                bargainPlate.GetWorldCorners(corners);
+                float right = float.NegativeInfinity;
+                foreach (Vector3 corner in corners) right = Mathf.Max(right, bargainRect.InverseTransformPoint(corner).x);
+                ((RectTransform)bargainCloseObject.transform).anchoredPosition =
+                    new Vector2(right - bargainRect.rect.xMin - 40f, -8f);
+            }
         }
 
         private bool PreferBargainLeft(float left, float right, GameItem item)
@@ -231,6 +281,25 @@ namespace ShopAssist
                 bargainRect.position += to - from;
         }
 
+        private void ClampBargainPairToScreen()
+        {
+            if (Screen.width <= 0 || bargainRect.parent != tabletRect.parent || !(bargainRect.parent is RectTransform parent))
+            { ClampBargainToScreen(); return; }
+            Camera camera = CanvasCamera(bargainRect);
+            DesktopRect panel = ScreenBounds(bargainRect, camera), tablet = ScreenBounds(tabletRect, camera);
+            float left = Mathf.Min(panel.Left, tablet.Left), right = Mathf.Max(panel.Right, tablet.Right);
+            if (right - left > Screen.width) { ClampBargainToScreen(); return; }
+            float dx = left < 0f ? -left : right > Screen.width ? Screen.width - right : 0f;
+            if (Mathf.Approximately(dx, 0f)) return;
+            Vector2 center = RectTransformUtility.WorldToScreenPoint(camera, tabletRect.position);
+            if (RectTransformUtility.ScreenPointToWorldPointInRectangle(parent, center, camera, out Vector3 from) &&
+                RectTransformUtility.ScreenPointToWorldPointInRectangle(parent, center + new Vector2(dx, 0f), camera, out Vector3 to))
+            {
+                tabletRect.position += to - from;
+                bargainRect.position += to - from;
+            }
+        }
+
         private bool BeginBargainDrag(PointerEventData pointer)
         {
             if (!BargainAvailable() || bargain == null || !bargain.IsOpen || bargainRect == null ||
@@ -248,6 +317,7 @@ namespace ShopAssist
             if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(parent, pointer.position, pointer.pressEventCamera, out Vector2 current)) return;
             bargainRect.anchoredPosition = bargainAnchorStart + current - bargainPointerStart;
             ClampBargainToScreen();
+            if (tabletRect != null) SetBargainMirrored(tabletRect.InverseTransformPoint(bargainRect.position).x < 0f);
             if (bargainFollower != null && tabletRect != null && tabletRect.localScale.x > 0)
                 bargainFollower.SetTarget(tabletRect, 1f, tabletRect.localScale.x);
         }
@@ -295,6 +365,7 @@ namespace ShopAssist
 
         private void ResetBargain()
         {
+            if (bargainMirrored) SetBargainMirrored(false);
             if (bargainWasOpen && bargainRect != null && tabletRect != null && bargainFollower != null &&
                 bargain != null && bargain.IsOpen && tabletRect.localScale.x > 0f)
             {
@@ -305,6 +376,10 @@ namespace ShopAssist
             if (bargainCloseObject != null) UnityEngine.Object.Destroy(bargainCloseObject);
             bargainDragObject = null;
             bargainCloseObject = null;
+            bargainArt = null;
+            bargainInner = null;
+            bargainPlate = null;
+            bargainMirrored = false;
             bargain = null;
             bargainRect = null;
             tabletRect = null;

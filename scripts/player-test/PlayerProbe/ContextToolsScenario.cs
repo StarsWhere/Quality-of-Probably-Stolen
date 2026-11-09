@@ -32,7 +32,7 @@ public sealed class ContextToolsScenario
                 TradeScenario.SetOptions(true, "f05.enabled", "f10.enabled", "f24.enabled", "f30.enabled", "f31.enabled", "f32.enabled");
                 TradeScenario.SetOptions(false, "f15.enabled", "f17.enabled", "f21.enabled");
                 first = NewItem("hydroponic", "QA Context A"); second = NewItem("hydroponic", "QA Context B");
-                bag = NewItem("backpack_medium", "QA Receipt Box");
+                bag = NewItem("backpack_medium", "QA Context Container");
                 Put(first); Put(second); Put(bag);
                 ItemMouseDoubleClickHandler.current.OpenContentAction(first, new Vector2(190, 300));
                 ItemMouseDoubleClickHandler.current.OpenContentAction(second, new Vector2(Screen.width - 190, 300));
@@ -40,8 +40,16 @@ public sealed class ContextToolsScenario
             case 2:
             {
                 MachineryButton firstButton = ToolButton(first.contentWindow, "f32.open");
-                if (firstButton == null || ToolButton(second.contentWindow, "f31.open") == null ||
-                    ToolButton(EmporiumEntry.Instance.invWindow, "f30.open") == null) return false;
+                if (firstButton == null || ToolButton(EmporiumEntry.Instance.invWindow, "f30.open") == null) return false;
+                Need(ToolButton(second.contentWindow, "f31.open") == null, "Empty machine unexpectedly has a maintenance button");
+                GameItem battery = NewItem("energy_credit", "QA Maintenance Battery");
+                Put(battery);
+                Put(MachineHelper.GetBatterySlot(second), battery);
+                Advance(20); return false;
+            }
+            case 20:
+            {
+                if (ToolButton(second.contentWindow, "f31.open") == null) return false;
                 first.contentWindow.ToFront();
                 after = Time.realtimeSinceStartup + .3f; Advance(19); return false;
             }
@@ -72,6 +80,17 @@ public sealed class ContextToolsScenario
             case 4:
             {
                 MachineryButton stock = ToolButton(EmporiumEntry.Instance.invWindow, "f30.open");
+                Need(stock != null, "Direct warehouse overview button disappeared");
+                bool reachable = HitMachine(stock);
+                Debug.Log("[PLAYER-QA] Warehouse button before closing machine windows reachable=" + reachable);
+                first.contentWindow.Hide(); second.contentWindow.Hide();
+                Need(!first.contentWindow.IsVisible() && !second.contentWindow.IsVisible(), "Machine windows did not close");
+                after = Time.realtimeSinceStartup + .3f; Advance(21); return false;
+            }
+            case 21:
+            {
+                if (Time.realtimeSinceStartup < after) return false;
+                MachineryButton stock = ToolButton(EmporiumEntry.Instance.invWindow, "f30.open");
                 Need(stock != null && HitMachine(stock), "Direct warehouse overview button is not reachable");
                 stock.Select();
                 Need(CustomUIManager.Instance.GetWindow(Mod + ".f30")?.IsAlive == true, "Warehouse overview did not open");
@@ -89,16 +108,10 @@ public sealed class ContextToolsScenario
                 var stock = ToolButton(EmporiumEntry.Instance.invWindow, "f30.open");
                 if (stock == null || stock.isDisabled) return false;
                 var menu = OpenItemMenu(bag);
-                var node = QaItemUi.Descendant(menu.handler.transform, "ShopAssist_f24_choose");
-                Need(node != null && node.gameObject.activeInHierarchy, "Owned container has no receipt destination context action");
-                RichTextElement action = node.GetComponent<TreeNodeRender>()?.element as RichTextElement;
-                Need(action != null, "Receipt context row is not a native selectable");
-                typeof(ItemContextHandler).GetMethod("TriggerButton", BindingFlags.Instance | BindingFlags.NonPublic)
-                    .Invoke(ItemContextHandler.current, new object[] { action });
-                string raw = ModHelper.GetModData(Mod, "f24.target", "");
-                Need(bag.uniqueId > 0 && raw.Contains("\"owner\":" + bag.uniqueId),
-                    "Receipt context action did not bind the selected container");
-                result = "PASS direct warehouse and machine actions, native raycasts, modal blocking, and container receipt context action";
+                Need(menu?.IsVisible() == true && menu.handler.gameObject.activeInHierarchy, "Item context menu did not open");
+                Need(!menu.handler.GetComponentsInChildren<Transform>(true).Any(node => node.name == "ShopAssist_f24_choose"),
+                    "Removed receipt destination context action is still present");
+                result = "PASS direct warehouse and machine actions, native raycasts, modal blocking, and absence of the old receipt context action";
                 return true;
             }
             default: throw new InvalidOperationException("Unknown context tools step");
@@ -112,8 +125,11 @@ public sealed class ContextToolsScenario
     }
     private static void Put(GameItem item)
     {
-        GameGridInventory inventory = EmporiumEntry.Instance.invElement;
-        SlotMarker marker = inventory.TryFindOneValidInventorySlot(item);
+        Put(EmporiumEntry.Instance.invElement, item);
+    }
+    private static void Put(GameInventory inventory, GameItem item)
+    {
+        SlotMarker marker = inventory?.TryFindOneValidInventorySlot(item);
         Need(marker != null && marker.TryAcceptOnce(item.unitCount) == item.unitCount && item.parentInventory == inventory,
             "Could not place context fixture");
     }
@@ -131,9 +147,28 @@ public sealed class ContextToolsScenario
         var hits = new List<RaycastResult>(); EventSystem.current.RaycastAll(new PointerEventData(EventSystem.current) { position = point }, hits);
         var target = RenderHandler.RaycastElement<SelectableElement>(point);
         if (!ReferenceEquals(target, button)) Debug.Log("[PLAYER-QA] tools hit=" + (target?.handler?.name ?? "null") + " at " + point +
-            " button=" + PathOf(button.handler.transform) + " hits=" + string.Join(" | ", hits.Take(6).Select(hit =>
-                PathOf(hit.gameObject.transform) + ":" + hit.gameObject.GetComponent<TreeNodeRender>()?.FindParentElement()?.GetType().Name)));
+            " button=" + PathOf(button.handler.transform) + " bounds=" + ScreenBounds(plate.rectTransform) +
+            " hits=" + string.Join(" | ", hits.Take(6).Select(hit => PathOf(hit.gameObject.transform) + ":" +
+                hit.gameObject.GetComponent<TreeNodeRender>()?.FindParentElement()?.GetType().Name + WindowAt(hit.gameObject.transform))));
         return ReferenceEquals(target, button);
+    }
+    private static string WindowAt(Transform node)
+    {
+        var windows = WindowsHandler.current?.visibleWindows;
+        if (node == null || windows == null) return "";
+        return string.Join("", windows.Where(window => window?.handler != null && node.IsChildOf(window.handler.transform))
+            .Select(window => " [window=" + string.Join(",", window.parentItems?.Select(item => item?.GetDisplayName(true) ?? "null") ??
+                Enumerable.Empty<string>()) + " bounds=" + ScreenBounds(window.rectTransform) + "]"));
+    }
+    private static string ScreenBounds(RectTransform rect)
+    {
+        if (rect == null) return "null";
+        var canvas = rect.GetComponentInParent<Canvas>();
+        Camera camera = canvas == null || canvas.renderMode == RenderMode.ScreenSpaceOverlay ? null : canvas.worldCamera;
+        var corners = new Vector3[4]; rect.GetWorldCorners(corners);
+        Vector2 a = RectTransformUtility.WorldToScreenPoint(camera, corners[0]);
+        Vector2 b = RectTransformUtility.WorldToScreenPoint(camera, corners[2]);
+        return "(" + a.x.ToString("F1") + "," + a.y.ToString("F1") + ")-(" + b.x.ToString("F1") + "," + b.y.ToString("F1") + ")";
     }
     private static string PathOf(Transform node)
     {

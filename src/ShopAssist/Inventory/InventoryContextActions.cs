@@ -111,6 +111,21 @@ namespace ShopAssist
                 return ActionAvailability.Blocked(ActionUnavailableReason.Unknown, "availability.unknown");
             }
         }
+        private static bool HasGridAction(GameGridInventory grid)
+        {
+            if (grid == null) return false;
+            foreach (Entry entry in entries.ToArray())
+            {
+                if (!entry.Grid) continue;
+                try
+                {
+                    if (ShopSettings.ContextFeatureAvailability(entry.Id).Allowed && entry.GridApplies(grid)) return true;
+                }
+                catch (Exception error)
+                { Debug.LogError("[ShopAssist] Context action " + entry.Id + " availability failed: " + error); }
+            }
+            return false;
+        }
         internal static void RunGrid(string id, GameGridInventory grid)
         {
             Entry entry = entries.Find(candidate => candidate.Grid && candidate.Id == id);
@@ -331,7 +346,7 @@ namespace ShopAssist
                     RenderHandler.RaycastElement<GameItem>(Input.mousePosition) == null)
                 {
                     var grid = RenderHandler.RaycastElement<GameGridInventory>(Input.mousePosition);
-                    if (InventoryOrganizer.CanOpenSortGrid(grid)) OpenGridMenu?.Invoke(__instance, new object[] { (Vector2)Input.mousePosition });
+                    if (HasGridAction(grid)) OpenGridMenu?.Invoke(__instance, new object[] { (Vector2)Input.mousePosition });
                 }
                 return true;
             }

@@ -1,7 +1,6 @@
 f10.context,模组柜
 f11.context,找货
 f11.demand_context,顾客需求
-f13.context,收起窗口
 f30.context,机器状态
 f31.context,备用电池
 f32.context,自动补种

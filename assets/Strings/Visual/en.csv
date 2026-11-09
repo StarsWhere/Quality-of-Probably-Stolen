@@ -13,6 +13,4 @@ f28.expense,Expense
 f36.priority_edit,Click items to set priority
 f36.take,Take selected items
 f36.leave,Leave here
-f27.order_summary,{0} items needed · {1} days remaining
-f27.ready,Reserved
 visual.attention_count,Needs attention {0}

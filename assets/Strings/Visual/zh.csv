@@ -13,6 +13,4 @@ f28.expense,支出
 f36.priority_edit,点击物品标为优先带走
 f36.take,带走选中物品
 f36.leave,留在原处
-f27.order_summary,需要 {0} 件 · 剩余 {1} 天
-f27.ready,已留好
 visual.attention_count,待处理 {0}

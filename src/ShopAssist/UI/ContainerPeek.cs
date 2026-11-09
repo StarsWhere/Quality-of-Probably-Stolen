@@ -28,7 +28,7 @@ namespace ShopAssist
         private float refreshAt;
         private RectTransform panel;
         private RectTransform layer;
-        private Vector2 panelSize;
+        private Vector2 panelSize, availableSize;
         private bool started;
 
         private sealed class PeekItem
@@ -85,7 +85,8 @@ namespace ShopAssist
             {
                 refreshAt = Time.unscaledTime + 0.25f;
                 var snapshot = Capture(current);
-                if (panel == null || !Same(snapshot, items))
+                if (panel == null || !Same(snapshot, items) ||
+                    !VisibleBounds(out Rect visible) || visible.size != availableSize)
                 {
                     items.Clear(); items.AddRange(snapshot);
                     Build(current);
@@ -174,6 +175,10 @@ namespace ShopAssist
             if (layer == null) return;
             int columns = inventory.inventoryShape.width, rows = inventory.inventoryShape.height;
             float cell = Mathf.Min(22f, 300f / columns, 300f / rows);
+            if (!VisibleBounds(out Rect bounds)) { layer = null; return; }
+            availableSize = bounds.size;
+            cell = Mathf.Min(cell, (bounds.width - 16f) / columns, (bounds.height - 16f) / rows);
+            if (cell <= 0f) return;
             panelSize = new Vector2(columns * cell + 16f, rows * cell + 16f);
             panel = NewRect("ShopAssist Container Preview", layer, Vector2.zero, panelSize);
             panel.anchorMin = panel.anchorMax = layer.pivot;
@@ -231,14 +236,47 @@ namespace ShopAssist
         {
             Canvas canvas = layer.GetComponentInParent<Canvas>();
             Camera camera = canvas == null || canvas.renderMode == RenderMode.ScreenSpaceOverlay ? null : canvas.worldCamera;
-            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(layer, Input.mousePosition, camera, out Vector2 cursor)) return;
-            Rect bounds = layer.rect;
+            if (!VisibleBounds(out Rect bounds) ||
+                !RectTransformUtility.ScreenPointToLocalPointInRectangle(layer, Input.mousePosition, camera, out Vector2 cursor)) return;
+            float leftEdge = cursor.x - 18f, rightEdge = cursor.x + 18f;
+            var tooltip = OverlayHandler.current?.GetTooltipWindow();
+            RectTransform tooltipRect = tooltip?.IsVisible() == true ? tooltip.handler?.rectTransform : null;
+            if (tooltipRect != null)
+            {
+                Canvas tooltipCanvas = tooltipRect.GetComponentInParent<Canvas>();
+                Camera tooltipCamera = tooltipCanvas == null || tooltipCanvas.renderMode == RenderMode.ScreenSpaceOverlay ? null : tooltipCanvas.worldCamera;
+                Vector2 first = RectTransformUtility.WorldToScreenPoint(tooltipCamera, tooltipRect.TransformPoint(Vector3.zero));
+                Vector2 last = RectTransformUtility.WorldToScreenPoint(tooltipCamera,
+                    tooltipRect.TransformPoint(new Vector3(tooltip.widthPixels, -tooltip.heightPixels, 0f)));
+                if (RectTransformUtility.ScreenPointToLocalPointInRectangle(layer, first, camera, out Vector2 low) &&
+                    RectTransformUtility.ScreenPointToLocalPointInRectangle(layer, last, camera, out Vector2 high))
+                {
+                    leftEdge = Mathf.Min(leftEdge, Mathf.Min(low.x, high.x) - 8f);
+                    rightEdge = Mathf.Max(rightEdge, Mathf.Max(low.x, high.x) + 20f);
+                }
+            }
             int mode = Mathf.Clamp(side.Value, 0, 2);
-            bool left = mode == 1 || (mode == 0 && cursor.x + panelSize.x + 18f > bounds.xMax);
-            float x = left ? cursor.x - panelSize.x - 18f : cursor.x + 18f;
+            bool leftFits = leftEdge - panelSize.x >= bounds.xMin;
+            bool rightFits = rightEdge + panelSize.x <= bounds.xMax;
+            bool left = mode == 1 ? leftFits || !rightFits : mode == 2 ? !rightFits && leftFits :
+                !rightFits && (leftFits || leftEdge - bounds.xMin > bounds.xMax - rightEdge);
+            float x = left ? leftEdge - panelSize.x : rightEdge;
             x = Mathf.Clamp(x, bounds.xMin, Mathf.Max(bounds.xMin, bounds.xMax - panelSize.x));
             float y = Mathf.Clamp(cursor.y, Mathf.Min(bounds.yMax, bounds.yMin + panelSize.y), bounds.yMax);
             panel.anchoredPosition = new Vector2(x, y);
+        }
+
+        private bool VisibleBounds(out Rect bounds)
+        {
+            bounds = default;
+            if (layer == null || Screen.width <= 16 || Screen.height <= 16) return false;
+            Canvas canvas = layer.GetComponentInParent<Canvas>();
+            Camera camera = canvas == null || canvas.renderMode == RenderMode.ScreenSpaceOverlay ? null : canvas.worldCamera;
+            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(layer, new Vector2(8f, 8f), camera, out Vector2 first) ||
+                !RectTransformUtility.ScreenPointToLocalPointInRectangle(layer, new Vector2(Screen.width - 8f, Screen.height - 8f), camera, out Vector2 last)) return false;
+            bounds = Rect.MinMaxRect(Mathf.Min(first.x, last.x), Mathf.Min(first.y, last.y),
+                Mathf.Max(first.x, last.x), Mathf.Max(first.y, last.y));
+            return bounds.width > 16f && bounds.height > 16f;
         }
 
         private void DestroyPanel()
