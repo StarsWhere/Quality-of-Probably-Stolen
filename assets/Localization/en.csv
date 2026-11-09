@@ -1,5 +1,5 @@
-f15.enabled,Show the two-week calendar on the shutter
-f15.tip,When the shutter is down, show dates and public events for this week and next week directly on it. Hover a date for event information, or select it to show that day's details on the door. The display moves away when the shutter opens.
+f15.enabled,Show an eight-day calendar on the shutter
+f15.tip,When the shutter is down, show yesterday, today and the next six days with public events directly on it. The day before day one shows only the weekday. Hover a date for event information, or select it to show that day's details on the door. The display moves away when the shutter opens.
 settings.find,Find features and settings
 settings.playback_key,Playback shortcut: {0}
 settings.key_unbound,Not bound
@@ -44,23 +44,10 @@ availability.unsupported,Unsupported in this version
 availability.conflict,Conflicts with another feature
 availability.unknown,Unavailable right now
 availability.store,Enter the shop first
-availability.labeler,Use a labeler first
-availability.label_sample,Select a labeler sample first
-availability.label_equipped,Put down the equipped tool first
-availability.label_busy,Wait for the current labeling batch
-availability.label_target,This item cannot use the current sample label
-availability.item_reserved,This item is reserved for a request
 availability.item_movable,This item cannot be moved right now
-availability.water_inspect,Review the previous water operation in Attention first
-availability.water_reserved,This vessel is reserved for a request
-availability.water_test,Test the water quality first
-availability.water_unavailable,This vessel cannot safely pour water right now
-availability.water_full,This vessel is full
-availability.water_location,Open the vessel's accessible container first
 availability.module_locked,Unlock the machine and its module bay first
 availability.module_unavailable,The machine's module bay is not currently accessible
 availability.machine,Open an owned machine in the shop first
-availability.coordinator,Make a storage coordinator available in the shop
 availability.liquid,Open a machine with selectable liquids first
 availability.appraisal,Open an item in the appraisal service first
 availability.demand,No public demand is available

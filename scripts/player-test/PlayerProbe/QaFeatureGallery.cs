@@ -45,7 +45,7 @@ internal sealed class QaFeatureGallery
         if (!screenRequested)
         {
             if (StoreUIManager.Instance?.gameOptionUIManager == null) return false;
-            TradeScenario.SetOptions(false, "f11.enabled", "f13.enabled", "f15.enabled", "f17.enabled", "f21.enabled");
+            TradeScenario.SetOptions(false, "f11.enabled", "f15.enabled", "f17.enabled", "f21.enabled");
             EmporiumOption.Instance.fullscreenMode = 2;
             EmporiumOption.Instance.resolution = 0;
             EmporiumOption.Instance.ApplySetting();
@@ -65,6 +65,13 @@ internal sealed class QaFeatureGallery
     internal bool CaptureReady() => Time.frameCount >= shotFrame && screenshot != null && File.Exists(screenshot) && new FileInfo(screenshot).Length > 0;
     internal static void Need(bool ok, string detail) { if (!ok) throw new InvalidOperationException(detail); }
     internal static CustomUIWindow Window(string name) => CustomUIManager.Instance.GetWindow(Mod + "." + name);
+    internal static bool NoticeVisible()
+    {
+        var mod = ModLoader.Mods.First(value => value.Manifest?.ID == Mod).Instance;
+        Type type = mod.GetType().Assembly.GetType("ShopAssist.ShopNotice", true);
+        var panel = type.GetField("panel", Flags)?.GetValue(null) as GameObject;
+        return panel != null && panel.activeInHierarchy;
+    }
     internal static bool CanRun(string key)
     {
         var mod = ModLoader.Mods.First(value => value.Manifest?.ID == Mod).Instance;
@@ -108,4 +115,101 @@ internal sealed class QaFeatureGallery
         catch (TargetInvocationException error) { throw error.InnerException ?? error; }
     }
     internal static bool Visible(Transform node) => node != null && node.gameObject.activeInHierarchy;
+}
+
+public abstract class ChineseCaptureScenario
+{
+    private readonly QaFeatureGallery gallery = new QaFeatureGallery();
+    private bool ready;
+
+    protected abstract bool Run(out string result);
+
+    public bool Tick(out string result)
+    {
+        result = null;
+        if (!ready && !(ready = gallery.ChineseMainMenu())) return false;
+        if (!Run(out result)) return false;
+        gallery.RestoreSavedLocale();
+        return true;
+    }
+}
+
+public sealed class ChineseArrangeCaptureScenario : ChineseCaptureScenario
+{
+    private readonly ArrangeInputScenario scenario = new ArrangeInputScenario();
+    protected override bool Run(out string result) => scenario.Tick(out result);
+}
+
+public sealed class ChineseInspectionCaptureScenario : ChineseCaptureScenario
+{
+    private readonly DesktopScenario scenario = new DesktopScenario();
+    private QaSyntheticInput input;
+
+    protected override bool Run(out string result)
+    {
+        if (input == null) input = new QaSyntheticInput();
+        input.Mouse = new Vector3(Screen.width * .7f, Screen.height * .55f);
+        if (!scenario.Tick(out result)) return false;
+        input.Dispose();
+        return true;
+    }
+}
+
+public sealed class ChineseScannerCaptureScenario : ChineseCaptureScenario
+{
+    private readonly ScannerPointerScenario scenario = new ScannerPointerScenario();
+    protected override bool Run(out string result) => scenario.Tick(out result);
+}
+
+public sealed class ChinesePlaybackCaptureScenario : ChineseCaptureScenario
+{
+    private readonly FastPlaybackInputScenario scenario = new FastPlaybackInputScenario();
+    protected override bool Run(out string result) => scenario.Tick(out result);
+}
+
+public sealed class ChinesePeekCaptureScenario : ChineseCaptureScenario
+{
+    private readonly DailyPeekInputScenario scenario = new DailyPeekInputScenario();
+    protected override bool Run(out string result) => scenario.Tick(out result);
+}
+
+public sealed class ChinesePeekSmallCaptureScenario : ChineseCaptureScenario
+{
+    private readonly DailyPeekInputScenario scenario = new DailyPeekInputScenario();
+    private bool changed;
+    private int originalMode, originalResolution, originalDivisor, frame;
+    private float readyAt;
+
+    protected override bool Run(out string result)
+    {
+        result = null;
+        if (!changed)
+        {
+            if (!scenario.ReadyForFixtures) return scenario.Tick(out result);
+            if (EmporiumOption.Instance == null) return false;
+            int target = EmporiumOption.GetResolutionValueFromDimensions(1280, 720);
+            QaFeatureGallery.Need(target >= 0, "Native 1280x720 option unavailable");
+            originalMode = EmporiumOption.Instance.fullscreenMode;
+            originalResolution = EmporiumOption.Instance.resolution;
+            originalDivisor = EmporiumOption.Instance.borderlessDivisor;
+            EmporiumOption.Instance.fullscreenMode = 2;
+            EmporiumOption.Instance.resolution = target;
+            EmporiumOption.Instance.ApplySetting();
+            frame = Time.frameCount + 12; readyAt = Time.realtimeSinceStartup + 2.5f; changed = true;
+            return false;
+        }
+        if (Time.frameCount < frame || Time.realtimeSinceStartup < readyAt || Screen.width != 1280 || Screen.height != 720) return false;
+        if (!scenario.Tick(out result)) return false;
+        EmporiumOption.Instance.fullscreenMode = originalMode;
+        EmporiumOption.Instance.resolution = originalResolution;
+        EmporiumOption.Instance.borderlessDivisor = originalDivisor;
+        EmporiumOption.Instance.ApplySetting();
+        return true;
+    }
+}
+
+public sealed class ChineseStockCaptureScenario : ChineseCaptureScenario
+{
+    private readonly StockSearchScenario scenario = new StockSearchScenario();
+    protected override bool Run(out string result) => scenario.Tick(out result);
 }

@@ -30,12 +30,22 @@ public static class PlayerProbe
             if (!Guid.TryParseExact(runId, "N", out _)) throw new InvalidOperationException("Invalid QA run identity");
             File.WriteAllText(Path.Combine(identity[2], "guard-proof.txt"), Application.companyName + "\n" + Application.productName + "\n" + Application.persistentDataPath + "\n" + es3Default + "\n" + es3Index + "\n" + runId);
             string errorLog = Path.Combine(identity[2], "qa-unity-errors-" + runId + ".txt");
+            string shutdownLog = Path.Combine(identity[2], "qa-unity-shutdown-errors-" + runId + ".txt");
             File.WriteAllText(errorLog, "");
+            File.WriteAllText(shutdownLog, "");
+            bool quitting = false;
+            Application.quitting += () => quitting = true;
             Application.SetStackTraceLogType(LogType.Error, StackTraceLogType.Full);
             Application.logMessageReceived += (message, stack, type) =>
             {
                 if (type == LogType.Error || type == LogType.Exception || type == LogType.Assert)
-                    File.AppendAllText(errorLog, "---- " + type + " ----\n" + message + "\n" + stack + "\n");
+                {
+                    // This native loader diagnostic is expected only after Unity starts quitting.
+                    bool nativeShutdown = quitting && type == LogType.Error && message ==
+                        "[ModLoader] The mod loader object was destroyed; blocks and tripwire hits can no longer stop mods this session.";
+                    File.AppendAllText(nativeShutdown ? shutdownLog : errorLog,
+                        "---- " + type + " ----\n" + message + "\n" + stack + "\n");
+                }
             };
             ConfigureStartupLocale(identity[2]);
         }
@@ -196,13 +206,22 @@ public sealed class PlayerQaDriver : MonoBehaviour
                 var toggle = window.Get(ModId + ":f15.enabled");
                 var apply = window.Get("apply");
                 Require(toggle != null && toggle.toggle != null && apply != null && apply.button != null, "Options controls missing");
+                var removedFeatures = new[] { 6, 13, 22, 26, 27, 29 };
                 for (int id = 1; id <= 42; id++)
                 {
                     string key = "f" + id.ToString("D2") + ".enabled";
-                    if (id == 6)
+                    if (removedFeatures.Contains(id))
                     {
-                        Require(config.Get(key) == null && window.Get(ModId + ":" + key) == null,
-                            "Removed F06 switch is still registered");
+                        string prefix = "f" + id.ToString("D2") + ".";
+                        Require(!config.Entries.Any(option => option.Key.StartsWith(prefix, StringComparison.Ordinal)),
+                            "Removed feature is still registered: " + prefix);
+                        continue;
+                    }
+                    if (id == 25)
+                    {
+                        Require(config.Get(key) == null && config.Get("f25.return_mode") is ConfigEntry<int> &&
+                            window.Get(ModId + ":f25.return_mode")?.dropdown != null,
+                            "Automatic cargo mode selector is missing");
                         continue;
                     }
                     Require(config.Get(key) is ConfigEntry<bool> && window.Get(ModId + ":" + key)?.toggle != null,
