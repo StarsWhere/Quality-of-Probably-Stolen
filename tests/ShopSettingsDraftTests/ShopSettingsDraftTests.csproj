@@ -6,6 +6,8 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../src/ShopAssist/Entry/ShopSettings.DraftState.cs" />
+    <Compile Include="../../src/ShopAssist/Entry/ShopSettings.Drafts.cs" />
+    <Compile Include="DraftFakeUI.cs" />
     <Compile Include="ShopSettingsDraftTests.cs" />
   </ItemGroup>
 </Project>

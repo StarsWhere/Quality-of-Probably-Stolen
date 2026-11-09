@@ -12,23 +12,25 @@ public sealed class SettingsPresentationScenario
     private const string Mod = "starswhere.shopassist";
     private static readonly string[] Sections = { "shopassist", "shopassist.batch", "shopassist.advanced" };
     private static readonly int[][] Tiers = {
-        new[] { 2, 3, 4, 5, 13, 14, 15, 16, 17, 18, 19, 20, 21, 23, 28, 38, 39, 40, 41, 42 },
-        new[] { 1, 7, 8, 9, 22, 24, 25, 26, 27, 29, 31, 32, 33, 35, 37 },
+        new[] { 2, 3, 4, 5, 14, 15, 16, 17, 18, 19, 20, 21, 23, 28, 38, 39, 40, 41, 42 },
+        new[] { 1, 7, 8, 9, 24, 25, 31, 32, 33, 35, 37 },
         new[] { 10, 11, 12, 30, 34, 36 }
     };
     private static readonly int[][] Categories = {
-        new[] { 2, 5, 7, 8, 9, 20, 22, 25, 26, 36, 38, 39, 40, 41 },
-        new[] { 1, 3, 4, 11, 16, 23, 24, 27, 28, 29, 34 },
+        new[] { 2, 5, 7, 8, 9, 20, 25, 36, 38, 39, 40, 41 },
+        new[] { 1, 3, 4, 11, 16, 23, 24, 28, 34 },
         new[] { 10, 12, 19, 30, 31, 32, 33, 35, 37 },
-        new[] { 13, 14, 15, 17, 18, 21 },
+        new[] { 14, 15, 17, 18, 21 },
         new[] { 42 }
     };
-    private static readonly string[] ChoiceKeys = { "f09.mode", "f14.side", "f20.side", "f24.destination", "f39.corner", "f39.style", "f42.mode", "f42.speed" };
+    private static readonly string[] ChoiceKeys = { "f09.mode", "f14.side", "f20.side", "f24.destination_v2", "f25.return_mode", "f36.valuation", "f39.corner", "f39.style", "f42.mode", "f42.speed" };
     private static readonly string[][] ChoiceLabels = {
         new[] { "f09.always", "f09.conflicts", "f09.simulate" },
         new[] { "f14.auto", "f14.left", "f14.right" },
         new[] { "f20.auto", "f20.left", "f20.right" },
-        new[] { "f24.front", "f24.box", "f24.trash" },
+        new[] { "f24.front", "f24.trash", "f24.showcase", "f24.stock" },
+        new[] { "f25.mode_off", "f25.mode_all", "f25.mode_new" },
+        new[] { "f36.estimated", "f36.base" },
         new[] { "f39.top_left", "f39.top_right", "f39.bottom_left", "f39.bottom_right" },
         new[] { "f39.filled", "f39.outline" },
         new[] { "f42.hold", "f42.toggle" },
@@ -85,13 +87,15 @@ public sealed class SettingsPresentationScenario
             Need(SystemInfo.graphicsDeviceType != UnityEngine.Rendering.GraphicsDeviceType.Null, "Run settings presentation with the rendered Player");
             Need(config.Entries.Select(entry => entry.Key).Distinct().Count() == config.Entries.Count,
                 "Duplicate saved settings");
-            for (int feature = 1; feature <= 42; feature++)
+            foreach (int feature in Tiers.SelectMany(tier => tier))
             {
-                if (feature == 6) continue;
-                Need(config.Get("f" + feature.ToString("00") + ".enabled")?.ValueType == typeof(bool),
-                    "Missing feature switch: " + feature);
+                string key = feature == 25 ? "f25.return_mode" : "f" + feature.ToString("00") + ".enabled";
+                Need(config.Get(key)?.ValueType == (feature == 25 ? typeof(int) : typeof(bool)), "Missing primary setting: " + key);
             }
-            Need(!config.Entries.Any(entry => entry.Key == "f06.enabled"), "Removed F06 switch is still registered");
+            foreach (int feature in new[] { 6, 13, 22, 26, 27, 29 })
+                Need(!config.Entries.Any(entry => entry.Key.StartsWith("f" + feature.ToString("00") + ".", StringComparison.Ordinal)),
+                    "Removed feature is still registered: " + feature);
+            Need(config.Get("f25.enabled") == null, "Obsolete F25 switch is still registered");
             Need(config.Get("f19.pinned")?.ValueType == typeof(string), "Missing pinned liquid setting");
             original = Snapshot();
             originalLanguage = LocHelper.GetCurrentLocaleCode();
@@ -222,20 +226,20 @@ public sealed class SettingsPresentationScenario
         options.CloseUI(); AssertValues(original, "native cancel"); AssertFile(saved, "native cancel");
 
         window = OpenMods();
-        Control(window, "f24.destination", false).SetIndex(((int)original["f24.destination"] + 1) % ChoiceLabels[3].Length, true);
+        Control(window, "f24.destination_v2", false).SetIndex(((int)original["f24.destination_v2"] + 1) % ChoiceLabels[3].Length, true);
         Control(window, "f15.enabled", false).SetBool(!(bool)original["f15.enabled"], true);
         Control(window, "f05.auto_insert", false).SetBool(!(bool)original["f05.auto_insert"], true);
         Control(window, "f04.unseen", false).SetBool(!(bool)original["f04.unseen"], true);
         AssertValues(original, "Mods draft"); AssertFile(saved, "Mods draft");
         CloseWithConfirmation(false, () =>
         {
-            Need(Control(window, "f24.destination", false).GetIndex() == ((int)original["f24.destination"] + 1) % ChoiceLabels[3].Length &&
+        Need(Control(window, "f24.destination_v2", false).GetIndex() == ((int)original["f24.destination_v2"] + 1) % ChoiceLabels[3].Length &&
                 Control(window, "f15.enabled", false).GetBool() != (bool)original["f15.enabled"] &&
                 Control(window, "f05.auto_insert", false).GetBool() != (bool)original["f05.auto_insert"] &&
                 Control(window, "f04.unseen", false).GetBool() != (bool)original["f04.unseen"], "Continuing Mods settings lost the draft");
         });
         window = OpenMods();
-        Need(Control(window, "f24.destination", false).GetIndex() == (int)original["f24.destination"] &&
+        Need(Control(window, "f24.destination_v2", false).GetIndex() == (int)original["f24.destination_v2"] &&
             Control(window, "f15.enabled", false).GetBool() == (bool)original["f15.enabled"] &&
             Control(window, "f05.auto_insert", false).GetBool() == (bool)original["f05.auto_insert"] &&
             Control(window, "f04.unseen", false).GetBool() == (bool)original["f04.unseen"], "Closing Mods settings did not cancel the draft");
@@ -410,7 +414,8 @@ public sealed class SettingsPresentationScenario
             {
                 string[] members = group.ToArray();
                 string master = group.Key + ".enabled";
-                string first = members.Contains(master) ? master : group.Key == "f05" ? "f05.auto_insert" : "f04.unseen";
+                string first = members.Contains(master) ? master : group.Key == "f05" ? "f05.auto_insert" :
+                    group.Key == "f25" ? "f25.return_mode" : "f04.unseen";
                 Need(members[0] == first, "Group has no leading primary: " + group.Key);
                 if (first == "f05.auto_insert" || first == "f04.unseen")
                 {
@@ -629,7 +634,8 @@ public sealed class SettingsPresentationScenario
             "Expected a text dropdown with " + count + " choices: " + key);
         return value;
     }
-    private static bool Primary(string key) => key.EndsWith(".enabled", StringComparison.Ordinal) || key == "f04.unseen" || key == "f05.auto_insert" || key == "f01.wholesale";
+    private static bool Primary(string key) => key.EndsWith(".enabled", StringComparison.Ordinal) || key == "f04.unseen" ||
+        key == "f05.auto_insert" || key == "f01.wholesale" || key == "f25.return_mode";
     private static int Tier(string key)
     {
         if (key == "f05.auto_insert" || key == "f01.wholesale") return 1;
@@ -647,7 +653,7 @@ public sealed class SettingsPresentationScenario
         int id = int.Parse(key.Substring(1, 2));
         int group = id == 8 || id == 9 ? 7 : id == 12 ? 10 : id;
         return Category(key) * 1000000 + group * 1000 + id * 10 +
-            (key == "f" + id.ToString("00") + ".enabled" ? 0 : Primary(key) ? 1 : 2);
+            (key == (id == 25 ? "f25.return_mode" : "f" + id.ToString("00") + ".enabled") ? 0 : Primary(key) ? 1 : 2);
     }
     private static void Apply(CustomUIWindow view) { var button = view.Get("apply")?.button; Need(button != null, "Missing Apply button"); button.onClick.Invoke(); }
     private static void Reset(CustomUIWindow view) { var button = view.Get("reset")?.button; Need(button != null, "Missing Reset button"); button.onClick.Invoke(); }

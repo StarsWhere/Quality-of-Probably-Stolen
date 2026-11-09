@@ -88,9 +88,16 @@ public sealed class SettingsFinderScenario
                 "Cross-tier hidden-risk option lost its parent or planning placement");
             w.Get("tier").SetIndex(0, true);
             var input = w.Get("query").input;
-            w.Get("query").SetString("本周和下周", true);
-            Need(ReferenceEquals(Find(), w) && ReferenceEquals(Find().Get("query").input, input) && Visible("f15.enabled"),
-                "Live description search replaced its input or did not find the shutter calendar");
+            string description = entry.Tooltip?.Invoke();
+            Need(!string.IsNullOrEmpty(description), "Shutter calendar description is missing");
+            string descriptionQuery = new[] { "未来六天", "next six days" }.FirstOrDefault(query =>
+                description.IndexOf(query, StringComparison.CurrentCultureIgnoreCase) >= 0);
+            Need(descriptionQuery != null && entry.Label().IndexOf(descriptionQuery, StringComparison.CurrentCultureIgnoreCase) < 0,
+                "Shutter calendar description has no distinct test phrase: " + description);
+            w.Get("query").SetString(descriptionQuery, true);
+            Need(ReferenceEquals(Find(), w) && ReferenceEquals(Find().Get("query").input, input),
+                "Live description search replaced its input");
+            Need(Visible("f15.enabled"), "Description search did not find the shutter calendar: " + descriptionQuery);
             Find().Get("query").SetString("f16.volume", true);
             string volume = Find().Get("jump_f16.volume")?.GetText();
             Need(volume != null && volume.Contains(ModHelper.GetLocalized(Mod, "settings.kind.value")) &&

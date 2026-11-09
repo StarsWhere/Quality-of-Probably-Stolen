@@ -18,18 +18,20 @@ public sealed class FeatureTierDefaultsScenario
         Need(Time.realtimeSinceStartup < deadline, "Feature default configuration did not register");
         ModConfig config = ModConfig.Find(Mod);
         if (config?.Get("f42.enabled") == null || config.Get("f05.auto_insert") == null) return false;
+        var ids = new[] { 1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 12, 14, 15, 16, 17, 18, 19, 20, 21, 23, 24, 25, 28, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42 };
         var enabled = new HashSet<int> { 2, 3, 4, 5, 38, 39, 40, 41 };
-        for (int id = 1; id <= 42; id++)
+        foreach (int id in ids)
         {
-            if (id == 6) continue;
             string key = "f" + id.ToString("00") + ".enabled";
+            if (id == 25) key = "f25.return_mode";
             ConfigEntry entry = config.Get(key);
-            Need(entry?.ValueType == typeof(bool) && Equals(entry.BoxedDefault, enabled.Contains(id)),
+            Need(entry != null && (id == 25 ? entry.ValueType == typeof(int) && Equals(entry.BoxedDefault, 0) :
+                entry.ValueType == typeof(bool) && Equals(entry.BoxedDefault, enabled.Contains(id))),
                 "Wrong registered feature default: " + key + " = " + entry?.BoxedDefault);
         }
         foreach (string key in new[] { "f01.wholesale", "f05.auto_insert", "f04.unseen" })
             Need(Equals(config.Get(key)?.BoxedDefault, false), "Cross-tier option default is enabled: " + key);
-        foreach (string key in new[] { "f04.stolen", "f04.contraband", "f29.price" })
+        foreach (string key in new[] { "f04.stolen", "f04.contraband" })
             Need(Equals(config.Get(key)?.BoxedDefault, true), "Existing safety default changed: " + key);
 
         // Use a separate in-memory native config, leaving the current profile untouched.
@@ -44,7 +46,7 @@ public sealed class FeatureTierDefaultsScenario
         Need(savedEnabled.Value && !savedDisabled.Value && Equals(savedEnabled.BoxedDefault, false) && Equals(savedDisabled.BoxedDefault, true),
             "Native config registration failed to preserve explicit saved values over the new defaults");
         Need(!config.Entries.Any(entry => entry.Key == "f06.enabled"), "Removed F06 switch is still registered");
-        result = "PASS 41 registered feature defaults, cross-tier safety and native saved-value precedence";
+        result = "PASS current registered feature defaults, cross-tier safety and native saved-value precedence";
         return true;
     }
 }

@@ -56,7 +56,8 @@ namespace ShopAssist
             if (window?.IsAlive != true) return values;
             if (native)
             {
-                var keys = PendingKeys?.GetValue(GameOptionUIManager.Instance) as Dictionary<string, KeyCode>;
+                var manager = GameOptionUIManager.Instance;
+                var keys = manager != null ? PendingKeys?.GetValue(manager) as Dictionary<string, KeyCode> : null;
                 foreach (var entry in GameOptionRegistry.Sections.SelectMany(section => section.entries))
                 {
                     CustomUIElement control = window.Get(entry.id);
