@@ -51,7 +51,6 @@ namespace ShopAssist
         private bool CanOpen() => started && sortEnabled.Value && ShopInventory.InStore && Locations().Count != 0;
         private bool CanSort(GameGridInventory grid) => started && sortEnabled.Value && grid != null &&
             Locations().Any(location => ReferenceEquals(location.Inventory, grid));
-        internal static bool CanOpenSortGrid(GameGridInventory grid) => current?.CanSort(grid) == true;
         private static string SortLabel(GameGridInventory grid)
         {
             return ShopSettings.Text(HasSelection(grid) ? "f05.selected" : "f05.all");
@@ -90,7 +89,6 @@ namespace ShopAssist
         internal static bool AutomaticEnabled => current?.started == true && current.sortEnabled.Value && current.autoInsert.Value && ShopInventory.InStore;
         internal static bool AutomaticGrid(GameGridInventory grid) => AutomaticEnabled && grid != null &&
             Locations().Any(location => ReferenceEquals(location.Inventory, grid) && ShopInventory.IsMainStockBranch(location));
-        internal static HashSet<GameItem> AutomaticFixed(GameGridInventory grid) => RequestBook.ReservedItems(Locations());
         internal static bool AutomaticRotate => current?.rotate.Value == true;
         internal static void Remember(IInventoryArrangeUndo operation)
         {
@@ -113,8 +111,7 @@ namespace ShopAssist
             {
                 if (ShopSelection.ContextChanged(grid)) { ShopNotice.Show(ShopSettings.Text("f05.changed")); return; }
                 var selected = ShopSelection.Current().Where(i => i.parentInventory == grid).ToHashSet();
-                var keep = RequestBook.ReservedItems(locations);
-                var plan = InventorySortPlan.Create(grid, selected, keep, true, rotate.Value);
+                var plan = InventorySortPlan.Create(grid, selected, true, rotate.Value);
                 if (plan == null) { ShopNotice.Show(ShopSettings.Text("f05.no_plan")); return; }
                 int moved = plan.Placements.Count(p => !InventorySortPlan.SameShape(p.Before, p.After));
                 var transaction = InventoryArrangeTransaction.Capture(new[] { grid }, operationGuard: plan.SafeForRefresh);

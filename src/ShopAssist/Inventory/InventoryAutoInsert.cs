@@ -101,8 +101,10 @@ namespace ShopAssist
             AccessTools.Method(typeof(RenderHandler), nameof(RenderHandler.LoadFromAtlas), new[] { typeof(string), typeof(string) })
         };
         private static readonly Guid PreviousGameModule = new Guid("83045710-adce-4e78-8ff1-b43a9399ec0d");
-        private static readonly Guid CurrentGameModule = new Guid("efd8b252-19aa-489b-96d3-e172c92c0b75");
-        internal static bool VerifiedGameBuild(Guid module) => module == PreviousGameModule || module == CurrentGameModule;
+        private static readonly Guid Revision12GameModule = new Guid("efd8b252-19aa-489b-96d3-e172c92c0b75");
+        private static readonly Guid Revision13GameModule = new Guid("911508a6-e0eb-4cc0-91e8-e14b16ea28d7");
+        internal static bool VerifiedGameBuild(Guid module) =>
+            module == PreviousGameModule || module == Revision12GameModule || module == Revision13GameModule;
         internal static bool KnownCallbacks(Delegate callbacks, Func<Delegate, bool> allowed)
         {
             if (callbacks == null) return true;
@@ -114,8 +116,8 @@ namespace ShopAssist
         internal static bool Method(Delegate callback, string type, string name) =>
             callback.Method.DeclaringType?.FullName == type && callback.Method.Name == name;
         private static bool OutingCallback(Delegate callback, int ordinal) =>
-            Method(callback, "EmporiumEntry+<>c", callback.Method.Module.ModuleVersionId == CurrentGameModule
-                ? "<SetupAfterhourInv>b__284_" + ordinal : "<SetupAfterhourInv>b__280_" + ordinal);
+            Method(callback, "EmporiumEntry+<>c", callback.Method.Module.ModuleVersionId == PreviousGameModule
+                ? "<SetupAfterhourInv>b__280_" + ordinal : "<SetupAfterhourInv>b__284_" + ordinal);
         private static bool SafeAddRule(GameGridInventory grid) => KnownCallbacks(grid.mayInventoryAddItemFunc, callback =>
             (ReferenceEquals(grid, EmporiumEntry.Instance?.invElement) && ReferenceEquals(callback.Target, EmporiumEntry.Instance) &&
                 Method(callback, "EmporiumEntry", "<Start>b__184_12")) ||
@@ -225,12 +227,15 @@ namespace ShopAssist
         {
             if (inventory == null) return false;
             bool safe;
-            if (inventory is GameGridInventory grid && source != null && SettledCounterEvidence.Allows(source))
-                safe = ReferenceEquals(grid, EmporiumEntry.Instance.backInvinvElement) && grid.GetType() == typeof(GameGridInventory) &&
+            if (inventory is GameGridInventory grid && source != null &&
+                ReferenceEquals(grid, EmporiumEntry.Instance?.backInvinvElement) &&
+                (SettledCounterEvidence.Allows(source) || TripCargo.IsReturnedCargoInCounter(source)))
+                safe = grid.GetType() == typeof(GameGridInventory) &&
                     grid.mayInventoryRemoveItemFunc == null && grid.minSlotAmountItemFunc == null && grid.maxSlotRemoveItemFunc == null &&
                     grid.isItemStateValidFunc == null && grid.parentItemShapeModifierForItemFunc == null &&
                     grid.parentItemStateModifierForItemFunc == null && grid.parentItemSpriteModifierForItemFunc == null &&
                     grid.onSlotRemoveItemFunc == null && grid.onSlotRemoveItemLateFunc == null && grid.onSlotChangeAmountItemFunc == null &&
+                    grid.onSlotRemoveItemEndFunc != null && grid.onSlotRemoveItemEndFunc.GetInvocationList().Length == 1 &&
                     KnownCallbacks(grid.onSlotRemoveItemEndFunc, callback => Method(callback, "EmporiumEntry+<>c", "<Start>b__184_18"));
             else if (inventory is GameGridInventory ordinary) safe = SafeGrid(ordinary);
             else if (inventory.GetType() == typeof(GameSlotInventory))
@@ -262,11 +267,10 @@ namespace ShopAssist
                 items == null || items.Count == 0 || items.Count > 256) return null;
             if (!(items[0]?.parentInventory is GameGridInventory source) || source == target ||
                 !InventoryOrganizer.AutomaticGrid(source) || !SafeGrid(source)) return null;
-            var fixedItems = InventoryOrganizer.AutomaticFixed(source);
             var unique = new HashSet<GameItem>();
             foreach (GameItem item in items)
                 if (!unique.Add(item) || item.parentInventory != source || !SafeItem(item) || !ShopInventory.Movable(item) ||
-                    item.MaxNumRemove() < item.unitCount || fixedItems.Contains(item) || (group && item.unitCount != 1)) return null;
+                    item.MaxNumRemove() < item.unitCount || (group && item.unitCount != 1)) return null;
             if (group)
             {
                 // The native group path may stack into a resident or an earlier member.
@@ -319,9 +323,8 @@ namespace ShopAssist
         private static Dictionary<GameItem, InventoryArrangeTransaction.Destination> Plan(Request request, GameItem[] incoming, Stopwatch clock)
         {
             GameGridInventory target = request.Target;
-            var fixedItems = InventoryOrganizer.AutomaticFixed(target);
             var residents = target.childItems.Where(item => SafeItem(item) && ShopInventory.Movable(item) &&
-                item.MaxNumRemove() >= item.unitCount && !fixedItems.Contains(item)).ToList();
+                item.MaxNumRemove() >= item.unitCount).ToList();
             var moving = residents.Concat(incoming).Distinct().ToList();
             if (moving.Count > 256 || target.inventoryShape.width > 64 || target.inventoryShape.height > 64) return null;
             var result = new Dictionary<GameItem, InventoryArrangeTransaction.Destination>();

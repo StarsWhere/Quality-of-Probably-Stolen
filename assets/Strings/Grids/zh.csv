@@ -16,6 +16,5 @@ grid.stat_delta,{0} {1}% → {2}%（{3:+#;-#;0}%）
 grid.too_many,已选 {0} 件，最多可预演 5 件。
 grid.mark_stuck,卡
 grid.mark_fixed,固
-grid.mark_reserved,预
 grid.mark_locked,锁
 grid.selected,已选 {0}

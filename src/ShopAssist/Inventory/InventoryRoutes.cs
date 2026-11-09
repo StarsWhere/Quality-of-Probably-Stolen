@@ -1,13 +1,29 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
+using TMPro;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using UnityEngine.UI;
 
 namespace ShopAssist
 {
     internal sealed class InventoryRoutes : IDisposable
     {
+        private static InventoryRoutes current;
+        private static readonly FieldInfo NativeTitle = typeof(PixelWindow).GetField("titleText", BindingFlags.Instance | BindingFlags.NonPublic);
+        private sealed class HeaderEntry
+        {
+            internal GameObject Root;
+            internal ShopInventory.Location Location;
+            internal Button Button;
+            internal RectTransform Title;
+            internal Vector2 TitlePosition, TitleSize;
+        }
+        private readonly Dictionary<PixelWindow, HeaderEntry> headers = new Dictionary<PixelWindow, HeaderEntry>();
+        private float nextHeaderRefresh;
+        private string automaticError;
         private const string RulesWindow = ModEntry.Id + ".routes", PlanWindow = ModEntry.Id + ".route_preview";
         private readonly ShopSettings settings;
         private readonly CustomerIndicators clues;
@@ -19,28 +35,11 @@ namespace ShopAssist
         private CustomUIWindow rulesWindow, planWindow;
         private ShopInventory.Location editing;
         private RoutingRule draft;
-        private sealed class DraftState
-        {
-            internal RoutingRule Rule;
-            internal string Priority;
-            internal string Sample;
-            internal int Category;
-            internal bool Excluded;
-        }
-        private sealed class SampleStamp
-        {
-            internal GameItem Item;
-            internal GameInventory Source;
-            internal string Name;
-        }
-        private readonly Dictionary<GameInventory, DraftState> drafts = new Dictionary<GameInventory, DraftState>();
-        private List<GameItem> samples = new List<GameItem>(), selection;
-        private string priority = "0", run;
-        private int slot, categoryIndex, sampleIndex, planRevision;
-        private bool excluded, started, executing, samplesDirty;
-        private float nextSamplesRefresh;
-        private List<SampleStamp> sampleStamps = new List<SampleStamp>();
-        private List<ShopInventory.Location> locationStamps = new List<ShopInventory.Location>();
+        private readonly Dictionary<GameInventory, RoutingRule> drafts = new Dictionary<GameInventory, RoutingRule>();
+        private List<GameItem> selection;
+        private string run;
+        private int slot, planRevision;
+        private bool started, executing, planRulesEnabled;
         private RoutingPlan plan;
 
         internal InventoryRoutes(ShopSettings settings, CustomerIndicators clues, Action<string> log)
@@ -62,10 +61,14 @@ namespace ShopAssist
         public void Start()
         {
             if (started) return;
+            if (current != null && !ReferenceEquals(current, this)) throw new InvalidOperationException("Inventory routing is already active.");
             InventoryContextActions.RegisterGrid("f07.open", source => ShopSettings.Text("f07.open"),
                 source => started && rulesEnabled.Value && Locations().Any(location => location.Inventory == source), OpenRules);
             try
             {
+                InventoryContextActions.RegisterGrid("f08.grid", grid => ShopSettings.Text(
+                    ShopSelection.Current().Any(item => ReferenceEquals(item.parentInventory, grid)) ? "f08.selected" : "f08.all"),
+                    CanRouteGrid, grid => OpenPlan(grid));
                 InventoryContextActions.RegisterItem("f08.context", _ => ShopSettings.Text("f08.open"),
                     item => started && routingEnabled.Value && ShopInventory.InStore && ShopSelection.Current().Contains(item),
                     _ => OpenPlan());
@@ -73,9 +76,12 @@ namespace ShopAssist
                     settings.FeatureAvailability("f40.enabled").Allowed || settings.FeatureAvailability("f41.enabled").Allowed));
                 WholeStackTransfer.Acquire();
             }
-            catch { OccupiedSelectionGesture.Unregister(); InventoryContextActions.Unregister("f08.context"); InventoryContextActions.Unregister("f07.open"); throw; }
+            catch { OccupiedSelectionGesture.Unregister(); InventoryContextActions.Unregister("f08.context"); InventoryContextActions.Unregister("f08.grid"); InventoryContextActions.Unregister("f07.open"); throw; }
             started = true;
+            current = this;
+            AreaLabels.RoutingHeaderInset = HeaderInset;
             settings.Changed += SettingsChanged;
+            VisibleInventoryViews.Changed += RefreshHeadersSoon;
             ModHook.OnGameLoadedInit += Reset;
             ModHook.OnLeavingStoreEarly += Reset;
             SceneManager.activeSceneChanged += SceneChanged;
@@ -87,16 +93,14 @@ namespace ShopAssist
         public void Tick()
         {
             if (!started) return;
+            if (Time.unscaledTime >= nextHeaderRefresh)
+            {
+                nextHeaderRefresh = Time.unscaledTime + 0.5f;
+                RefreshHeaders();
+            }
             if ((rulesWindow != null || planWindow != null) && !SameRun()) { CloseRules(); ClosePlan(); }
             if (rulesWindow != null && !rulesWindow.IsAlive) CloseRules();
-            if (planWindow != null && (!planWindow.IsAlive || !routingEnabled.Value || planRevision != store.Revision)) ClosePlan();
-            if (rulesWindow != null && Time.unscaledTime >= nextSamplesRefresh && !VisualChoices.IsOpen &&
-                !StoreUIManager.IsAnyTyping() && !UIDragHandler.isDraggingAnyUI &&
-                !Input.GetMouseButton(0) && !Input.GetMouseButton(1) && !Input.GetMouseButton(2))
-            {
-                nextSamplesRefresh = Time.unscaledTime + 0.5f;
-                if (RefreshSamples() || samplesDirty) { samplesDirty = false; RenderRules(); }
-            }
+            if (planWindow != null && (!planWindow.IsAlive || !routingEnabled.Value || planRevision != store.Revision || planRulesEnabled != rulesEnabled.Value)) ClosePlan();
             if (!routingEnabled.Value || key() == KeyCode.None || !Input.GetKeyDown(key()) || !ShopInput.Ready()) return;
             if (planWindow != null) ClosePlan(); else OpenPlan();
         }
@@ -104,12 +108,138 @@ namespace ShopAssist
         private void SettingsChanged()
         {
             if (!rulesEnabled.Value) { CloseRules(); InventoryContextActions.Hide("f07.open"); }
-            if (!routingEnabled.Value) { ClosePlan(); InventoryContextActions.Hide("f08.context"); }
+            if (!routingEnabled.Value) { ClosePlan(); InventoryContextActions.Hide("f08.context"); InventoryContextActions.Hide("f08.grid"); }
+            if (plan != null && planRulesEnabled != rulesEnabled.Value) ClosePlan();
+            RefreshHeadersSoon();
         }
         private void SceneChanged(Scene before, Scene after) => Reset();
 
         private static List<ShopInventory.Location> Locations() => ShopInventory.OwnedLocations(false)
             .Where(location => location.Inventory != null && ShopInventory.IsMainStockBranch(location)).ToList();
+
+        private bool CanRouteGrid(GameGridInventory grid) => started && routingEnabled.Value && ShopInventory.InStore &&
+            grid != null && ShopInventory.OwnedLocations(true).Any(location => ReferenceEquals(location.Inventory, grid) &&
+                !location.IsMachine && (ShopInventory.IsMainStockBranch(location) || location.Owner == null && location.Role == "counter"));
+
+        internal static bool AutoTakeAllowed(GameInventory source) => AutomaticAllowed(source, null, false);
+        internal static bool AutoReceiveAllowed(GameInventory target, GameItem item, bool allowStockFallback = false) =>
+            AutomaticAllowed(target, item, true, allowStockFallback);
+
+        private static bool AutomaticAllowed(GameInventory inventory, GameItem item, bool receiving, bool allowStockFallback = false)
+        {
+            InventoryRoutes owner = current;
+            if (owner == null || !owner.started || inventory == null) return false;
+            if (!owner.rulesEnabled.Value) return true;
+            try
+            {
+                if (!owner.store.Load()) return false;
+                var allLocations = receiving ? ShopInventory.OwnedLocations(false) : ShopInventory.MachineLocations();
+                var locations = allLocations.Where(location => ReferenceEquals(location.Inventory, inventory)).ToList();
+                if (locations.Count != 1) return false;
+                ShopInventory.Location location = locations[0];
+                if (!ShopInventory.IsMainStockBranch(location)) return true;
+                string locationKey = location.Key();
+                if (locationKey != null && allLocations.Count(other => other.Key() == locationKey) != 1) return false;
+                RoutingRule rule = owner.store.Get(location);
+                if (rule == null) return true;
+                if (!receiving) return rule.ship;
+                if (!(item is GameItemElement element)) return false;
+                bool stockFallback = allowStockFallback && locationKey == "root:stock" &&
+                    ReferenceEquals(inventory, EmporiumEntry.Instance?.invElement);
+                return RoutingRules.AllowsReceiving(rule, CustomerIndicators.PublicTypes(element), stockFallback);
+            }
+            catch (Exception error)
+            {
+                string message = error.ToString();
+                if (owner.automaticError != message) owner.log("Storage permission could not be checked: " + message);
+                owner.automaticError = message;
+                return false;
+            }
+        }
+
+        internal static float HeaderInset(PixelWindow window) => current != null && window != null &&
+            current.headers.TryGetValue(window, out HeaderEntry entry) && entry.Root != null && entry.Root.activeSelf ? 24f : 0f;
+
+        private void RefreshHeadersSoon() => nextHeaderRefresh = 0f;
+
+        private void RefreshHeaders()
+        {
+            var seen = new HashSet<PixelWindow>();
+            if (rulesEnabled.Value && ShopInventory.InStore && WindowsHandler.current?.visibleWindows != null && CustomUIManager.Instance != null)
+            {
+                var locations = Locations();
+                foreach (PixelWindow window in WindowsHandler.current.visibleWindows)
+                {
+                    if (!VisibleInventoryViews.Visible(window) || (!window.canMove && !window.forceRaycast) || window.widthPixels < 48) continue;
+                    ShopInventory.Location location = locations.FirstOrDefault(candidate => candidate.Inventory is GameGridInventory grid && grid.handler != null &&
+                        grid.handler.gameObject.activeInHierarchy && ReferenceEquals(grid.handler.FindParentWindow(), window));
+                    if (location == null) continue;
+                    seen.Add(window);
+                    if (!headers.TryGetValue(window, out HeaderEntry entry) || entry.Root == null)
+                    {
+                        GameObject prefab = CustomUIManager.Instance.GetPrefab(CustomUIManager.ElementKind.Button, true);
+                        if (prefab == null) continue;
+                        GameObject root = UnityEngine.Object.Instantiate(prefab, window.handler.transform, false);
+                        root.name = "ShopAssist_RoutingHeader";
+                        var rect = root.transform as RectTransform;
+                        var button = root.GetComponentInChildren<Button>(true);
+                        var text = root.GetComponentInChildren<TMP_Text>(true);
+                        if (rect == null || button == null || text == null)
+                        { UnityEngine.Object.Destroy(root); continue; }
+                        LayoutElement layout = root.GetComponent<LayoutElement>();
+                        if (layout != null) layout.ignoreLayout = true;
+                        rect.anchorMin = rect.anchorMax = new Vector2(0f, 1f);
+                        rect.pivot = new Vector2(0f, 1f);
+                        rect.anchoredPosition = new Vector2(2f, -1f);
+                        rect.sizeDelta = new Vector2(20f, 16f);
+                        text.text = "↔"; text.richText = false; text.raycastTarget = false;
+                        text.enableAutoSizing = true; text.fontSizeMin = 8f; text.fontSizeMax = 14f;
+                        entry = new HeaderEntry { Root = root, Button = button };
+                        if (window.hasTitle && NativeTitle?.GetValue(window) is TreeNodeRender title && title.rectTransform != null)
+                        {
+                            entry.Title = title.rectTransform;
+                            entry.TitlePosition = entry.Title.anchoredPosition;
+                            entry.TitleSize = entry.Title.sizeDelta;
+                            entry.Title.anchoredPosition += new Vector2(24f * (1f - entry.Title.pivot.x), 0f);
+                            entry.Title.sizeDelta -= new Vector2(24f, 0f);
+                        }
+                        HeaderEntry captured = entry;
+                        PixelWindow capturedWindow = window;
+                        button.onClick = new Button.ButtonClickedEvent();
+                        button.onClick.AddListener(() =>
+                        {
+                            if (started && rulesEnabled.Value && VisibleInventoryViews.Visible(capturedWindow) &&
+                                !UIDragHandler.isDraggingAnyUI && !StoreUIManager.IsAnyTyping() && captured.Location?.Inventory is GameGridInventory grid)
+                                InventoryContextActions.RunGrid("f07.open", grid);
+                        });
+                        headers[window] = entry;
+                        root.SetActive(true);
+                        rect.SetAsLastSibling();
+                        AreaLabels.Invalidate();
+                    }
+                    entry.Location = location;
+                    entry.Button.interactable = !UIDragHandler.isDraggingAnyUI && !StoreUIManager.IsAnyTyping();
+                }
+            }
+            foreach (PixelWindow window in headers.Keys.ToArray())
+                if (!seen.Contains(window))
+                {
+                    HeaderEntry entry = headers[window];
+                    DestroyHeader(entry);
+                    headers.Remove(window);
+                    AreaLabels.Invalidate();
+                }
+        }
+
+        private static void DestroyHeader(HeaderEntry entry)
+        {
+            if (entry.Title != null)
+            {
+                entry.Title.anchoredPosition = entry.TitlePosition;
+                entry.Title.sizeDelta = entry.TitleSize;
+            }
+            if (entry.Root != null) { entry.Root.SetActive(false); UnityEngine.Object.Destroy(entry.Root); }
+        }
 
         private void OpenRules(GameGridInventory preferred)
         {
@@ -129,62 +259,17 @@ namespace ShopAssist
             if (!store.Load()) { ShopNotice.Show(ShopSettings.Text("f07.unreadable")); return; }
             if (locations.Count == 0) { ShopNotice.Show(ShopSettings.Text("f07.no_area")); return; }
             editing = requested ?? locations[0];
-            RefreshSamples();
             LoadDraft();
             RenderRules();
         }
 
-        private string CurrentSample() => sampleIndex >= 0 && sampleIndex < samples.Count ? samples[sampleIndex].identifier : null;
-
-        private bool RefreshSamples()
-        {
-            string previous = CurrentSample();
-            var currentLocations = Locations();
-            bool locationsChanged = currentLocations.Count != locationStamps.Count || currentLocations.Where((location, i) =>
-                !ReferenceEquals(location.Inventory, locationStamps[i].Inventory) || !ReferenceEquals(location.Owner, locationStamps[i].Owner) ||
-                location.Name != locationStamps[i].Name || location.Role != locationStamps[i].Role || location.Page != locationStamps[i].Page ||
-                !location.Path.SequenceEqual(locationStamps[i].Path)).Any();
-            locationStamps = currentLocations;
-            var visibleLocations = ShopInventory.OwnedLocations(true).Where(ShopInventory.IsMainStockBranch).ToList();
-            var visibleInventories = new HashSet<GameInventory>(visibleLocations.Select(location => location.Inventory));
-            var sampleItems = ShopSelection.Current().Where(item => item != null && visibleInventories.Contains(item.parentInventory)).ToList();
-            foreach (ShopInventory.Location location in visibleLocations)
-            {
-                foreach (GameItem item in location.Inventory.childItems)
-                    if (item is GameItemElement element && VisibleInventoryViews.Visible(element) && ShopInventory.Owned(item))
-                        sampleItems.Add(item);
-            }
-            var current = sampleItems.Where(item => item != null && !string.IsNullOrEmpty(item.identifier))
-                .GroupBy(item => item.identifier, StringComparer.Ordinal).Select(group => group.First()).ToList();
-            var stamps = current.Select(item => new SampleStamp { Item = item, Source = item.parentInventory, Name = item.GetDisplayName(true) }).ToList();
-            bool changed = stamps.Count != sampleStamps.Count || stamps.Where((stamp, i) =>
-                !ReferenceEquals(stamp.Item, sampleStamps[i].Item) || !ReferenceEquals(stamp.Source, sampleStamps[i].Source) ||
-                stamp.Name != sampleStamps[i].Name).Any();
-            samples = current; sampleStamps = stamps;
-            if (changed || locationsChanged) samplesDirty = true;
-            int selected = previous == null ? -1 : samples.FindIndex(item => item.identifier == previous);
-            sampleIndex = Math.Max(0, selected);
-            return changed || locationsChanged;
-        }
-
-        private void LoadDraft()
-        {
-            draft = store.Get(editing) ?? new RoutingRule();
-            priority = draft.priority.ToString();
-            categoryIndex = sampleIndex = 0;
-            excluded = false;
-        }
+        private void LoadDraft() => draft = store.Get(editing) ?? new RoutingRule();
 
         private void SwitchDraft(ShopInventory.Location location)
         {
-            if (editing?.Inventory != null && draft != null)
-                drafts[editing.Inventory] = new DraftState { Rule = draft, Priority = priority, Category = categoryIndex, Sample = CurrentSample(), Excluded = excluded };
+            if (editing?.Inventory != null && draft != null) drafts[editing.Inventory] = draft;
             editing = location;
-            if (drafts.TryGetValue(location.Inventory, out DraftState state))
-            {
-                draft = state.Rule; priority = state.Priority; categoryIndex = state.Category; excluded = state.Excluded;
-                sampleIndex = Math.Max(0, samples.FindIndex(item => item.identifier == state.Sample));
-            }
+            if (drafts.TryGetValue(location.Inventory, out RoutingRule saved)) draft = saved;
             else LoadDraft();
         }
 
@@ -195,9 +280,6 @@ namespace ShopAssist
             int chosen = locations.FindIndex(location => ReferenceEquals(location.Inventory, editing.Inventory));
             bool available = chosen >= 0;
             if (available) editing = locations[chosen];
-            var book = store.Snapshot();
-            var ordered = book?.rules ?? new List<RoutingRule>();
-            int orderIndex = ordered.FindIndex(rule => rule.location == editing.Key());
             Vector2? position = rulesWindow != null && rulesWindow.IsAlive ? ((RectTransform)rulesWindow.root.transform).anchoredPosition : (Vector2?)null;
             var b = CustomUIManager.Window(RulesWindow, ShopSettings.Text("f07.open"), CustomUIManager.LAYER_META)
                 .SetSize(660, 520).SetDraggable(true).SetCloseOnEscape(true);
@@ -214,108 +296,34 @@ namespace ShopAssist
             if (!available) b.AddLabel(ShopSettings.Text("f07.area_unavailable"));
             b.BeginRow().AddToggle(ShopSettings.Text("f07.receive"), draft.receive, value => draft.receive = value, "receive");
             b.Last.SetInteractable(editing.Ordinary && !editing.IsMachine);
-            b.AddToggle(ShopSettings.Text("f07.exclusive"), draft.exclusive, value => draft.exclusive = value, "exclusive").End();
-            b.BeginRow().AddInput(ShopSettings.Text("f07.priority"), priority, value => priority = value, "priority", value => priority = value);
-            b.AddToggle(ShopSettings.Text("f07.exclude"), excluded, value => excluded = value, "exclude").End();
-            string[] categoryNames = TypeHelper.ALL_TYPES_LIST.Select(TypeHelper.GetTypeDisplayName).ToArray();
-            b.BeginRow().AddDropdown(categoryNames, categoryIndex, index => categoryIndex = index, "category");
-            b.AddButton(ShopSettings.Text("f07.add_category"), () =>
-            {
-                if (categoryIndex < 0 || categoryIndex >= TypeHelper.ALL_TYPES_LIST.Count) return;
-                Add(excluded ? draft.excludedCategories : draft.categories, TypeHelper.ALL_TYPES_LIST[categoryIndex]);
-                RenderRules();
-            }, "add_category").End();
-            if (samples.Count != 0)
-            {
-                b.BeginRow();
-                VisualChoices.Slot(b, ShopSettings.Text("f07.add_item"), samples[Math.Max(0, Math.Min(sampleIndex, samples.Count - 1))], null,
-                    () =>
-                    {
-                        RoutingRule choosingDraft = draft;
-                        bool choosingExcluded = excluded;
-                        VisualChoices.ChooseItem(ShopSettings.Text("f07.add_item"), () => { RefreshSamples(); return samples; }, null, item =>
-                        {
-                            if (!SameRun() || !rulesEnabled.Value || !ReferenceEquals(draft, choosingDraft)) return;
-                            int index = samples.IndexOf(item);
-                            if (index < 0 || string.IsNullOrEmpty(item.identifier)) return;
-                            sampleIndex = index;
-                            Add(choosingExcluded ? choosingDraft.excludedIds : choosingDraft.itemIds, item.identifier);
-                            RenderRules();
-                        });
-                    }, "sample");
-                b.AddButton(ShopSettings.Text("f07.add_item"), () =>
-                {
-                    if (sampleIndex < 0 || sampleIndex >= samples.Count) return;
-                    Add(excluded ? draft.excludedIds : draft.itemIds, samples[sampleIndex].identifier);
-                    RenderRules();
-                }, "add_item").End();
-            }
+            b.AddToggle(ShopSettings.Text("f07.ship"), draft.ship, value => draft.ship = value, "ship").End();
             b.BeginScrollFlexible(120);
-            if (ordered.Count != 0)
+            foreach (string category in TypeHelper.ALL_TYPES_LIST)
             {
-                b.AddLabel(ShopSettings.Text("f07.order"));
-                for (int i = 0; i < ordered.Count; i++)
+                string captured = category;
+                bool selected = draft.categories.Contains(category);
+                b.AddToggle(TypeHelper.GetTypeDisplayName(category), selected, value =>
                 {
-                    RoutingRule rule = ordered[i];
-                    ShopInventory.Location destination = locations.FirstOrDefault(location => location.Key() == rule.location);
-                    string label = (i + 1) + ". " + (destination?.Name ?? ShopSettings.Text("f07.unknown_area"));
-                    if (destination != null && ReferenceEquals(destination.Inventory, editing.Inventory)) label = "✓ " + label;
-                    if (destination == null) b.AddLabel(label);
-                    else b.AddButton(label, () =>
+                    if (value)
                     {
-                        if (!SameRun() || !ShopInventory.TryRefresh(destination, out var live) || !ShopInventory.IsMainStockBranch(live))
-                        { ShopNotice.Show(ShopSettings.Text("f08.changed")); return; }
-                        SwitchDraft(live); RenderRules();
-                    });
-                }
+                        if (!draft.categories.Contains(captured) && draft.categories.Count < RoutingRules.MaxEntries)
+                            draft.categories.Add(captured);
+                    }
+                    else draft.categories.Remove(captured);
+                }, "category_" + category);
+                b.Last.SetInteractable(selected || draft.categories.Count < RoutingRules.MaxEntries);
             }
-            AddRuleRows(b, draft.categories, false, true);
-            AddRuleRows(b, draft.itemIds, false, false);
-            AddRuleRows(b, draft.excludedCategories, true, true);
-            AddRuleRows(b, draft.excludedIds, true, false);
             b.End().BeginRow().AddButton(ShopSettings.Text("f07.save"), SaveDraft, "save");
             b.Last.SetInteractable(available);
             b.AddButton(ShopSettings.Text("f07.delete"), DeleteDraft, "delete");
-            b.Last.SetInteractable(available && orderIndex >= 0);
-            b.AddButton(ShopSettings.Text("f07.order_up"), () => MoveRule(-1));
-            b.Last.SetInteractable(orderIndex > 0);
-            b.AddButton(ShopSettings.Text("f07.order_down"), () => MoveRule(1));
-            b.Last.SetInteractable(orderIndex >= 0 && orderIndex + 1 < ordered.Count);
+            b.Last.SetInteractable(available && store.Get(editing) != null);
             b.End().Show();
-            samplesDirty = false;
             if (position.HasValue) ((RectTransform)rulesWindow.root.transform).anchoredPosition = position.Value;
-        }
-
-        private void AddRuleRows(CustomUIBuilder builder, List<string> values, bool isExcluded, bool category)
-        {
-            foreach (string value in values.ToArray())
-            {
-                string text = (isExcluded ? "− " : "+ ") + (category ? TypeHelper.GetTypeDisplayName(value) : ItemName(value));
-                builder.AddButton(text + "  ×", () => { values.Remove(value); RenderRules(); });
-                if (builder.Last.text != null) builder.Last.text.richText = false;
-            }
-        }
-
-        private string ItemName(string id)
-        {
-            string visible = samples.FirstOrDefault(item => item.identifier == id)?.GetDisplayName(true);
-            if (!string.IsNullOrEmpty(visible)) return visible;
-            string key = "item_" + id + "_name";
-            string localized = LocHelper.GetLocalizedItem(key);
-            return string.IsNullOrWhiteSpace(localized) || localized == key ? id : localized;
-        }
-        private static void Add(List<string> values, string value)
-        {
-            if (values.Contains(value)) return;
-            if (values.Count >= RoutingRules.MaxEntries) { ShopNotice.Show(ShopSettings.Text("f07.limit")); return; }
-            values.Add(value);
         }
 
         private void SaveDraft()
         {
-            if (!SameRun() || !int.TryParse(priority, out int value) || value < -100 || value > 100)
-            { ShopNotice.Show(ShopSettings.Text("f07.invalid")); return; }
-            draft.priority = value;
+            if (!SameRun() || draft == null) return;
             if (!store.Save(editing, draft)) { ShopNotice.Show(ShopSettings.Text("f07.failed")); return; }
             LoadDraft();
             ClosePlan();
@@ -331,24 +339,29 @@ namespace ShopAssist
             RenderRules();
         }
 
-        private void MoveRule(int direction)
-        {
-            if (!SameRun() || !store.Move(editing.Key(), direction)) return;
-            ClosePlan();
-            RenderRules();
-        }
+        private void OpenPlan() => OpenPlan(null);
 
-        private void OpenPlan()
+        private void OpenPlan(GameGridInventory requested)
         {
             if (!started || !routingEnabled.Value || !ShopInventory.InStore || CustomUIManager.Instance == null || !store.Load()) return;
-            if (planWindow != null && planWindow.IsAlive && SameRun()) { planWindow.BringToFront(); return; }
+            if (requested != null && (!CanRouteGrid(requested) || ShopSelection.ContextChanged(requested)))
+            { ShopNotice.Show(ShopSettings.Text("f08.changed")); return; }
+            if (requested == null && planWindow != null && planWindow.IsAlive && SameRun()) { planWindow.BringToFront(); return; }
             ClosePlan();
             SetRun();
             selection = ShopSelection.Current();
+            if (requested != null)
+            {
+                selection = selection.Where(item => ReferenceEquals(item.parentInventory, requested) && requested.childItems.Contains(item)).ToList();
+                if (selection.Count == 0) selection = requested.childItems.Where(item => item is GameItemElement element &&
+                    VisibleInventoryViews.Visible(element) && ShopInventory.Movable(item) &&
+                    item.MaxNumRemove() >= item.unitCount).ToList();
+            }
             if (selection.Count == 0) { ShopNotice.Show(ShopSettings.Text("f08.select")); return; }
             try
             {
-                plan = RoutingPlan.Create(store.Snapshot(), selection, clues);
+                planRulesEnabled = rulesEnabled.Value;
+                plan = RoutingPlan.Create(store.Snapshot(), selection, clues, planRulesEnabled);
                 planRevision = store.Revision;
                 if (!previewEnabled.Value || (previewMode.Value == 1 && plan.Skipped.Count == 0)) ApplyPlan();
                 else RenderPlan();
@@ -377,12 +390,12 @@ namespace ShopAssist
                 if (b.Last.text != null) b.Last.text.richText = false;
                 long stacked = group.Where(move => move.Transfer.IsStack).Sum(move => (long)move.Quantity);
                 if (stacked > 0) b.AddLabel(ShopSettings.Format("f09.merged", stacked));
-                ItemGrid.Add(b, group.Select(move => new ItemGrid.Entry(move.Item) { Selected = true,
-                    Badge = move.Quantity.ToString() }), new ItemGrid.Options { Columns = 22, CellSize = 22 });
+                ItemGrid.Add(b, group.GroupBy(move => move.Item).Select(items => new ItemGrid.Entry(items.Key) { Selected = true,
+                    Badge = items.Sum(move => (long)move.Quantity).ToString() }), new ItemGrid.Options { Columns = 22, CellSize = 22 });
             }
             foreach (RoutingPlan.Skip skipped in plan.Skipped)
             {
-                b.AddLabel(skipped.Item.GetDisplayName(true) + " · " + ShopSettings.Text(skipped.Reason));
+                b.AddLabel(skipped.Item.GetDisplayName(true) + " ×" + skipped.Quantity + " · " + ShopSettings.Text(skipped.Reason));
                 if (b.Last.text != null) b.Last.text.richText = false;
             }
             if (plan.Moves.Count == 0 && plan.Skipped.Count == 0) b.AddLabel(ShopSettings.Text("f08.select"));
@@ -399,7 +412,7 @@ namespace ShopAssist
         private void ApplyPlan()
         {
             if (executing || plan == null || selection == null || !SameRun() || !routingEnabled.Value ||
-                planRevision != store.Revision || (previewEnabled.Value && previewMode.Value == 2)) return;
+                planRevision != store.Revision || planRulesEnabled != rulesEnabled.Value || (previewEnabled.Value && previewMode.Value == 2)) return;
             executing = true;
             var result = new OperationResult("f08.open");
             int index = 0;
@@ -409,28 +422,31 @@ namespace ShopAssist
             {
                 var locations = ShopInventory.OwnedLocations(false);
                 foreach (RoutingPlan.Skip skipped in plan.Skipped)
-                    result.Skip(skipped.Item, skipped.Item.unitCount, skipped.Reason,
+                    result.Skip(skipped.Item, skipped.Quantity, skipped.Reason,
                         locations.Find(location => location.Inventory == skipped.Item.parentInventory)?.Name);
-                RoutingPlan fresh = RoutingPlan.Create(store.Snapshot(), selection, clues);
+                RoutingPlan fresh = RoutingPlan.Create(store.Snapshot(), selection, clues, planRulesEnabled);
                 if (!plan.SameAs(fresh)) { ShopNotice.Show(ShopSettings.Text("f08.changed")); ClosePlan(); return; }
                 for (; index < plan.Moves.Count; index++)
                 {
                     RoutingPlan.Move entry = plan.Moves[index];
+                    // The final merge can consume the source before the scope check.
+                    ICollection<string> publicTypes = entry.Item is GameItemElement element ? clues.KnownTypes(element)?.ToArray() : null;
                     var currentLocations = ShopInventory.OwnedLocations(false);
-                    if (!SameRun() || planRevision != store.Revision ||
+                    if (!SameRun() || planRevision != store.Revision || planRulesEnabled != rulesEnabled.Value ||
                         !ShopInventory.TryRefresh(entry.Source, currentLocations, out ShopInventory.Location source) ||
                         !ShopInventory.TryRefresh(entry.Target, currentLocations, out ShopInventory.Location target) ||
-                        !ReferenceEquals(entry.Item.parentInventory, source.Inventory) || entry.Item.unitCount != entry.Quantity ||
-                        RequestBook.Reserved(entry.Item))
+                        !ReferenceEquals(entry.Item.parentInventory, source.Inventory) || entry.Item.unitCount != entry.Transfer.SourceBefore ||
+                        ItemPinHelper.IsPinned(entry.Item) || !RoutingPlan.AllowsTransfer(store.Snapshot(), source, target, publicTypes, planRulesEnabled))
                     { problem = "f08.changed"; break; }
                     currentIdentity = OperationResult.Capture(entry.Item);
                     bool fromCounter = !ShopInventory.IsMainStockBranch(source);
                     bool Scope()
                     {
-                        if (!SameRun() || planRevision != store.Revision) return false;
+                        if (!SameRun() || planRevision != store.Revision || planRulesEnabled != rulesEnabled.Value) return false;
                         var live = ShopInventory.OwnedLocations(false);
                         if (!ShopInventory.TryRefresh(source, live, out var from) || !ShopInventory.TryRefresh(target, live, out var to) ||
-                            !to.Ordinary || !ShopInventory.IsMainStockBranch(to)) return false;
+                            !to.Ordinary || !ShopInventory.IsMainStockBranch(to) ||
+                            !RoutingPlan.AllowsTransfer(store.Snapshot(), from, to, publicTypes, planRulesEnabled)) return false;
                         if (!fromCounter) return from.Ordinary && ShopInventory.IsMainStockBranch(from);
                         return from.Owner == null && from.Role == "counter" &&
                             (entry.Item.parentInventory != from.Inventory || ShopInventory.CanRouteFromCounter(entry.Item, from));
@@ -438,7 +454,11 @@ namespace ShopAssist
                     string path = source.Name + " → " + target.Name;
                     var outcome = WholeStackTransfer.Apply(entry.Transfer, "f08.open", path, source.Key(true), target.Key(true), Scope);
                     if (outcome != WholeStackTransfer.Result.Applied)
-                    { problem = outcome == WholeStackTransfer.Result.Unchanged ? "f08.changed" : "f08.pending"; break; }
+                    {
+                        problem = outcome == WholeStackTransfer.Result.Pending || !WholeStackTransfer.Ready ? "f08.pending" :
+                            outcome == WholeStackTransfer.Result.Unchanged || !Scope() ? "f08.changed" : "f08.journal_failed";
+                        break;
+                    }
                     result.CompleteCaptured(currentIdentity, entry.Quantity, path);
                     currentIdentity = null;
                 }
@@ -460,7 +480,7 @@ namespace ShopAssist
         private void CloseRules()
         {
             if (rulesWindow != null && rulesWindow.IsAlive) rulesWindow.Close();
-            rulesWindow = null; editing = null; draft = null; drafts.Clear(); samples.Clear(); sampleStamps.Clear(); locationStamps.Clear(); samplesDirty = false;
+            rulesWindow = null; editing = null; draft = null; drafts.Clear();
         }
         private void ClosePlan()
         {
@@ -471,17 +491,25 @@ namespace ShopAssist
         private void Reset()
         {
             CloseRules(); ClosePlan(); InventoryContextActions.Hide("f07.open");
-            InventoryContextActions.Hide("f08.context"); store.Reset(); run = null;
+            InventoryContextActions.Hide("f08.context"); InventoryContextActions.Hide("f08.grid"); store.Reset(); run = null; automaticError = null;
+            foreach (HeaderEntry entry in headers.Values)
+                DestroyHeader(entry);
+            headers.Clear();
+            RefreshHeadersSoon();
+            AreaLabels.Invalidate();
         }
         public void Dispose()
         {
             if (!started) return;
             started = false;
+            if (ReferenceEquals(current, this)) { current = null; AreaLabels.RoutingHeaderInset = null; }
             InventoryContextActions.Unregister("f07.open");
             InventoryContextActions.Unregister("f08.context");
+            InventoryContextActions.Unregister("f08.grid");
             OccupiedSelectionGesture.Unregister();
             WholeStackTransfer.Release();
             settings.Changed -= SettingsChanged;
+            VisibleInventoryViews.Changed -= RefreshHeadersSoon;
             ModHook.OnGameLoadedInit -= Reset;
             ModHook.OnLeavingStoreEarly -= Reset;
             SceneManager.activeSceneChanged -= SceneChanged;

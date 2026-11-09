@@ -177,11 +177,11 @@ public sealed class SlotMarker
 public static class GeneralHelper { public static bool MayPlayerInsertInto(GameGridInventory grid) => true; }
 namespace ShopAssist
 {
-    internal static class RequestBook { internal static bool Reserved(GameItem item) => item.reserved; }
+    internal static class ItemPinHelper { internal static bool IsPinned(GameItem item) => item != null && item.reserved; }
     internal static class ShopInventory
     {
         internal static bool InStore => true;
-        internal static bool Movable(GameItem item) => item.movable;
+        internal static bool Movable(GameItem item) => item.movable && !ItemPinHelper.IsPinned(item);
     }
     internal static class GridPlacements
     {

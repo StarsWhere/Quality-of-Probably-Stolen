@@ -9,6 +9,7 @@
     <ManagedDir>$(GameDir)\Probably Stolen_Data\Managed</ManagedDir>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="../../src/ShopAssist/ShopAssist.csproj" />
     <Compile Include="../../src/ShopAssist/Inventory/GroupGeometry.cs" />
     <Compile Include="GroupPlacementTests.cs" />
     <Reference Include="Assembly-CSharp;UnityEngine.CoreModule">

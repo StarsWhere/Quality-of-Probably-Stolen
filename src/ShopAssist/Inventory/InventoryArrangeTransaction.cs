@@ -122,7 +122,7 @@ namespace ShopAssist
             if (item == null) return null;
             var builder = new StringBuilder();
             builder.Append(item.identifier?.Length ?? -1).Append(':').Append(item.identifier).Append('|').Append(item.uniqueId).Append('|')
-                .Append(RequestBook.Reserved(item)).Append('|');
+                .Append(ItemPinHelper.IsPinned(item)).Append('|');
             AddTags(builder, item.state);
             AddTags(builder, item.modifiedState);
             if (item.itemFeatures == null) builder.Append("features:null|");

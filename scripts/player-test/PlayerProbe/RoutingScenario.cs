@@ -37,7 +37,7 @@ public sealed class RoutingScenario
             case 2:
                 CreateFoodRule(target);
                 GeneralHelper.SetCustomName(target, "QA Renamed " + token);
-                savedRule = ModHelper.GetModData(Mod, "routing", null);
+                savedRule = ModHelper.GetModData(Mod, "routing.v2", null);
                 Require(!string.IsNullOrEmpty(savedRule) && target.uniqueId > 0, "F07 did not save an instance-bound rule");
                 OpenPreview();
                 Advance(3); return false;
@@ -57,7 +57,7 @@ public sealed class RoutingScenario
                 Require(ReferenceEquals(first.parentInventory, inside) && ReferenceEquals(second.parentInventory, inside) &&
                     inside.childItems.Contains(first) && inside.childItems.Contains(second) && first.unitCount == 1 && second.unitCount == 1,
                     "F08 did not move exactly the selected items to the tagged area");
-                Require(ModHelper.GetModData(Mod, "routing", null) == savedRule, "F08 mutated F07 rules");
+                Require(ModHelper.GetModData(Mod, "routing.v2", null) == savedRule, "F08 mutated F07 rules");
                 slot = PlayerStore.Instance.saveSlotId; run = PlayerStore.Instance.runID; day = StoreStation.GetDayCounter();
                 PlayerStore.Instance.SaveGame();
                 StoreUIManager.Instance.escapeUIManager.OnMainMenu();
@@ -65,7 +65,7 @@ public sealed class RoutingScenario
                 Advance(5); return false;
             case 5:
                 if (!load.Tick()) return false;
-                Require(StoreStation.GetDayCounter() == day && ModHelper.GetModData(Mod, "routing", null) == savedRule,
+                Require(StoreStation.GetDayCounter() == day && ModHelper.GetModData(Mod, "routing.v2", null) == savedRule,
                     "F07 rule was not preserved in the same save on reload");
                 var bag = EmporiumEntry.Instance.invElement.childItems.SingleOrDefault(item => item.GetDisplayName(true) == "QA Renamed " + token);
                 Require(bag != null && bag.uniqueId > 0 && bag.contentWindow?.childElement is GameGridInventory,
@@ -104,12 +104,9 @@ public sealed class RoutingScenario
         window = Window(Rules);
         Require(window.Get("receive")?.toggle != null && window.Get("receive").toggle.interactable, "Ordinary target cannot receive");
         window.Get("receive").SetBool(true, true);
-        var category = window.Get("category")?.dropdown;
-        Require(category != null, "F07 category chooser missing");
-        int typeIndex = category.options.FindIndex(option => option.text == TypeHelper.GetTypeDisplayName(type));
-        Require(typeIndex >= 0, "F07 category is unavailable: " + type);
-        category.SetValueWithoutNotify(typeIndex); category.onValueChanged.Invoke(typeIndex);
-        window.Get("add_category").button.onClick.Invoke();
+        var category = window.Get("category_" + type);
+        Require(category?.toggle != null && category.toggle.interactable, "F07 category is unavailable: " + type);
+        category.SetBool(true, true);
         Window(Rules).Get("save").button.onClick.Invoke();
         Window(Rules).Close();
     }

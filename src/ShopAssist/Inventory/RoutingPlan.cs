@@ -13,12 +13,12 @@ namespace ShopAssist
             internal GameItem Item => Transfer.Item;
             internal int Quantity => Transfer.Amount;
         }
-        internal sealed class Skip { internal GameItem Item; internal string Reason; }
+        internal sealed class Skip { internal GameItem Item; internal string Reason; internal int Quantity; }
 
         internal readonly List<Move> Moves = new List<Move>();
         internal readonly List<Skip> Skipped = new List<Skip>();
 
-        internal static RoutingPlan Create(RoutingBook book, IReadOnlyList<GameItem> selection, CustomerIndicators clues)
+        internal static RoutingPlan Create(RoutingBook book, IReadOnlyList<GameItem> selection, CustomerIndicators clues, bool enforceShipping = true)
         {
             var result = new RoutingPlan();
             if (book == null || selection == null || clues == null) return result;
@@ -37,79 +37,91 @@ namespace ShopAssist
             var seen = new HashSet<GameItem>();
             var reserved = new WholeStackTransfer.Reservations();
             reserved.ExcludedStacks.UnionWith(chosen);
+            void Skip(GameItem item, string reason, int quantity) =>
+                result.Skipped.Add(new Skip { Item = item, Reason = reason, Quantity = quantity });
             foreach (GameItem item in selection)
             {
                 if (item == null || !seen.Add(item)) continue;
                 string reason = "f08.changed";
-                if (!WholeStackTransfer.Ready) { result.Skipped.Add(new Skip { Item = item, Reason = "f08.pending" }); continue; }
+                if (!WholeStackTransfer.Ready) { Skip(item, "f08.pending", item.unitCount); continue; }
                 if (!(item is GameItemElement element) || !VisibleInventoryViews.Visible(element) ||
                     !byInventory.TryGetValue(item.parentInventory, out ShopInventory.Location source) ||
-                    !source.Inventory.childItems.Contains(item)) { result.Skipped.Add(new Skip { Item = item, Reason = reason }); continue; }
-                if (HasSelectedAncestor(item, chosen)) { result.Skipped.Add(new Skip { Item = item, Reason = "f08.parent" }); continue; }
+                    !source.Inventory.childItems.Contains(item)) { Skip(item, reason, item.unitCount); continue; }
+                if (HasSelectedAncestor(item, chosen)) { Skip(item, "f08.parent", item.unitCount); continue; }
                 if (source.IsMachine || (!(source.Ordinary && ShopInventory.IsMainStockBranch(source)) &&
                     !ShopInventory.CanRouteFromCounter(item, source)))
-                { result.Skipped.Add(new Skip { Item = item, Reason = "f08.special" }); continue; }
+                { Skip(item, "f08.special", item.unitCount); continue; }
+                if (source.Key() != null && duplicates.Contains(source.Key()))
+                { Skip(item, "f08.changed", item.unitCount); continue; }
                 if (!(source.Inventory is GameGridInventory sourceGrid) || sourceGrid.GetType() != typeof(GameGridInventory) ||
                     !InventorySortPlan.SafeToCheck(sourceGrid, item) || !WholeStackTransfer.SafeSource(item))
-                { result.Skipped.Add(new Skip { Item = item, Reason = "f08.unknown" }); continue; }
-                if (!ShopInventory.Movable(item) || RequestBook.Reserved(item))
-                { result.Skipped.Add(new Skip { Item = item, Reason = "f08.locked" }); continue; }
+                { Skip(item, "f08.unknown", item.unitCount); continue; }
+                if (!ShopInventory.Movable(item))
+                { Skip(item, "f08.locked", item.unitCount); continue; }
                 if (item.MaxNumRemove() < item.unitCount)
-                { result.Skipped.Add(new Skip { Item = item, Reason = "f08.partial" }); continue; }
+                { Skip(item, "f08.partial", item.unitCount); continue; }
                 ICollection<string> types = clues.KnownTypes(element);
-                bool complete = CustomerIndicators.HasOrdinaryTooltip(element);
-                var candidates = RoutingRules.Ranked(book, item.identifier, types, complete).ToList();
-                if (candidates.Count == 0) { result.Skipped.Add(new Skip { Item = item, Reason = NoRuleReason(book, item.identifier, types, complete) }); continue; }
-                Move move = null;
+                RoutingRule sourceRule = RuleFor(book, source);
+                if (RoutingRules.Match(sourceRule, types) > 0)
+                { Skip(item, "f08.already", item.unitCount); continue; }
+                if (enforceShipping && sourceRule != null && !sourceRule.ship)
+                { Skip(item, "f08.shipping_disabled", item.unitCount); continue; }
+                var candidates = RoutingRules.Ranked(book, types).ToList();
+                if (candidates.Count == 0)
+                {
+                    reason = !CustomerIndicators.HasOrdinaryTooltip(element) && (types == null || types.Count == 0)
+                        ? "f08.unknown_type" : "f08.no_rule";
+                    Skip(item, reason, item.unitCount);
+                    continue;
+                }
+                int remaining = item.unitCount;
                 reason = "f08.missing";
+                // Fill matching existing stacks before placing the remaining instance.
+                for (int pass = 0; pass < 2 && remaining > 0; pass++)
                 foreach (RoutingRule rule in candidates)
                 {
+                    if (remaining == 0) break;
                     if (!byKey.TryGetValue(rule.location, out ShopInventory.Location target)) reason = "f08.missing";
                     else if (!target.Ordinary || target.IsMachine || !ShopInventory.IsMainStockBranch(target) ||
                         !(target.Inventory is GameGridInventory grid)) reason = "f08.special";
-                    else if (target.Inventory == source.Inventory)
-                    {
-                        // A matching destination is already satisfied. Do not send the
-                        // item to a lower-ranked fallback on the next routing pass.
-                        reason = "f08.already";
-                        break;
-                    }
                     else if (ShopInventory.WouldContainSelf(item, target.Inventory)) reason = "f08.cycle";
                     else if (target.Inventory.IsInsertLocked() || !GeneralHelper.MayPlayerInsertInto(target.Inventory)) reason = "f08.locked";
                     else
                     {
-                        WholeStackTransfer.Plan transfer = WholeStackTransfer.Stack(item, grid, reserved);
-                        if (transfer == null) transfer = WholeStackTransfer.Empty(item, grid, reserved);
-                        if (transfer == null)
-                            reason = WholeStackTransfer.SafeTarget(grid) ? "f08.full" : "f08.unknown";
-                        else
+                        while (remaining > 0)
                         {
-                            move = new Move { Transfer = transfer, Source = source, Target = target };
-                            break;
+                            WholeStackTransfer.Plan transfer = pass == 0
+                                ? WholeStackTransfer.StackUpTo(item, grid, reserved, remaining)
+                                : WholeStackTransfer.EmptyRemainder(item, grid, reserved, remaining);
+                            if (transfer == null)
+                            {
+                                reason = WholeStackTransfer.SafeTarget(grid) ? "f08.full" : "f08.unknown";
+                                break;
+                            }
+                            result.Moves.Add(new Move { Transfer = transfer, Source = source, Target = target });
+                            remaining -= transfer.Amount;
                         }
                     }
-                    if (rule.exclusive) break;
                 }
-                if (move == null) result.Skipped.Add(new Skip { Item = item, Reason = reason });
-                else result.Moves.Add(move);
+                if (remaining > 0) Skip(item, reason, remaining);
             }
             return result;
         }
 
-        private static string NoRuleReason(RoutingBook book, string id, ICollection<string> types, bool complete)
+        private static RoutingRule RuleFor(RoutingBook book, ShopInventory.Location location)
         {
-            bool excluded = false, unknown = false;
-            foreach (RoutingRule rule in book.rules.Where(value => value.receive))
-            {
-                bool itemMatch = rule.itemIds.Contains(id);
-                bool categoryMatch = types != null && types.Any(rule.categories.Contains);
-                bool possible = itemMatch || categoryMatch || !complete && rule.categories.Count != 0;
-                if (!possible) continue;
-                bool blocked = rule.excludedIds.Contains(id) || types != null && types.Any(rule.excludedCategories.Contains);
-                if (blocked) excluded = true;
-                else if (!complete && rule.excludedCategories.Count != 0) unknown = true;
-            }
-            return unknown ? "f08.unknown_type" : excluded ? "f08.excluded" : "f08.no_rule";
+            string key = location.Key();
+            return key == null ? null : book.rules.Find(rule => rule.location == key);
+        }
+
+        internal static bool AllowsTransfer(RoutingBook book, ShopInventory.Location source, ShopInventory.Location target,
+            ICollection<string> publicTypes, bool enforceShipping = true)
+        {
+            if (book == null || source == null || target == null) return false;
+            RoutingRule sourceRule = RuleFor(book, source);
+            return RoutingRules.Match(sourceRule, publicTypes) == 0 &&
+                (!enforceShipping || sourceRule == null || sourceRule.ship) &&
+                RoutingRules.Match(RuleFor(book, target), publicTypes) > 0;
         }
 
         private static bool HasSelectedAncestor(GameItem item, HashSet<GameItem> chosen)
@@ -132,7 +144,8 @@ namespace ShopAssist
                     !WholeStackTransfer.Same(a.Transfer, b.Transfer)) return false;
             }
             for (int i = 0; i < Skipped.Count; i++)
-                if (!ReferenceEquals(Skipped[i].Item, other.Skipped[i].Item) || Skipped[i].Reason != other.Skipped[i].Reason) return false;
+                if (!ReferenceEquals(Skipped[i].Item, other.Skipped[i].Item) || Skipped[i].Reason != other.Skipped[i].Reason ||
+                    Skipped[i].Quantity != other.Skipped[i].Quantity) return false;
             return true;
         }
     }

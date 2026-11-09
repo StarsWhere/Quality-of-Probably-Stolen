@@ -6,7 +6,7 @@ namespace ShopAssist
     // Rule data follows the game's save and never uses a separate sidecar.
     internal sealed class RoutingStore
     {
-        private const string DataKey = "routing";
+        private const string DataKey = "routing.v2";
         private readonly Action<string> log;
         private RoutingBook book;
         private string run;
@@ -91,21 +91,6 @@ namespace ShopAssist
             if (key == null) return false;
             RoutingBook next = Snapshot();
             if (next == null || next.rules.RemoveAll(rule => rule.location == key) != 1) return false;
-            return Write(next);
-        }
-
-        internal bool Move(string key, int direction)
-        {
-            RoutingBook next = Snapshot();
-            if (next == null || (direction != -1 && direction != 1)) return false;
-            var eligible = ShopInventory.OwnedLocations(false).Where(location => location.Key() == key).ToList();
-            if (eligible.Count != 1 || !ShopInventory.IsMainStockBranch(eligible[0])) return false;
-            int index = next.rules.FindIndex(rule => rule.location == key);
-            int target = index + direction;
-            if (index < 0 || target < 0 || target >= next.rules.Count) return false;
-            RoutingRule temp = next.rules[index];
-            next.rules[index] = next.rules[target];
-            next.rules[target] = temp;
             return Write(next);
         }
 

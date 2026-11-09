@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using HarmonyLib;
 using UnityEngine;
 
 // Exercises the native group state/ghosts and the adapter's exact transaction in an isolated save.
@@ -16,6 +17,25 @@ public sealed class GroupGridScenario
     private GameItem sourceBag, targetBag;
     private GameGridInventory source, target;
     private GameItemElement first, second;
+    private static int locationReads;
+
+    private static void CountLocations() => locationReads++;
+
+    private static bool LegalWithReadCount(MethodInfo legal, GameGridInventory grid, int dx, int dy, int expected)
+    {
+        var assembly = ModLoader.Mods.Find(value => value.Manifest?.ID == Mod)?.Instance?.GetType().Assembly;
+        var read = assembly?.GetType("ShopAssist.ShopInventory")?.GetMethod("OwnedLocations", F);
+        var harmony = new Harmony("qa.group.inventory-read");
+        try
+        {
+            harmony.Patch(read, prefix: new HarmonyMethod(typeof(GroupGridScenario).GetMethod(nameof(CountLocations), F)));
+            locationReads = 0;
+            bool result = (bool)legal.Invoke(null, new object[] { grid, dx, dy });
+            Check(locationReads == expected, "Formation checked inventory locations " + locationReads + " times; expected " + expected);
+            return result;
+        }
+        finally { harmony.UnpatchAll(harmony.Id); }
+    }
 
     public bool Tick(out string result)
     {
@@ -64,6 +84,40 @@ public sealed class GroupGridScenario
             for (int y = -8; y <= 8 && !found; y++) for (int x = -8; x <= 8 && !found; x++)
                 if ((bool)legal.Invoke(null, new object[] { target, x, y })) { dx = x; dy = y; found = true; }
             Check(found, "No valid exact destination for the formation");
+            Check(LegalWithReadCount(legal, target, dx, dy, 0), "Cross-container formation failed its live location check");
+            bool removeLock = source.overrideLockRemove, insertLock = target.overrideLockInsert;
+            bool sourceWindowLock = sourceBag.contentWindow.isLocked;
+            bool stockRemoveLock = EmporiumEntry.Instance.invElement.overrideLockRemove;
+            int quantity = first.unitCount;
+            try
+            {
+                ItemPinHelper.SetPinned(first, true);
+                Check(!(bool)legal.Invoke(null, new object[] { target, dx, dy }), "A newly pinned group member was accepted");
+                ItemPinHelper.SetPinned(first, false);
+                source.overrideLockRemove = true;
+                Check(!(bool)legal.Invoke(null, new object[] { target, dx, dy }), "A newly locked source was accepted");
+                source.overrideLockRemove = removeLock;
+                sourceBag.contentWindow.isLocked = true;
+                Check(!(bool)legal.Invoke(null, new object[] { target, dx, dy }), "A newly locked source container was accepted");
+                sourceBag.contentWindow.isLocked = sourceWindowLock;
+                EmporiumEntry.Instance.invElement.overrideLockRemove = true;
+                Check(!(bool)legal.Invoke(null, new object[] { target, dx, dy }), "A locked main stock exposed a nested container");
+                EmporiumEntry.Instance.invElement.overrideLockRemove = stockRemoveLock;
+                target.overrideLockInsert = true;
+                Check(!(bool)legal.Invoke(null, new object[] { target, dx, dy }), "A newly locked target was accepted");
+                target.overrideLockInsert = insertLock;
+                first.SetStack(quantity + 1);
+                Check(!(bool)legal.Invoke(null, new object[] { target, dx, dy }), "A changed group quantity was accepted");
+            }
+            finally
+            {
+                ItemPinHelper.SetPinned(first, false);
+                source.overrideLockRemove = removeLock; target.overrideLockInsert = insertLock;
+                sourceBag.contentWindow.isLocked = sourceWindowLock;
+                EmporiumEntry.Instance.invElement.overrideLockRemove = stockRemoveLock;
+                first.SetStack(quantity);
+            }
+            Check((bool)legal.Invoke(null, new object[] { target, dx, dy }), "A valid group remained blocked after restoring its state");
             // A native add callback can fail after the first member moves. Both original poses must return.
             Action<GameItem, GameInventory, SlotMarker> veto = (item, inventory, slot) =>
             { if (inventory == target) throw new InvalidOperationException("QA injected second-item veto"); };
@@ -143,7 +197,33 @@ public sealed class GroupGridScenario
             Check(first.parentInventory == target && second.parentInventory == target && first.unitCount == firstCount && second.unitCount == secondCount &&
                 SamePose(first.modifiedShape, firstDestination) && SamePose(second.modifiedShape, secondDestination),
                 "Same-grid rotation did not commit both exact poses");
-            result = "PASS native group ghosts, cross-grid and overlapping same-grid rotation, native callbacks and both failure rollbacks";
+            step = 4; return false;
+        }
+        if (step == 4)
+        {
+            var stock = EmporiumEntry.Instance.invElement;
+            Put(stock, first); Put(stock, second);
+            var handler = ItemMultiSelectHandler.current;
+            var selected = (IList)typeof(ItemMultiSelectHandler).GetField("selectedItems", F).GetValue(handler);
+            var homes = (IDictionary)typeof(ItemMultiSelectHandler).GetField("selectedHomes", F).GetValue(handler);
+            selected.Clear(); homes.Clear(); selected.Add(first); selected.Add(second); homes.Add(first, stock); homes.Add(second, stock);
+            FieldInfo state = typeof(ItemMultiSelectHandler).GetField("state", F);
+            state.SetValue(handler, Enum.Parse(state.FieldType, "PendingGroupDrag"));
+            typeof(ItemMultiSelectHandler).GetMethod("StartGroupDrag", F).Invoke(handler, null);
+            Check(handler.IsGroupDragging, "Main-stock group drag did not start");
+            var assembly = ModLoader.Mods.Find(value => value.Manifest?.ID == Mod)?.Instance?.GetType().Assembly;
+            MethodInfo legal = assembly?.GetType("ShopAssist.GroupPlacement")?.GetMethod("Legal", F);
+            try
+            {
+                Check(LegalWithReadCount(legal, stock, 0, 0, 0), "Valid main-stock formation was rejected");
+                ItemPinHelper.SetPinned(first, true);
+                Check(!LegalWithReadCount(legal, stock, 0, 0, 0), "A newly pinned main-stock member was accepted");
+                ItemPinHelper.SetPinned(first, false);
+                Check(!LegalWithReadCount(legal, EmporiumEntry.Instance.backInvinvElement, 0, 0, 1),
+                    "A non-storage target bypassed the full location check");
+            }
+            finally { ItemPinHelper.SetPinned(first, false); handler.Cancel(); }
+            result = "PASS group rotation, rollback, live safety changes and main-stock/cross-container location checks";
             return true;
         }
         throw new InvalidOperationException("Unknown group scenario step");

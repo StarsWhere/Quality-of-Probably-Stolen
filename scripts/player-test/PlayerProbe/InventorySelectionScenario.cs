@@ -108,9 +108,11 @@ public sealed class BasketDifferentQuotesScenario
     private readonly float deadline = Time.realtimeSinceStartup + 120;
     private readonly string token = Guid.NewGuid().ToString("N").Substring(0, 6);
     private readonly Dictionary<GameItem, int> quotes = new Dictionary<GameItem, int>();
+    private readonly HashSet<GameItem> seen = new HashSet<GameItem>();
     private GameItem[] offered, pair;
     private GameItem unquoted;
-    private int step, cash, frame;
+    private int step, cash, frame, pages;
+    private bool fullBudget;
     private static void Need(bool ok, string message) { if (!ok) throw new InvalidOperationException(message); }
     private static CustomUIWindow Window() => CustomUIManager.Instance.GetWindow(Mod + ".basket");
     private static object Field(object obj, string name) => obj?.GetType().GetField(name, Flags)?.GetValue(obj);
@@ -144,35 +146,50 @@ public sealed class BasketDifferentQuotesScenario
         }
         price = 0; return false;
     }
-    private static object Entry(CustomUIWindow window, GameItem item) => Field(QaItemUi.Hit(window.root, item), "entry");
     private static GameItem[] Items(Transform grid) => grid.GetComponentsInChildren<MonoBehaviour>(true)
         .Where(hit => hit != null && hit.gameObject.activeInHierarchy && hit.gameObject.name == "item_cell" &&
             hit.GetType().FullName == "ShopAssist.ItemGrid+Hit")
         .Select(hit => Field(Field(hit, "entry"), "Item") as GameItem).Where(item => item != null).Distinct().ToArray();
     private static GameItem[][] Grids(CustomUIWindow window) => window.root.GetComponentsInChildren<Transform>(true)
-        .Where(t => t.gameObject.activeInHierarchy && t.name == "ShopAssist_ItemGrid")
+        .Where(t => t.gameObject.activeInHierarchy && t.name == "ShopAssist_CounterPreview")
         .Select(Items).Where(items => items.Length > 0).ToArray();
+    private bool ScanPage(bool initial)
+    {
+        var window = Window();
+        var hits = window.root.GetComponentsInChildren<MonoBehaviour>(true)
+            .Where(hit => hit != null && hit.gameObject.activeInHierarchy && hit.gameObject.name == "item_cell" &&
+                hit.GetType().FullName == "ShopAssist.ItemGrid+Hit")
+            .GroupBy(hit => Field(Field(hit, "entry"), "Item") as GameItem).Select(group => group.First()).ToArray();
+        Need(hits.Length > 0 && ++pages <= 512, "Basket pagination did not reach its end");
+        foreach (var hit in hits)
+        {
+            var entry = Field(hit, "entry"); var item = Field(entry, "Item") as GameItem;
+            Need(item != null && seen.Add(item), "Basket pagination repeated or omitted an item");
+            bool enabled = Field(entry, "Enabled") is bool isEnabled && isEnabled;
+            bool selected = Field(entry, "Selected") is bool isSelected && isSelected;
+            if (offered.Contains(item))
+                Need(enabled && Field(entry, "Badge") as string == quotes[item].ToString(),
+                    "The selection grid did not retain a native quoted price for " + item.identifier);
+            if (item == unquoted)
+                Need(enabled && Field(entry, "Badge") as string != ModHelper.GetLocalized(Mod, "f34.unpriced"),
+                    "A matching item in storage did not receive a calculated quote");
+            if (initial && enabled && !pair.Contains(item) && selected)
+            {
+                QaItemUi.Click(hit);
+                Need(Field(entry, "Selected") is bool deselected && !deselected, "Quoted item could not be excluded");
+            }
+            else if (pair.Contains(item)) Need(enabled && selected, "Selected quote was not retained");
+            else if (!initial && enabled) Need(!selected, "Excluded quote was selected again");
+        }
+        var next = window.Get("next")?.button;
+        if (next != null && next.interactable) { next.onClick.Invoke(); return false; }
+        Need(offered.All(seen.Contains) && seen.Contains(unquoted), "Basket omitted a quoted or storage fixture");
+        return true;
+    }
     private GameItem[][] Compare(int limit, bool allowMove)
     {
         RoutingScenario.RunFeatureAction("f34.open"); var window = Window();
         Need(window?.Get("limit") != null && window.Get("compare")?.button != null, "Budget comparison controls unavailable");
-        foreach (var item in offered.Except(pair))
-        {
-            Need(QaItemUi.Hit(window.root, item) != null, "Previously quoted third item missing from the selection grid");
-            if (QaItemUi.Selected(window, item)) { QaItemUi.Click(window, item); window = Window(); }
-            Need(!QaItemUi.Selected(window, item), "Third quote could not be excluded");
-        }
-        foreach (var item in pair)
-        {
-            var entry = Entry(window, item);
-            Need(entry != null && Field(entry, "Badge") as string == quotes[item].ToString() && QaItemUi.Selected(window, item),
-                "The selection grid did not retain a native quoted price and selection");
-        }
-        var unseen = Entry(window, unquoted);
-        Need(unseen != null && Field(unseen, "Enabled") is bool enabled && enabled &&
-            Field(unseen, "Badge") as string != ModHelper.GetLocalized(Mod, "f34.unpriced"),
-            "A matching item in storage did not receive a calculated quote");
-        if (QaItemUi.Selected(window, unquoted)) QaItemUi.Click(window, unquoted);
         window.Get("limit").SetString(limit.ToString(), true); window.Get("compare").button.onClick.Invoke(); window = Window();
         var grids = Grids(window);
         Need(grids.Length > 0, "No quoted combination was offered within the entered budget");
@@ -229,14 +246,30 @@ public sealed class BasketDifferentQuotesScenario
                 "Native food fixtures did not yield two different quotes within the buyer's budget: " +
                 string.Join(", ", offered.Select(item => item.identifier + "=" + quotes[item])));
             cash = p.playerCash;
-            RoutingScenario.RunFeatureAction("f34.open"); var observed = Window();
-            foreach (var item in offered)
-                Need(Field(Entry(observed, item), "Badge") as string == quotes[item].ToString(), "F34 did not retain the displayed native quote");
-            observed.Close(); foreach (var item in offered) Move(item, e.invElement); NegociationUIManager.Instance.RefreshUI();
-            int tight = Math.Max(quotes[pair[0]], quotes[pair[1]]);
-            var limited = Compare(tight, false);
-            Need(limited.All(grid => grid.Length == 1), "A strict budget offered both differently priced items above the limit");
-            TradeScenario.SetOptions(true, "f34.move");
+            RoutingScenario.RunFeatureAction("f34.open"); step++; return false;
+        }
+        if (step == 3)
+        {
+            if (!ScanPage(true)) return false;
+            Window().Close(); foreach (var item in offered) Move(item, e.invElement); NegociationUIManager.Instance.RefreshUI();
+            RoutingScenario.RunFeatureAction("f34.open"); step++; return false;
+        }
+        if (step == 4)
+        {
+            var previous = Window().Get("previous")?.button;
+            if (previous != null && previous.interactable) { previous.onClick.Invoke(); return false; }
+            seen.Clear(); pages = 0; step++; return false;
+        }
+        if (step == 5)
+        {
+            if (!ScanPage(false)) return false;
+            if (!fullBudget)
+            {
+                var limited = Compare(Math.Max(quotes[pair[0]], quotes[pair[1]]), false);
+                Need(limited.All(grid => grid.Length == 1), "A strict budget offered both differently priced items above the limit");
+                TradeScenario.SetOptions(true, "f34.move"); fullBudget = true;
+                RoutingScenario.RunFeatureAction("f34.open"); step = 4; return false;
+            }
             Compare(quotes[pair[0]] + quotes[pair[1]], true); step++; return false;
         }
         if (pair.Any(item => item.parentInventory != e.backInvinvElement)) return false;

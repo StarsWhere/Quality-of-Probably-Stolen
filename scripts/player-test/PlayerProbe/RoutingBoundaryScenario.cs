@@ -29,12 +29,12 @@ public sealed class RoutingBoundaryScenario
                 Prepare();
                 RoutingScenario.CreateCategoryRule(goodBag, "MATERIAL");
                 RoutingScenario.CreateFoodRule(movedBag);
-                saved = ModHelper.GetModData(Mod, "routing", null);
+                saved = ModHelper.GetModData(Mod, "routing.v2", null);
                 Require(!string.IsNullOrEmpty(saved), "No persisted area rules");
                 OpenRuleEditorForMovedBag();
                 Move(EmporiumEntry.Instance.backInvinvElement, movedBag);
                 RoutingScenario.Window(Rules).Get("save").button.onClick.Invoke();
-                Require(ModHelper.GetModData(Mod, "routing", null) == saved,
+                Require(ModHelper.GetModData(Mod, "routing.v2", null) == saved,
                     "A stale F07 editor wrote rules after its area moved to the counter");
                 RoutingScenario.Window(Rules).Close();
                 Advance(2); return false;
@@ -53,7 +53,7 @@ public sealed class RoutingBoundaryScenario
                 AssertNoMove(nested, "A nested " + branch + " item was admitted as a source");
                 AssertNoMove(stockItem, "An old rule sent stock into a nested " + branch + " box");
                 Require(ReferenceEquals(nested.parentInventory, movedGrid) && ReferenceEquals(stockItem.parentInventory, EmporiumEntry.Instance.invElement) &&
-                    ModHelper.GetModData(Mod, "routing", null) == saved, "A blocked preview changed goods or erased the stored rules");
+                    ModHelper.GetModData(Mod, "routing.v2", null) == saved, "A blocked preview changed goods or erased the stored rules");
                 PlayerStore.Instance.currentClientInstance = null;
                 PlayerStore.Instance.isClientArrived = false;
                 branch++;

@@ -49,8 +49,7 @@ namespace ShopAssist
             Placements = placements;
         }
 
-        internal static InventorySortPlan Create(GameGridInventory grid, ISet<GameItem> selected,
-            ISet<GameItem> reserved, bool groupByItem, bool rotate)
+        internal static InventorySortPlan Create(GameGridInventory grid, ISet<GameItem> selected, bool groupByItem, bool rotate)
         {
             if (grid?.inventoryShape == null || grid.inventoryShape.width < 1 || grid.inventoryShape.height < 1 ||
                 grid.inventoryShape.width > MaxDimension || grid.inventoryShape.height > MaxDimension ||
@@ -69,8 +68,7 @@ namespace ShopAssist
                 order.Add(all[i], i);
             }
             bool limited = selected != null && selected.Count > 0;
-            var moving = all.Where(item => (!limited || selected.Contains(item)) &&
-                (reserved == null || !reserved.Contains(item)) && SafeToCheck(grid, item) &&
+            var moving = all.Where(item => (!limited || selected.Contains(item)) && SafeToCheck(grid, item) &&
                 ShopInventory.Movable(item) && item.MaxNumRemove() >= item.unitCount).ToList();
             if (moving.Count == 0) return null;
             int Area(GameItem item)

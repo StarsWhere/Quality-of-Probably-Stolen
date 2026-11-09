@@ -24,19 +24,23 @@ namespace Newtonsoft.Json
         }
     }
 }
-public interface GridShape { int minX { get; } int minY { get; } GridShape Clone(); }
-public sealed class Shape : GridShape { public int minX { get; set; } public int minY { get; set; } public GridShape Clone() => new Shape { minX = minX, minY = minY }; }
+public interface GridShape { int minX { get; } int minY { get; } int width { get; } int height { get; } GridShape Clone(); }
+public sealed class Shape : GridShape { public int minX { get; set; } public int minY { get; set; } public int width => 1; public int height => 1; public GridShape Clone() => new Shape { minX = minX, minY = minY }; }
+public sealed class ItemFeature { public enum FeatureType { ClientTemporary } public FeatureType featureType; public string category; }
+public sealed class PixelWindow { public GameInventory childElement; public bool isLocked; }
 public class GameItem
 {
     public string identifier, name, identifierName, shortDescription, longDescription, flavorText, customText, spritePath, spriteAtlasPath;
     public GameInventory parentInventory;
     public GridShape modifiedShape;
-    public int unitCount = 1, uniqueId, bonusAccuracy, maxStack = 20;
+    public int unitCount = 1, uniqueId, bonusAccuracy, maxStack = 20, maxRemove = int.MaxValue;
     public long unitValue, lateUnitValue, unitBaseValue, backupUnitValue;
     public bool movable = true, visible = true, ordinaryTooltip = true, counterAllowed, reserved, destroyed;
     public bool forceDisableActivate, forceDisableUse, activateDefault, isCombatBackpack, useSpriteFromMod, triggerOverwatch, canUseOutsideCombat;
-    public object contentWindow, recipeManager;
+    public PixelWindow contentWindow;
+    public object recipeManager, examineWindow;
     public List<object> effects = new List<object>();
+    public List<ItemFeature> itemFeatures = new List<ItemFeature>();
     public List<string> itemTypes = new List<string>();
     public string intrinsic = "default";
     public readonly HashSet<string> tags = new HashSet<string>();
@@ -44,8 +48,9 @@ public class GameItem
     public Delegate isItemStateValidFunc, mayInventoryAddItemFunc, maxSlotAmountItemFunc, maxSlotAddItemFunc, slotPriorityFunc;
     public Delegate mayInventoryRemoveItemFunc, minSlotAmountItemFunc, maxSlotRemoveItemFunc, onChangeAmountItemFunc, onSlotChangeAmountItemFunc, onSlotRemoveItemFunc, onSlotAddItemFunc;
     public Func<GameItem, GameItem, bool> mayStackItemFunc;
-    public object parentItemShapeModifierForItemFunc, parentItemStateModifierForItemFunc;
-    public int MaxNumRemove() => unitCount;
+    public object parentItemShapeModifierForItemFunc, parentItemStateModifierForItemFunc, parentItemSpriteModifierForItemFunc,
+        getItemSpriteModifierForItemFunc;
+    public int MaxNumRemove() => Math.Min(unitCount, maxRemove);
     private static int nextId;
     public int GetUniqueID() => uniqueId == 0 ? uniqueId = ++nextId : uniqueId;
     public string GetDisplayName(bool _) => name ?? identifier;
@@ -55,7 +60,7 @@ public class GameItem
         incoming.mayStackItemFunc?.Invoke(this, incoming) == true && parentInventory != null
         ? new SlotMarker { inventory = parentInventory, item = incoming, targetItem = this, numTransfer = maxStack - unitCount } : null;
 }
-public sealed class GameItemElement : GameItem { }
+public sealed class GameItemElement : GameItem { public bool IsDestroyed() => destroyed; }
 public class GameInventory
 {
     public readonly List<GameItem> childItems = new List<GameItem>();
@@ -67,18 +72,21 @@ public class GameInventory
     public GameItem GetParentItem() => owner;
     public virtual SlotMarker TryInventorySlot(GameItem item, int amount, GridShape shape) => null;
     public virtual SlotMarker TryFindOneValidInventorySlot(GameItem item) => null;
+    public bool IsRemoveLocked() => false;
 }
 public sealed class GameGridInventory : GameInventory
 {
-    public int capacity;
+    public int capacity, slotLimit = int.MaxValue;
     public Delegate isItemStateValidFunc, slotPriorityFunc;
     public object parentItemShapeModifierForItemFunc, parentItemStateModifierForItemFunc;
     public Func<GameItem, GameInventory, bool> mayInventoryAddItemFunc;
+    public GridShape inventoryShape;
+    public bool CheckShapePlacement(GameItem item, GridShape shape, IEnumerable<GameItem> moving) => true;
     public override SlotMarker TryInventorySlot(GameItem item, int amount, GridShape shape)
     {
         if (locked || shape == null || shape.minX < 0 || shape.minX >= capacity ||
             childItems.Any(other => !ReferenceEquals(other, item) && other.modifiedShape.minX == shape.minX)) return null;
-        return new SlotMarker { inventory = this, item = item, itemGridShape = shape.Clone(), numTransfer = amount };
+        return new SlotMarker { inventory = this, item = item, itemGridShape = shape.Clone(), numTransfer = Math.Min(amount, slotLimit) };
     }
     public override SlotMarker TryFindOneValidInventorySlot(GameItem item) => ShopAssist.GridPlacements.Empty(this, item, null);
 }
@@ -100,16 +108,20 @@ public sealed class SlotMarker
             if (item.unitCount == 0) { item.parentInventory.childItems.Remove(item); item.parentInventory = null; }
             return amount;
         }
-        item.parentInventory.childItems.Remove(item);
-        item.parentInventory = inventory;
+        if (item.parentInventory != null) item.parentInventory.childItems.Remove(item);
+        item.parentInventory = null;
         item.modifiedShape = itemGridShape.Clone();
+        if (Failure == "after_expel") return 0;
+        item.parentInventory = inventory;
         inventory.childItems.Add(item);
         if (Failure == "after_move") throw new InvalidOperationException("after move");
         return amount;
     }
 }
 public static class ContainerHelper { }
-public static class GeneralHelper { public static bool MayPlayerInsertInto(GameInventory target) => true; }
+public static class GeneralHelper { public static bool MayPlayerInsertInto(GameInventory target) => true; public static bool IsItemOwned(GameItem item) => true; }
+public static class LockHelper { public static bool IsCurrentlyLocked(GameItem item) => false; }
+public static class DebrisHelper { public static bool IsDebris(GameItem item) => false; }
 public static class WineHelper { public const string WINE_YEAST_REUSABLE_TAG = "yeast"; }
 public sealed class PlayerStore
 {
@@ -161,7 +173,7 @@ namespace ShopAssist
         internal static bool HasOrdinaryTooltip(GameItemElement item) => item.ordinaryTooltip;
     }
     internal static class VisibleInventoryViews { internal static bool Visible(GameItemElement item) => item.visible; }
-    internal static class RequestBook { internal static bool Reserved(GameItem item) => item?.reserved == true; }
+    internal static class ItemPinHelper { internal static bool IsPinned(GameItem item) => item?.reserved == true; }
     internal static class ModEntry { internal const string Id = "test"; }
     internal static class ShopSettings
     {
@@ -213,6 +225,10 @@ namespace ShopAssist
             inventory.onSlotChangeAmountItemFunc == null;
         internal static bool SafeTransferInventoryWithSnapshot(GameInventory inventory, GameItem source,
             IDictionary<GameInventory, bool> snapshot) => SafeTransferInventory(inventory, source);
+        internal static bool KnownCallbacks(Delegate callbacks, Func<Delegate, bool> allowed) => true;
+        internal static bool KnownPatches(System.Reflection.MethodBase method) => true;
+        internal static bool Method(Delegate callback, string type, string method) => true;
+        internal static bool SafeGrid(GameGridInventory grid) => grid != null;
     }
     internal static class InventoryArrangeTransaction
     {
@@ -230,12 +246,15 @@ namespace ShopAssist
             var marker = grid?.TryInventorySlot(item, amount < 0 ? item.unitCount : amount, shape);
             return marker?.targetItem == null && marker?.numTransfer >= (amount < 0 ? item.unitCount : amount) ? marker : null;
         }
-        internal static SlotMarker Empty(GameGridInventory grid, GameItem item, IReadOnlyList<GridShape> reserved)
+        internal static SlotMarker Empty(GameGridInventory grid, GameItem item, IReadOnlyList<GridShape> reserved, int amount = -1)
         {
+            int quantity = amount < 0 ? item.unitCount : amount;
+            if (quantity > grid.slotLimit) return null;
             var occupied = new HashSet<int>(grid.childItems.Select(child => child.modifiedShape.minX));
             foreach (GridShape shape in reserved) occupied.Add(shape.minX);
             for (int i = 0; i < grid.capacity; i++)
-                if (!occupied.Contains(i)) return new SlotMarker { inventory = grid, item = item, itemGridShape = new Shape { minX = i }, numTransfer = item.unitCount };
+                if (!occupied.Contains(i)) return new SlotMarker { inventory = grid, item = item, itemGridShape = new Shape { minX = i },
+                    numTransfer = quantity };
             return null;
         }
     }
@@ -252,7 +271,9 @@ namespace ShopAssist
         internal static readonly List<Location> Locations = new List<Location>();
         internal static List<Location> OwnedLocations(bool onlyOpen) => Locations;
         internal static bool Owned(GameItem item) => item != null && item.parentInventory != null;
-        internal static bool Movable(GameItem item) => item.movable;
+        internal static bool SafeContainerForPeek(GameItem item) => true;
+        internal static bool IsOrdinaryContainer(GameItem item) => true;
+        internal static bool Movable(GameItem item) => item.movable && !ItemPinHelper.IsPinned(item);
         internal static bool CanRouteFromCounter(GameItem item, Location source) => source.id == "counter" && item.counterAllowed;
         internal static bool IsMainStockBranch(Location location) => location != null && location.MainStock;
         internal static bool WouldContainSelf(GameItem item, GameInventory target)

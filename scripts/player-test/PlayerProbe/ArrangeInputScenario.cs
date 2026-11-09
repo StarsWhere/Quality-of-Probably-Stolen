@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -39,13 +40,13 @@ public sealed class ArrangeInputScenario
                 first = New("processed_meat"); second = New("processed_meat");
                 container = New("fanny_pack"); container.EnableTag("NESTABLE_DEVICE_TAG");
                 Need(ContainerHelper.IsNestingAllowed(container, bag), "Native nested-container fixture unavailable");
-                PutFar(grid, first); PutFar(grid, second); PutFar(grid, container);
+                PutFar(grid, first, 1); PutFar(grid, second); PutFar(grid, container);
                 var nestedGrid = container.contentWindow?.childElement as GameGridInventory;
                 Need(nestedGrid != null, "Nested container grid unavailable");
                 nested = New("wine_yeast"); Put(nestedGrid, nested);
                 firstBefore = first.modifiedShape.Clone(); secondBefore = second.modifiedShape.Clone();
                 containerBefore = container.modifiedShape.Clone();
-                ItemMouseDoubleClickHandler.current.OpenContentAction(bag, new Vector2(120, 180));
+                ItemMouseDoubleClickHandler.current.OpenContentAction(bag, new Vector2(120, Screen.height - 80));
                 input = new QaSyntheticInput(keyboard: true, mouseButtons: true);
                 input.Mouse = new Vector3(-100, -100);
                 Next(2, 5); return false;
@@ -89,11 +90,17 @@ public sealed class ArrangeInputScenario
                 ClearUp();
                 Need(Same(containerBefore, container.modifiedShape) && Same(firstBefore, first.modifiedShape) && Same(secondBefore, second.modifiedShape) &&
                     nested.parentInventory == container.contentWindow.childElement, "Arrange undo did not restore the container and contents");
-                RightDown(EmptyCell()); Next(8); return false;
+                RightDown(EmptyCell(bottomFirst: true)); Next(8); return false;
             case 8:
                 ClearDown(); menu = Window("sortWindow");
                 Need(menu.IsVisible(), "Arrange menu did not reopen");
-                input.Mouse = ItemCell(first); Next(9, 2); return false;
+                Vector2 outsideItem = ItemCell(first);
+                TreeNodeRender menuBackground = Background(menu, typeof(PixelWindow));
+                Canvas menuCanvas = ItemContextHandler.current.overlayCanvas;
+                Camera menuCamera = menuCanvas == null || menuCanvas.renderMode == RenderMode.ScreenSpaceOverlay ? null : menuCanvas.worldCamera;
+                Need(menuBackground != null && !RectTransformUtility.RectangleContainsScreenPoint(menuBackground.rectTransform, outsideItem, menuCamera),
+                    "Outside-press fixture item is covered by the arrange menu");
+                input.Mouse = outsideItem; Next(9, 2); return false;
             case 9:
                 LeftDown(); Next(10); return false;
             case 10:
@@ -252,10 +259,10 @@ public sealed class ArrangeInputScenario
         SlotMarker marker = inventory.TryFindOneValidInventorySlot(item);
         Need(marker != null && marker.targetItem == null && marker.TryAcceptOnce(item.unitCount) == item.unitCount, "Fixture placement failed");
     }
-    private static void PutFar(GameGridInventory inventory, GameItem item)
+    private static void PutFar(GameGridInventory inventory, GameItem item, int bottomMargin = 0)
     {
         var pose = new GridShapeBuilder(item.modifiedShape);
-        for (int y = inventory.inventoryShape.height - pose.globalHeight; y >= 0; y--)
+        for (int y = inventory.inventoryShape.height - pose.globalHeight - bottomMargin; y >= 0; y--)
         for (int x = inventory.inventoryShape.width - pose.globalWidth; x >= 0; x--)
         {
             pose.SetPosition(x, y); SlotMarker marker = inventory.TryInventorySlot(item, item.unitCount, pose);
@@ -276,11 +283,12 @@ public sealed class ArrangeInputScenario
         }
         return null;
     }
-    private Vector2 EmptyCell()
+    private Vector2 EmptyCell(bool bottomFirst = false)
     {
         Canvas.ForceUpdateCanvases();
-        for (int y = 0; y < grid.inventoryShape.height; y++) for (int x = 0; x < grid.inventoryShape.width; x++)
+        for (int row = 0; row < grid.inventoryShape.height; row++) for (int x = 0; x < grid.inventoryShape.width; x++)
         {
+            int y = bottomFirst ? grid.inventoryShape.height - 1 - row : row;
             if (grid.childItems.Any(item => item.modifiedShape.Intersects(x, y))) continue;
             Vector2 point = Cell(x, y);
             if (RenderHandler.RaycastElement<GameItem>(point) == null && ReferenceEquals(RenderHandler.RaycastElement<GameGridInventory>(point), grid)) return point;
@@ -289,14 +297,19 @@ public sealed class ArrangeInputScenario
     }
     private Vector2 ItemCell(GameItem item)
     {
+        Canvas.ForceUpdateCanvases();
+        var examined = new List<string>();
         for (int y = item.modifiedShape.minY; y <= item.modifiedShape.maxY; y++)
         for (int x = item.modifiedShape.minX; x <= item.modifiedShape.maxX; x++)
         {
             if (item.modifiedShape.Get(x, y) == 0) continue;
             Vector2 point = Cell(x, y);
             if (ReferenceEquals(RenderHandler.RaycastElement<GameItem>(point), item)) return point;
+            PixelElement top = RenderHandler.RaycastElement<PixelElement>(point);
+            examined.Add(x + "," + y + "@" + point + "=" + (top?.GetType().Name ?? "none"));
         }
-        throw new InvalidOperationException("No raycastable item cell");
+        throw new InvalidOperationException("No raycastable item cell at step " + step + ": item=" + item.identifier +
+            ", screen=" + Screen.width + "x" + Screen.height + ", cells=" + string.Join("; ", examined));
     }
     private Vector2 Cell(int x, int y)
     {

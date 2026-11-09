@@ -1,25 +1,15 @@
-f07.enabled,设置储藏区收货规则
-f07.tip,右键储藏区网格，指定接收物品、排除项和优先级；归仓时按规则选择目标，同一容器各页可分别设置。
-f07.open,设置这个储藏区收什么
+f07.enabled,设置储藏区收发货规则
+f07.tip,点击储藏区标题栏按钮或右键网格，设置收货、自动出货和接收品类；同一容器各页可分别设置。
+f07.open,设置储藏区收发货
 f07.receive,允许收货
-f07.exclusive,目标不可用时不转其他区域
-f07.priority,优先级 -100 至 100
-f07.exclude,添加为排除项
-f07.add_category,添加品类
-f07.add_item,添加选中物品
+f07.ship,允许自动出货
 f07.save,保存规则
 f07.delete,删除规则
 f07.saved,区域规则已保存。
 f07.failed,无法保存区域规则。
-f07.invalid,请输入 -100 至 100 的优先级。
 f07.unreadable,无法读取本档区域规则。
 f07.no_area,没有可编辑的区域。
-f07.order,同级匹配的区域顺序
-f07.order_up,上移顺序
-f07.order_down,下移顺序
-f07.unknown_area,区域不可用
 f07.area_unavailable,原区域暂不可用；草稿仍保留。
-f07.limit,此类规则已达到数量上限。
 f08.enabled,按规则归仓选中货物
 f08.tip,选中货物后右键或使用快捷键归仓，按储藏区收货规则选择目标；未匹配或无法移动的货物留在原处。
 f40.occupied_drag,允许从物品上开始框选
@@ -27,11 +17,13 @@ f40.occupied_drag.tip,按住游戏框选键和 Alt，从已有物品的格子拖
 f08.key,归仓选中货物
 f08.key.tip,对当前选区执行归仓；是否先预览由归仓预览设置决定。
 f08.open,按规则归仓选中物品
+f08.selected,自动分类选中物品
+f08.all,自动分类当前网格
 f08.apply,确认归仓
 f08.select,请先选中货物。
 f08.no_rule,没有匹配的收货规则
-f08.excluded,收货规则排除了此物品
-f08.unknown_type,无法确认品类排除条件
+f08.shipping_disabled,来源区域已关闭自动出货
+f08.unknown_type,无法确认公开品类
 f08.pending,转移结果待核对，请先处理待办
 f08.journal_failed,无法保存转移记录
 f08.journal_title,转移记录

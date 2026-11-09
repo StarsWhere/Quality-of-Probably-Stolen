@@ -38,7 +38,7 @@ internal static class InventorySortPlanTests
         var moving = Add(grid, "move", 3, 0);
         var unselected = Add(grid, "other", 0, 2);
         var selected = new HashSet<GameItem> { moving };
-        var plan = InventorySortPlan.Create(grid, selected, new HashSet<GameItem>(), true, false);
+        var plan = InventorySortPlan.Create(grid, selected, true, false);
         Check(plan != null && plan.Placements.Count == 1 && ReferenceEquals(plan.Placements[0].Item, moving),
             "only selected movable items enter the plan");
         Check(plan.Placements[0].After.minX == 1 && plan.Placements[0].After.minY == 0,
@@ -52,19 +52,21 @@ internal static class InventorySortPlanTests
         moving.movable = false;
         Check(!plan.StillValid(), "a newly pinned or locked item invalidates the plan");
         moving.movable = true;
-        Check(InventorySortPlan.Create(grid, selected, new HashSet<GameItem> { moving }, true, false) == null,
-            "reserved items are excluded without touching native pins");
-        var noSelection = InventorySortPlan.Create(grid, new HashSet<GameItem>(), new HashSet<GameItem> { unselected }, true, false);
+        moving.reserved = true;
+        Check(InventorySortPlan.Create(grid, selected, true, false) == null, "pinned items are excluded");
+        moving.reserved = false; unselected.reserved = true;
+        var noSelection = InventorySortPlan.Create(grid, new HashSet<GameItem>(), true, false);
         Check(noSelection != null && noSelection.Placements.Count == 1 && ReferenceEquals(noSelection.Placements[0].Item, moving) &&
             !noSelection.Placements[0].After.Intersects(anchored.modifiedShape) && !noSelection.Placements[0].After.Intersects(unselected.modifiedShape),
-            "an empty selection arranges all eligible items around pinned and reserved obstacles");
+            "an empty selection arranges all eligible items around pinned obstacles");
+        unselected.reserved = false;
 
         var groups = Grid(5, 2);
         var a1 = Add(groups, "a", 4, 1);
         var b = Add(groups, "b", 2, 1);
         var a2 = Add(groups, "a", 0, 1);
         GridShapeBuilder.intersectionChecks = 0;
-        var grouped = InventorySortPlan.Create(groups, null, null, true, false);
+        var grouped = InventorySortPlan.Create(groups, null, true, false);
         Check(groups.placementChecks == groups.childItems.Count * groups.inventoryShape.width * groups.inventoryShape.height &&
             GridShapeBuilder.intersectionChecks < 15,
             "all native candidate checks run while worse scores skip shadow collision checks");
@@ -87,7 +89,7 @@ internal static class InventorySortPlanTests
 
         var restoreGrid = Grid(3, 2);
         var restoreItem = Add(restoreGrid, "a", 2, 1);
-        var restorePlan = InventorySortPlan.Create(restoreGrid, null, null, true, false);
+        var restorePlan = InventorySortPlan.Create(restoreGrid, null, true, false);
         restoreItem.onValidate = () => { if (restoreItem.validations == 1) throw new InvalidOperationException("refresh failed"); };
         Check(Apply(restorePlan, restoreGrid, out var restoreTransaction) == InventorySortPlan.ApplyResult.Restored && restoreItem.modifiedShape.minX == 2 &&
             restoreItem.modifiedShape.minY == 1 && restoreItem.validations == 2 && restoreGrid.validations == 0 && restoreTransaction.LastError != null,
@@ -96,7 +98,7 @@ internal static class InventorySortPlanTests
         var partialGrid = Grid(4, 2);
         var earlier = Add(partialGrid, "a", 3, 1);
         var later = Add(partialGrid, "a", 2, 1);
-        var partialPlan = InventorySortPlan.Create(partialGrid, null, null, true, false);
+        var partialPlan = InventorySortPlan.Create(partialGrid, null, true, false);
         later.onValidate = () => { if (later.validations == 1) throw new InvalidOperationException("second refresh failed"); };
         Check(Apply(partialPlan, partialGrid, out _) == InventorySortPlan.ApplyResult.Restored && earlier.modifiedShape.minX == 3 &&
             earlier.modifiedShape.minY == 1 && later.modifiedShape.minX == 2 && later.modifiedShape.minY == 1 &&
@@ -111,7 +113,7 @@ internal static class InventorySortPlanTests
         irregular.modifiedShape = new GridShapeBuilder(2, 2, 1, 0, 1, 1).SetPosition(2, 1);
         irregular.shape = irregular.modifiedShape.Clone();
         var plain = Add(irregularGrid, "b", 0, 1);
-        var irregularPlan = InventorySortPlan.Create(irregularGrid, null, null, true, false);
+        var irregularPlan = InventorySortPlan.Create(irregularGrid, null, true, false);
         Check(irregularPlan != null && irregularPlan.Placements.Count == 2 &&
             !irregularPlan.Placements.Any(p => ReferenceEquals(p.Item, container)),
             "a pinned container remains a fixed obstacle");
@@ -124,29 +126,29 @@ internal static class InventorySortPlanTests
         var unknown = Grid(3, 2);
         var unknownItem = Add(unknown, "a", 2, 1);
         unknownItem.isItemStateValidFunc = new object();
-        Check(InventorySortPlan.Create(unknown, null, null, true, false) == null && unknown.validations == 0,
+        Check(InventorySortPlan.Create(unknown, null, true, false) == null && unknown.validations == 0,
             "unknown placement callbacks are not invoked while planning");
 
         var changedByHook = Grid(3, 2);
         var hookedItem = Add(changedByHook, "hooked", 2, 1);
-        var hookedPlan = InventorySortPlan.Create(changedByHook, null, null, true, false);
+        var hookedPlan = InventorySortPlan.Create(changedByHook, null, true, false);
         changedByHook.onPlacementCheck = () => hookedItem.unitCount = 2;
         Check(Apply(hookedPlan, changedByHook, out _) == InventorySortPlan.ApplyResult.Unsupported && hookedItem.modifiedShape.minX == 2 &&
             hookedItem.modifiedShape.minY == 1 && hookedItem.validations == 0,
             "a native placement hook changing the snapshot is caught by the final recheck");
 
-        grouped = InventorySortPlan.Create(groups, null, null, true, false);
+        grouped = InventorySortPlan.Create(groups, null, true, false);
         Add(groups, "new", 3, 1);
         Check(!grouped.StillValid() && Apply(grouped, groups, out _) == InventorySortPlan.ApplyResult.Stale,
             "an item added after planning invalidates the entire plan");
 
         grid.denyPlacements = true;
-        Check(InventorySortPlan.Create(grid, selected, null, false, true) == null && moving.modifiedShape.minX == 3,
+        Check(InventorySortPlan.Create(grid, selected, false, true) == null && moving.modifiedShape.minX == 3,
             "failure to form a full legal plan leaves the original layout intact");
 
         var undoGrid = Grid(4, 2);
         var undoItem = Add(undoGrid, "undo", 3, 1);
-        var undoPlan = InventorySortPlan.Create(undoGrid, null, null, true, false);
+        var undoPlan = InventorySortPlan.Create(undoGrid, null, true, false);
         Check(Apply(undoPlan, undoGrid, out var undoTransaction) == InventorySortPlan.ApplyResult.Applied && ((IInventoryArrangeUndo)undoTransaction).CanUndo(),
             "a completed arrangement is available for undo");
         undoItem.unitCount++;
@@ -164,7 +166,7 @@ internal static class InventorySortPlanTests
         var containerGrid = Grid(4, 2);
         var movableContainer = Add(containerGrid, "bag", 3, 1);
         movableContainer.contentWindow = new object();
-        var includeContainers = InventorySortPlan.Create(containerGrid, null, null, true, false);
+        var includeContainers = InventorySortPlan.Create(containerGrid, null, true, false);
         InventoryArrangeTransaction containerTransaction = null;
         Check(includeContainers != null && Apply(includeContainers, containerGrid, out containerTransaction) == InventorySortPlan.ApplyResult.Applied && movableContainer.modifiedShape.minX == 0,
             "ordinary arrange can include a safe container");

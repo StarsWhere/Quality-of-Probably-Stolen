@@ -54,10 +54,17 @@ public class DailyGroupInputScenario
             target = targetBag.contentWindow?.childElement as GameGridInventory;
             Need(source?.inventoryShape != null && target?.inventoryShape != null, "Native container grids unavailable");
             first = New("wine_yeast") as GameItemElement;
-            second = New("mini_bottle") as GameItemElement;
-            blocker = New("wine_superyeast") as GameItemElement;
-            Need(first?.modifiedShape != null && second?.modifiedShape != null && blocker?.modifiedShape != null,
+            second = New("wine_superyeast") as GameItemElement;
+            Need(first?.modifiedShape != null && second?.modifiedShape != null,
                 "Native group fixtures or their shapes are unavailable");
+            foreach (string id in new[] { "small_morsel", "cup_noodle", "processed_cheese", "cat_bar" })
+            {
+                var candidate = DirectoryMaster.Item(id) as GameItemElement;
+                if (candidate?.modifiedShape == null || candidate.modifiedShape.globalWidth != 1 ||
+                    candidate.modifiedShape.globalHeight != 1 || !Separate(first, candidate) || !Separate(second, candidate)) continue;
+                GeneralHelper.SetItemOwned(candidate, true); blocker = candidate; break;
+            }
+            Need(blocker != null, "No separate one-cell native blocker is available");
             Need(Separate(first, second) && Separate(first, blocker) && Separate(second, blocker),
                 "Native fixtures can stack and would not remain separate");
             firstX = firstY = secondY = 1;
@@ -361,7 +368,7 @@ public class DailyGroupInputScenario
         Need(ItemMouseDragHandler.current != null, "Native item rotation input is unavailable");
         input.Down = ItemMouseDragHandler.current.rotateCCWKey;
         Need(input.Down != KeyCode.None && Input.GetKeyDown(input.Down), "QA rotation key injection is unavailable");
-        try { Invoke("OnEventUpdate"); }
+        try { Invoke("OnEventPress", new HashSet<KeyCode> { input.Down }); Invoke("OnEventUpdate"); }
         finally { input.Down = KeyCode.None; }
     }
 

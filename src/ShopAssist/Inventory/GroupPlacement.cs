@@ -31,6 +31,7 @@ namespace ShopAssist
         private static readonly MethodInfo GetDelta = AccessTools.Method(typeof(ItemMultiSelectHandler), "TryGetPreciseDelta");
         private static readonly MethodInfo ValidFormation = AccessTools.Method(typeof(ItemMultiSelectHandler), "IsFormationValid");
         private static readonly FieldInfo SelectedItems = AccessTools.Field(typeof(ItemMultiSelectHandler), "selectedItems");
+        private static readonly FieldInfo DragOffsets = AccessTools.Field(typeof(ItemMultiSelectHandler), "dragOffsets");
 
         internal static void Register(Func<bool> precise, Func<bool> rotation, Action<string> warning)
         {
@@ -86,11 +87,31 @@ namespace ShopAssist
             finally { Forget(); }
         }
 
-        private static bool Ordinary(GameGridInventory inventory) => inventory != null && ShopInventory.InStore &&
-            ShopInventory.OwnedLocations(false).Any(location => location.Ordinary && ReferenceEquals(location.Inventory, inventory));
+        private static bool MainStock(GameGridInventory inventory) => inventory != null && ShopInventory.InStore &&
+            ReferenceEquals(inventory, EmporiumEntry.Instance.invElement);
 
-        private static ShopInventory.Location Ordinary(GameGridInventory inventory, List<ShopInventory.Location> locations) =>
-            inventory == null ? null : locations.Find(location => location.Ordinary && ReferenceEquals(location.Inventory, inventory));
+        private static bool DirectStockContainer(GameGridInventory inventory)
+        {
+            if (inventory == null || !ShopInventory.InStore) return false;
+            GameGridInventory stock = EmporiumEntry.Instance.invElement;
+            GameItem container = inventory.GetParentItem();
+            if (stock == null || stock.IsRemoveLocked() || container == null || !ReferenceEquals(container.parentInventory, stock)) return false;
+            bool present = false;
+            foreach (GameItem child in stock.childItems)
+                if (ReferenceEquals(child, container)) { present = true; break; }
+            return present && ShopInventory.SafeContainerForPeek(container) &&
+                ReferenceEquals(container.contentWindow.childElement, inventory);
+        }
+
+        private static bool DirectOrdinary(GameGridInventory inventory) => MainStock(inventory) || DirectStockContainer(inventory);
+
+        private static bool Ordinary(GameGridInventory inventory, List<ShopInventory.Location> locations = null)
+        {
+            if (inventory == null) return false;
+            if (locations == null && DirectOrdinary(inventory)) return true;
+            return (locations ?? ShopInventory.OwnedLocations(false))
+                .Any(location => location.Ordinary && ReferenceEquals(location.Inventory, inventory));
+        }
 
         private static bool Begin(IReadOnlyList<GameItemElement> selected)
         {
@@ -100,12 +121,9 @@ namespace ShopAssist
             // Unadapted inventories and mixed-source selections keep the game's own behavior.
             if (selected == null || selected.Count < 2 || !(selected[0]?.parentInventory is GameGridInventory source) ||
                 selected.Any(item => item == null || item.parentInventory != source)) return true;
-            var locations = ShopInventory.OwnedLocations(false);
-            var sourceLocation = Ordinary(source, locations);
-            if (sourceLocation == null) return true;
+            if (!Ordinary(source)) return true;
             if (selected.Any(item => item.IsDestroyed() || item.modifiedShape == null ||
-                    !source.childItems.Contains(item) || !ShopInventory.Movable(item) || item.MaxNumRemove() < item.unitCount) ||
-                selected.Any(RequestBook.ReservedItems(new[] { sourceLocation }).Contains))
+                    !source.childItems.Contains(item) || !ShopInventory.Movable(item) || item.MaxNumRemove() < item.unitCount))
             {
                 // F40 only extends same-grid formations; unrelated native drags still work.
                 if (!precise) return true;
@@ -133,18 +151,12 @@ namespace ShopAssist
         {
             if (!SameGesture || active.Count < 2) return false;
             var source = active[0].Source;
-            var sourceLocation = Ordinary(source, locations);
-            if (sourceLocation == null) return false;
+            if (!Ordinary(source, locations)) return false;
             foreach (Snapshot snapshot in active)
                 if (snapshot.Item == null || snapshot.Item.IsDestroyed() || snapshot.Item.parentInventory != snapshot.Source ||
                     snapshot.Item.unitCount != snapshot.Count || !ItemGridMove.SameShape(snapshot.Item.modifiedShape, snapshot.Original) ||
                     !snapshot.Source.childItems.Contains(snapshot.Item) || !ShopInventory.Movable(snapshot.Item) ||
                     snapshot.Item.MaxNumRemove() < snapshot.Count) return false;
-            var reserved = RequestBook.ReservedItems(new[] { sourceLocation });
-            foreach (Snapshot snapshot in active)
-                if (snapshot.Item.parentInventory != snapshot.Source || !snapshot.Source.childItems.Contains(snapshot.Item) ||
-                    snapshot.Item.unitCount != snapshot.Count || !ItemGridMove.SameShape(snapshot.Item.modifiedShape, snapshot.Original) ||
-                    reserved.Contains(snapshot.Item)) return false;
             return true;
         }
 
@@ -153,7 +165,13 @@ namespace ShopAssist
 
         private static void Rotate(bool ccw, Dictionary<GameItemElement, Vector2> offsets)
         {
-            if (active == null || offsets == null || !Current(ShopInventory.OwnedLocations(false))) return;
+            if (active == null || offsets == null || !Current(null) ||
+                !InventoryAutoInsert.KnownMutationPatches() || active.Any(part =>
+                    !InventoryAutoInsert.SafeItem(part.Item, true) || !InventoryAutoInsert.SafeTransferInventory(part.Source)) ||
+                !InventoryAutoInsert.KnownPatches(AccessTools.Method(typeof(GameItemElement), nameof(GameItemElement.RotCW))) ||
+                !InventoryAutoInsert.KnownPatches(AccessTools.Method(typeof(GameItemElement), nameof(GameItemElement.RotCCW))) ||
+                !InventoryAutoInsert.KnownPatches(AccessTools.Method(typeof(GameItemElement), "GridRotCW")) ||
+                !InventoryAutoInsert.KnownPatches(AccessTools.Method(typeof(GameItemElement), "GridRotCCW"))) return;
             List<GridShape> next = GroupGeometry.Rotate(active.Select(part => part.Pose).ToList(),
                 active[0].Original.minX, active[0].Original.minY, ccw);
             for (int i = 0; i < active.Count; i++)
@@ -168,9 +186,9 @@ namespace ShopAssist
 
         private static bool Legal(GameGridInventory target, int dx, int dy)
         {
-            if (!SameGesture || target == null) return false;
-            var locations = ShopInventory.OwnedLocations(false);
-            if (!Current(locations) || Ordinary(target, locations) == null || target.IsInsertLocked() || !GeneralHelper.MayPlayerInsertInto(target)) return false;
+            if (!SameGesture || target == null || active.Count < 2) return false;
+            var locations = DirectOrdinary(active[0].Source) && DirectOrdinary(target) ? null : ShopInventory.OwnedLocations(false);
+            if (!Current(locations) || !Ordinary(target, locations) || target.IsInsertLocked() || !GeneralHelper.MayPlayerInsertInto(target)) return false;
             var ignored = active.Select(part => (GameItem)part.Item).ToList();
             var poses = new List<GridShape>();
             foreach (Snapshot part in active)
@@ -197,7 +215,7 @@ namespace ShopAssist
                     foreach (Snapshot part in active)
                         if (part.Item.parentInventory != source || part.Item.unitCount != part.Count ||
                             !ItemGridMove.SameShape(part.Item.modifiedShape, part.Original) || !ShopInventory.Movable(part.Item) ||
-                            RequestBook.Reserved(part.Item) || !source.Expel(part.Item) || part.Item.parentInventory != null ||
+                            !source.Expel(part.Item) || part.Item.parentInventory != null ||
                             source.childItems.Contains(part.Item) || part.Item.unitCount != part.Count)
                             throw new InvalidOperationException("Native inventory rejected a group removal");
                     foreach (Snapshot part in active)
@@ -237,7 +255,7 @@ namespace ShopAssist
             {
                 if (part.Item.parentInventory != source || part.Item.unitCount != part.Count ||
                     !ItemGridMove.SameShape(part.Item.modifiedShape, part.Original) ||
-                    !ShopInventory.Movable(part.Item) || RequestBook.Reserved(part.Item) ||
+                    !ShopInventory.Movable(part.Item) ||
                     !ItemGridMove.TryMove(part.Item, target, At(part, dx, dy), out bool restored))
                 { failed = true; break; }
                 moved.Add(part);
@@ -302,7 +320,7 @@ namespace ShopAssist
         }
 
         [HarmonyPatch(typeof(ItemMultiSelectHandler), "OnEventUpdate")]
-        private static class RotatePatch
+        private static class DragSessionPatch
         {
             private static void Prefix(ItemMultiSelectHandler __instance, Dictionary<GameItemElement, Vector2> ___dragOffsets,
                 List<GameItemElement> ___selectedItems)
@@ -310,13 +328,62 @@ namespace ShopAssist
                 if (active == null) return;
                 if (!__instance.IsGroupDragging) { Forget(); return; }
                 if (!SameGesture) { Cancel(__instance, ___selectedItems); return; }
-                if (!RotationEnabled) return;
+            }
+        }
+
+        private static bool CanReceiveRotation(ItemMultiSelectHandler handler) => active != null && RotationEnabled &&
+            SameGesture && handler != null && handler.IsGroupDragging && ReferenceEquals(handler, ItemMultiSelectHandler.current);
+        private static bool SwapNativeRotation => EmporiumOption.Instance != null && EmporiumOption.Instance.swapDragRotateFlip;
+        private static void ApplyRotation(GroupRotationInput.Turn turn, Dictionary<GameItemElement, Vector2> offsets)
+        {
+            // Native presses apply clockwise first and counterclockwise second,
+            // even if both bindings are pressed in the same input dispatch.
+            if ((turn & GroupRotationInput.Turn.Clockwise) != 0) Rotate(false, offsets);
+            if ((turn & GroupRotationInput.Turn.Counterclockwise) != 0) Rotate(true, offsets);
+        }
+
+        [HarmonyPatch(typeof(ItemMultiSelectHandler), "get_keyListeners")]
+        private static class RotationKeysPatch
+        {
+            private static void Postfix(ItemMultiSelectHandler __instance, ref List<KeyCode> __result)
+            {
                 ItemMouseDragHandler keys = ItemMouseDragHandler.current;
-                if (keys == null) return;
-                float wheel = Input.mouseScrollDelta.y;
-                bool cw = Input.GetKeyDown(keys.rotateCWKey) || wheel < 0;
-                bool ccw = Input.GetKeyDown(keys.rotateCCWKey) || wheel > 0;
-                if (cw != ccw) Rotate(ccw, ___dragOffsets);
+                if (!CanReceiveRotation(__instance) || keys == null || __result == null) return;
+                // InputActionManager only dispatches pressed keys registered by
+                // this handler. Read the single-item handler's live bindings.
+                foreach (KeyCode key in new[] { keys.rotateCWKey, keys.rotateCCWKey, keys.secondaryKey })
+                    if (key != KeyCode.None && !__result.Contains(key)) __result.Add(key);
+            }
+        }
+
+        [HarmonyPatch(typeof(ItemMultiSelectHandler), "OnEventPress")]
+        private static class RotationPressPatch
+        {
+            private static void Prefix(ItemMultiSelectHandler __instance, ISet<KeyCode> keysPressed,
+                Dictionary<GameItemElement, Vector2> ___dragOffsets)
+            {
+                ItemMouseDragHandler keys = ItemMouseDragHandler.current;
+                if (!CanReceiveRotation(__instance) || keys == null) return;
+                ApplyRotation(GroupRotationInput.Press(keysPressed, keys.rotateCWKey, keys.rotateCCWKey,
+                    keys.secondaryKey, SwapNativeRotation), ___dragOffsets);
+            }
+        }
+
+        // ItemMultiSelectHandler inherits this empty event implementation. The
+        // native dispatcher has already checked initialization and enabled state.
+        [HarmonyPatch(typeof(EmptyActionHandler), "OnEventMouseScroll")]
+        private static class RotationScrollPatch
+        {
+            private static void Postfix(EmptyActionHandler __instance, Vector2 scrollDelta)
+            {
+                if (!(__instance is ItemMultiSelectHandler handler) || !CanReceiveRotation(handler)) return;
+                ItemMouseDragHandler keys = ItemMouseDragHandler.current;
+                if (keys == null || DragOffsets == null) return;
+                // Native stack scrolling changes quantity, not orientation. A
+                // group keeps complete stacks, so do not reinterpret that input.
+                bool ignore = Input.GetKey(keys.scrollIgnoreKey) || active.Any(part => part.Count > 1);
+                ApplyRotation(GroupRotationInput.Scroll(scrollDelta, SwapNativeRotation, ignore),
+                    DragOffsets.GetValue(handler) as Dictionary<GameItemElement, Vector2>);
             }
         }
 
@@ -378,6 +445,28 @@ namespace ShopAssist
         private static class ResetPatch
         {
             private static void Postfix() { Forget(); }
+        }
+    }
+
+    internal static class GroupRotationInput
+    {
+        [Flags] internal enum Turn { None = 0, Clockwise = 1, Counterclockwise = 2 }
+        internal static Turn Press(ISet<KeyCode> pressed, KeyCode clockwise, KeyCode counterclockwise,
+            KeyCode secondary, bool swap)
+        {
+            if (pressed == null) return Turn.None;
+            Turn turn = Turn.None;
+            if (pressed.Contains(clockwise) || swap && pressed.Contains(secondary)) turn |= Turn.Clockwise;
+            if (pressed.Contains(counterclockwise)) turn |= Turn.Counterclockwise;
+            return turn;
+        }
+        internal static Turn Scroll(Vector2 delta, bool swap, bool ignore)
+        {
+            // Match ItemMouseDragHandler: combine both axes and truncate before
+            // checking direction. Swapped wheel gestures mean flip, not rotate.
+            if (swap || ignore) return Turn.None;
+            int amount = (int)(delta.x + delta.y);
+            return amount > 0 ? Turn.Counterclockwise : amount < 0 ? Turn.Clockwise : Turn.None;
         }
     }
 }

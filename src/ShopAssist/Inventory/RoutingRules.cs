@@ -8,7 +8,7 @@ namespace ShopAssist
     [Serializable]
     internal sealed class RoutingBook
     {
-        [JsonRequired] public int schemaVersion = 1;
+        [JsonRequired] public int schemaVersion = 2;
         [JsonRequired] public List<RoutingRule> rules = new List<RoutingRule>();
     }
 
@@ -16,19 +16,13 @@ namespace ShopAssist
     internal sealed class RoutingRule
     {
         [JsonRequired] public string location;
-        [JsonRequired] public int priority;
         [JsonRequired] public bool receive;
-        [JsonRequired] public bool exclusive;
-        [JsonRequired] public List<string> itemIds = new List<string>();
+        [JsonRequired] public bool ship = true;
         [JsonRequired] public List<string> categories = new List<string>();
-        [JsonRequired] public List<string> excludedIds = new List<string>();
-        [JsonRequired] public List<string> excludedCategories = new List<string>();
 
         internal RoutingRule Copy() => new RoutingRule
         {
-            location = location, priority = priority, receive = receive, exclusive = exclusive,
-            itemIds = new List<string>(itemIds), categories = new List<string>(categories),
-            excludedIds = new List<string>(excludedIds), excludedCategories = new List<string>(excludedCategories)
+            location = location, receive = receive, ship = ship, categories = new List<string>(categories)
         };
     }
 
@@ -38,7 +32,7 @@ namespace ShopAssist
 
         internal static bool Valid(RoutingBook book, ICollection<string> knownCategories)
         {
-            if (book == null || book.schemaVersion != 1 || book.rules == null || book.rules.Count > MaxRules) return false;
+            if (book == null || book.schemaVersion != 2 || book.rules == null || book.rules.Count > MaxRules) return false;
             var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (RoutingRule rule in book.rules)
                 if (!Valid(rule, knownCategories) || !seen.Add(rule.location)) return false;
@@ -47,9 +41,7 @@ namespace ShopAssist
 
         internal static bool Valid(RoutingRule rule, ICollection<string> knownCategories)
         {
-            return rule != null && ValidLocation(rule.location) && rule.priority >= -100 && rule.priority <= 100 &&
-                ValidValues(rule.itemIds, null) && ValidValues(rule.excludedIds, null) &&
-                ValidValues(rule.categories, knownCategories) && ValidValues(rule.excludedCategories, knownCategories);
+            return rule != null && ValidLocation(rule.location) && ValidValues(rule.categories, knownCategories);
         }
 
         private static bool ValidValues(List<string> values, ICollection<string> allowed)
@@ -73,23 +65,21 @@ namespace ShopAssist
                 int.TryParse(parts[3], out int page) && page >= -1 && page <= 1024;
         }
 
-        // 0 means excluded or unknown; specific item rules outrank categories.
-        internal static int Match(RoutingRule rule, string itemId, ICollection<string> publicTypes, bool completeTypes)
+        internal static int Match(RoutingRule rule, ICollection<string> publicTypes)
         {
-            if (rule == null || !rule.receive || string.IsNullOrEmpty(itemId)) return 0;
-            if (rule.excludedCategories.Count != 0 && !completeTypes) return 0;
-            if (rule.excludedIds.Contains(itemId) || (publicTypes != null && publicTypes.Any(rule.excludedCategories.Contains))) return 0;
-            if (rule.itemIds.Contains(itemId)) return 2;
-            return publicTypes != null && publicTypes.Any(rule.categories.Contains) ? 1 : 0;
+            if (rule == null || !rule.receive || publicTypes == null) return 0;
+            return rule.categories.Count(publicTypes.Contains);
         }
 
-        internal static IEnumerable<RoutingRule> Ranked(RoutingBook book, string itemId, ICollection<string> publicTypes, bool completeTypes)
+        internal static bool AllowsReceiving(RoutingRule rule, ICollection<string> publicTypes, bool allowUnmatched) =>
+            rule == null || rule.receive && (allowUnmatched || Match(rule, publicTypes) > 0);
+
+        internal static IEnumerable<RoutingRule> Ranked(RoutingBook book, ICollection<string> publicTypes)
         {
-            return book.rules.Select((rule, order) => new { rule, order, grade = Match(rule, itemId, publicTypes, completeTypes) })
+            return book.rules.Select(rule => new { rule, grade = Match(rule, publicTypes) })
                 .Where(entry => entry.grade > 0)
                 .OrderByDescending(entry => entry.grade)
-                .ThenByDescending(entry => entry.rule.priority)
-                .ThenBy(entry => entry.order)
+                .ThenBy(entry => entry.rule.location, StringComparer.Ordinal)
                 .Select(entry => entry.rule);
         }
     }

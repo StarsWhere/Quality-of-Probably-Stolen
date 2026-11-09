@@ -1,25 +1,15 @@
-f07.enabled,Set receiving rules for storage areas
-f07.tip,Right-click a storage grid to choose accepted items, exclusions and priority. Routing uses these rules; each container page can have its own rules.
-f07.open,Set what this area receives
+f07.enabled,Set receiving and shipping rules for storage areas
+f07.tip,Use the storage title button or right-click its grid to set receiving and automatic shipping permissions and accepted categories. Each container page can have its own rules.
+f07.open,Set storage receiving and shipping
 f07.receive,Allow receiving goods
-f07.exclusive,Do not use other areas if unavailable
-f07.priority,Priority -100 to 100
-f07.exclude,Add as exclusion
-f07.add_category,Add category
-f07.add_item,Add selected item
+f07.ship,Allow automatic taking
 f07.save,Save rule
 f07.delete,Delete rule
 f07.saved,Area rule saved.
 f07.failed,Could not save the area rule.
-f07.invalid,Enter a priority from -100 to 100.
 f07.unreadable,Could not read this save's routing rules.
 f07.no_area,No editable storage area is available.
-f07.order,Order for equally ranked areas
-f07.order_up,Move up
-f07.order_down,Move down
-f07.unknown_area,Area unavailable
 f07.area_unavailable,This area is unavailable; the draft is retained.
-f07.limit,This rule list has reached its limit.
 f08.enabled,Route selected goods using storage rules
 f08.tip,Select goods and right-click or use a shortcut to route them. Receiving rules choose the destination; unmatched or immovable goods stay where they are.
 f40.occupied_drag,Start selections on occupied cells
@@ -27,11 +17,13 @@ f40.occupied_drag.tip,Hold the game selection key and Alt to start on an occupie
 f08.key,Route selected goods
 f08.key.tip,Route the current selection. The routing preview settings determine whether a preview appears first.
 f08.open,Route selected goods by rule
+f08.selected,Classify selected goods
+f08.all,Classify goods in this grid
 f08.apply,Move goods
 f08.select,Select goods first.
 f08.no_rule,No matching receiving rule
-f08.excluded,Receiving rules exclude this item
-f08.unknown_type,Cannot confirm the excluded categories
+f08.shipping_disabled,Automatic taking is disabled for the source area
+f08.unknown_type,Cannot confirm the public categories
 f08.pending,Transfer needs inspection; resolve it before continuing
 f08.journal_failed,Could not save the transfer record
 f08.journal_title,Transfer record

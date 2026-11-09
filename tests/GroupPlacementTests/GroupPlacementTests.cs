@@ -5,6 +5,7 @@ using System.Linq;
 using System.Reflection;
 using System.Runtime.Loader;
 using ShopAssist;
+using UnityEngine;
 
 static class GroupPlacementTests
 {
@@ -32,6 +33,7 @@ static class GroupPlacementTests
 
     static void Check()
     {
+        CheckNativeInputs();
         foreach (bool flipped in new[] { false, true }) foreach (int orientation in Enumerable.Range(0, 4))
         {
             var first = new GridShapeBuilder(2, 3).SetData("110010", 2).SetTransform(4, 5, flipped, orientation).Build();
@@ -68,5 +70,31 @@ static class GroupPlacementTests
             for (int i = 0; i < originals.Count; i++) Require(Cells(originals[i]).SetEquals(Cells(four[i])), "Four turns changed the formation");
         }
         Console.WriteLine("PASS group rotation preserves irregular masks, flipped poses, relative offsets and occupied grab anchors");
+    }
+
+    static void CheckNativeInputs()
+    {
+        var input = typeof(ModEntry).Assembly.GetType("ShopAssist.GroupRotationInput", true);
+        const BindingFlags flags = BindingFlags.Static | BindingFlags.NonPublic;
+        MethodInfo press = input.GetMethod("Press", flags), scroll = input.GetMethod("Scroll", flags);
+        int Press(bool swap, params KeyCode[] keys) => Convert.ToInt32(press.Invoke(null,
+            new object[] { keys.ToHashSet(), KeyCode.F7, KeyCode.F8, KeyCode.Mouse1, swap }));
+        int Scroll(float x, float y, bool swap = false, bool ignore = false) => Convert.ToInt32(scroll.Invoke(null,
+            new object[] { new Vector2(x, y), swap, ignore }));
+        Require(Press(false, KeyCode.F7) == 1 && Press(false, KeyCode.F8) == 2,
+            "Remapped native clockwise and counterclockwise keys must drive group rotation");
+        Require(Press(false, KeyCode.Q, KeyCode.E) == 0, "Default keys must not leak through after native remapping");
+        Require(Press(false, KeyCode.Mouse1) == 0, "A native flip gesture must not become a group rotation");
+        Require(Press(true, KeyCode.Mouse1) == 1, "Swapping native rotate/flip must make secondary click rotate the group");
+        Require(Press(true, KeyCode.F8) == 2 && Press(true, KeyCode.F7, KeyCode.F8) == 3,
+            "Explicit rotation bindings and simultaneous native presses must retain their meaning after swapping");
+        Require(Press(true, KeyCode.F7, KeyCode.Mouse1) == 1, "Two clockwise bindings in one press dispatch must rotate only once");
+        Require(Scroll(0, 1) == 2 && Scroll(0, -1) == 1, "Native wheel direction must match single-item rotation");
+        Require(Scroll(1, 0) == 2 && Scroll(-1, 0) == 1, "Native horizontal wheel rotation must remain available");
+        Require(Scroll(1, -1) == 0 && Scroll(0, .9f) == 0, "Wheel axes must cancel and fractional native ticks must truncate");
+        Require(Scroll(0, 1, swap: true) == 0 && Scroll(0, -1, swap: true) == 0,
+            "Swapped native wheel flipping must not rotate the group");
+        Require(Scroll(0, 1, ignore: true) == 0, "The native ignore-scroll modifier must suppress group rotation");
+        Console.WriteLine("PASS native remapped rotation bindings, swapped secondary click, simultaneous keys and wheel semantics");
     }
 }
