@@ -87,13 +87,6 @@ public abstract class PackingRecoveryFixture
         throw new InvalidOperationException("QA pending journal restoration failure");
     }
 
-    private static Toggle PriorityToggle()
-    {
-        string label = ModHelper.GetLocalized(Mod, "f36.priority_edit");
-        return Window("packing").root.GetComponentsInChildren<Toggle>(true).FirstOrDefault(toggle => toggle.gameObject.activeInHierarchy &&
-            toggle.transform.parent.GetComponentsInChildren<TMP_Text>(true).Any(text => text.text == label));
-    }
-
     private static bool GroundVisible(GameItem item, GameInventory expected)
     {
         var element = item as GameItemElement;
@@ -169,27 +162,6 @@ public abstract class PackingRecoveryFixture
 
     private void BeginFaultedTransfer()
     {
-        var packing = Window("packing");
-        foreach (GameItem item in ground.childItems.ToArray())
-        {
-            if (ReferenceEquals(item, first) || ReferenceEquals(item, second)) continue;
-            if (QaItemUi.Hit(packing.root, item) != null && QaItemUi.Selected(packing, item)) QaItemUi.Click(packing, item);
-            packing = Window("packing");
-        }
-        var priority = PriorityToggle();
-        Need(priority != null && !priority.isOn, "The packing priority control is unavailable");
-        priority.isOn = true;
-        Need(!QaItemUi.Selected(Window("packing"), first) && !QaItemUi.Selected(Window("packing"), second),
-            "The recovery fixtures unexpectedly had priority");
-        QaItemUi.Click(Window("packing"), first);
-        Need(QaItemUi.Selected(Window("packing"), first) && !QaItemUi.Selected(Window("packing"), second),
-            "The first item did not receive priority");
-        priority = PriorityToggle(); Need(priority != null && priority.isOn, "The packing priority control was lost"); priority.isOn = false;
-        Window("packing").Get("preview").button.onClick.Invoke();
-        var preview = Window("packing");
-        Need(preview?.Get("apply")?.button != null && QaItemUi.Selected(preview, first) && QaItemUi.Selected(preview, second),
-            "Native F36 preview did not offer both items under the current safety gate");
-        UnityEvent repeat = preview.Get("apply").button.onClick;
         observedFirst = first; observedGround = ground; failRestore = UsePockets;
         completedWriteFailed = observedNativeMove = false; doneFailures = restoreFailures = 0;
         const string owner = "qa.f36-completion-write";
@@ -204,7 +176,7 @@ public abstract class PackingRecoveryFixture
                 harmony.Patch(AccessTools.Method(typeof(ModHelper), nameof(ModHelper.SetModData), new[] { typeof(string), typeof(string), typeof(string) }),
                     prefix: new HarmonyMethod(typeof(PackingRecoveryFixture).GetMethod(nameof(FailPendingRestore), F)));
             Need(NativeGate(), "Journal-only fault injection changed the native transfer safety gate");
-            repeat.Invoke();
+            RoutingScenario.RunFeatureAction("f36.open");
         }
         finally { harmony.UnpatchAll(owner); observedFirst = null; observedGround = null; }
 
@@ -219,15 +191,11 @@ public abstract class PackingRecoveryFixture
         Need(!Ready() && State(Raw(), UsePockets ? "done" : "pending"),
             "The uncertain completion did not keep the transfer blocked with its expected saved state");
         string beforeRepeat = Raw(); GameInventory firstDestination = first.parentInventory;
-        repeat.Invoke();
+        RoutingScenario.RunFeatureAction("f36.open");
         Need(!Ready() && Raw() == beforeRepeat && ReferenceEquals(first.parentInventory, firstDestination) &&
             ReferenceEquals(second.parentInventory, ground) && second.unitCount == secondCount,
             "A repeated confirmation moved goods or changed the pending record");
 
-        var current = Window("packing");
-        Need(current?.IsAlive == true && current.Get("resolve_pending")?.button != null &&
-            Text(current).Contains(firstName) && Text(current).Contains(ModHelper.GetLocalized(Mod, "f08.pending")),
-            "The field did not show the pending item and its explicit resolution action");
         object result = ModType("ShopNotice").GetField("lastResult", F).GetValue(null);
         var rows = result?.GetType().GetField("Items", F)?.GetValue(result) as IEnumerable;
         Need(HasResult() && rows != null, "The interrupted batch did not retain operation details");
@@ -266,13 +234,15 @@ public abstract class PackingRecoveryFixture
                 ground = e.afterhourInventory; attempts = PlayerStore.Instance.scavengingAttempts;
                 string token = Guid.NewGuid().ToString("N").Substring(0, 8);
                 firstName = "QA pending item " + token; secondName = "QA unattempted item " + token;
+                foreach (GameItem existing in ground.childItems.ToArray()) existing.Destroy();
                 first = Put("wine_yeast", firstName, ground); second = Put("wine_yeast_red", secondName, ground);
+                first.unitValue = 10000; second.unitValue = 5000;
                 secondHome = second.modifiedShape.Clone(); secondCount = second.unitCount;
                 firstId = first.GetUniqueID(); secondId = second.GetUniqueID(); step = 2; return false;
             case 2:
                 if (!GroundVisible(first, ground) || !GroundVisible(second, ground)) return false;
                 if (UsePockets) CheckNativePocketGate();
-                RoutingScenario.RunFeatureAction("f36.open"); BeginFaultedTransfer(); step = 3; return false;
+                BeginFaultedTransfer(); step = 3; return false;
             case 3:
             {
                 var direct = QaItemUi.WindowAction(e.afterhourWindow, "result");
@@ -283,22 +253,11 @@ public abstract class PackingRecoveryFixture
                     Text(details).Contains(ModHelper.GetLocalized(Mod, "operation.not_attempted")),
                     "Direct field result omitted the pending or unattempted item");
                 details.Close();
-                if (!UsePockets)
-                {
-                    var resolve = Window("packing").Get("resolve_pending")?.button;
-                    Need(resolve != null && resolve.interactable, "Field inspection confirmation is unavailable");
-                    resolve.onClick.Invoke();
-                    Need(Ready() && State(Raw(), "resolved") && ReferenceEquals(first.parentInventory, bagGrid) &&
-                        ReferenceEquals(second.parentInventory, ground), "Field confirmation did not resolve the pending journal safely");
-                    Window("packing").Get("preview").button.onClick.Invoke();
-                    var retry = Window("packing");
-                    Need(QaItemUi.Hit(retry.root, first) == null && QaItemUi.Selected(retry, second),
-                        "Retry included the already moved item or omitted the unattempted item");
-                    retry.Get("apply").button.onClick.Invoke();
-                    Need(Ready() && ReferenceEquals(first.parentInventory, bagGrid) && ReferenceEquals(second.parentInventory, bagGrid) &&
-                        PlayerStore.Instance.scavengingAttempts == attempts, "Field recovery did not move only the remaining item");
-                }
-                Window("packing")?.Close(); MapUIManager.Instance.ReturnNow(); step = 4; return false;
+                GameSlotInventory free = e.afterhourPocketSlotInvLeft.childItem == null ? e.afterhourPocketSlotInvLeft : e.afterhourPocketSlotInvRight;
+                SlotMarker carry = free.TryFindOneValidInventorySlot(second);
+                Need(carry != null && carry.inventory == free && carry.targetItem == null &&
+                    carry.TryAcceptOnce(second.unitCount) == second.unitCount, "Could not preserve the unattempted item for retry");
+                MapUIManager.Instance.ReturnNow(); step = 4; return false;
             }
             case 4:
                 if (MapUIManager.Instance.IsOutside || PlayerStore.Instance.playerLocation != PlayerStore.PlayerLocation.IN_STORE ||
@@ -306,14 +265,13 @@ public abstract class PackingRecoveryFixture
                     StoreUIManager.Instance.blackscreen?.gameObject.activeInHierarchy == true) return false;
                 if (readyAt == 0) { readyAt = Time.unscaledTime + .5f; return false; }
                 if (Time.unscaledTime < readyAt || HasResult() || Window("operation")?.IsAlive == true) return false;
-                if (UsePockets)
-                {
-                    Need(!Ready() && State(Raw(), "done"), "In-session uncertainty was lost after returning to the store");
-                    if (!QaItemUi.OpenAttention()) return false;
-                    Need(Text(Window("attention")).Contains(firstName), "Pending field transfer was not shown in store attention");
-                    Window("attention").Close();
-                }
-                else Need(Ready(), "Resolved backpack transfer remained blocked in the store");
+                Need(!Ready() && State(Raw(), UsePockets ? "done" : "pending"), "In-session uncertainty was lost after returning to the store");
+                if (!QaItemUi.OpenAttention()) return false;
+                Need(Text(Window("attention")).Contains(firstName), "Pending field transfer was not shown in store attention");
+                Window("attention").Close();
+                SlotMarker preserve = bagGrid.TryFindOneValidInventorySlot(second);
+                Need(preserve != null && preserve.inventory == bagGrid && preserve.targetItem == null &&
+                    preserve.TryAcceptOnce(second.unitCount) == second.unitCount, "Could not retain the remaining item for a later trip");
                 savedRun = PlayerStore.Instance.runID; savedSlot = PlayerStore.Instance.saveSlotId;
                 PlayerStore.Instance.SaveGame(); StoreUIManager.Instance.escapeUIManager.OnMainMenu();
                 secondRun = new QaNewRun(); step = 5; return false;
@@ -328,14 +286,7 @@ public abstract class PackingRecoveryFixture
                     StoreUIManager.Instance.blackscreen?.gameObject.activeInHierarchy == true) return false;
                 Need(!HasResult() && PlayerStore.Instance.FindAllItem().Any(item => item.uniqueId == firstId),
                     "Reload lost the physically moved item or resurrected the field result");
-                if (!UsePockets)
-                {
-                    Need(Ready() && PlayerStore.Instance.FindAllItem().Any(item => item.uniqueId == secondId),
-                        "Reload lost the remaining item or reopened a resolved transfer");
-                    result = "PASS F36 backpack completion-write failure, explicit field resolution, retry and save isolation";
-                    return true;
-                }
-                Need(!Ready() && State(Raw(), "done"), "Returning to the original save lost its in-session pending latch");
+                Need(!Ready() && State(Raw(), UsePockets ? "done" : "pending"), "Returning to the original save lost its in-session pending latch");
                 if (!QaItemUi.OpenAttention()) return false;
                 Need(Text(Window("attention")).Contains(firstName), "The original save's pending item is not visible after switching saves");
                 var confirm = RoutingScenario.Button(Window("attention"), "attention.resolve");
@@ -343,7 +294,29 @@ public abstract class PackingRecoveryFixture
                 confirm.onClick.Invoke();
                 Need(Ready() && State(Raw(), "resolved") && PlayerStore.Instance.FindAllItem().Any(item => item.uniqueId == firstId),
                     "Confirming inspection did not resolve the latch while retaining the moved item");
-                result = "PASS F36 pocket completion-write and restore failures, stopped batch, blocked retry and per-save in-session recovery";
+                Window("attention")?.Close();
+                bag = PlayerStore.Instance.FindAllItem().First(item => item.GetDisplayName(true) == "QA recovery backpack");
+                bagGrid = bag.contentWindow.childElement as GameGridInventory;
+                second = PlayerStore.Instance.FindAllItem().First(item => item.uniqueId == secondId);
+                Need(bagGrid != null && second.parentInventory == bagGrid, "The unattempted item was not retained across saves");
+                e = EmporiumEntry.Instance; e.selectedBackpack = bag; PlayerStore.Instance.visitLeftTonight = 2;
+                MapUIManager.Instance.Travel(AfterhourLocation.Get(AfterhourLocation.DUMPING_GROUND)); step = 7; return false;
+            case 7:
+                if (MapUIManager.Instance.Current?.Id != AfterhourLocation.DUMPING_GROUND || !e.afterhourWindow.IsVisible() ||
+                    e.afterhourPocketSlotInvBackpack.childItem != bag || StoreUIManager.Instance.blackscreen?.gameObject.activeInHierarchy == true) return false;
+                ground = e.afterhourInventory;
+                foreach (GameItem existing in ground.childItems.ToArray()) existing.Destroy();
+                SlotMarker discard = ground.TryFindOneValidInventorySlot(second);
+                Need(discard != null && discard.inventory == ground && discard.targetItem == null &&
+                    discard.TryAcceptOnce(second.unitCount) == second.unitCount, "Could not prepare the retry item");
+                attempts = PlayerStore.Instance.scavengingAttempts; step = 8; return false;
+            case 8:
+                if (!GroundVisible(second, ground)) return false;
+                RoutingScenario.RunFeatureAction("f36.open");
+                Need(Ready() && second.parentInventory != ground && PlayerStore.Instance.scavengingAttempts == attempts &&
+                    PlayerStore.Instance.FindAllItem().Any(item => item.uniqueId == firstId),
+                    "The post-inspection retry did not retain the first item and move the remaining one");
+                result = "PASS F36 completion-write failure, stopped batch, explicit inspection, retry and save isolation";
                 return true;
             default: throw new InvalidOperationException("Unknown packing recovery step");
         }

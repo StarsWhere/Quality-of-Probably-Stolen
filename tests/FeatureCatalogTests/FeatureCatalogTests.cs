@@ -9,20 +9,20 @@ internal static class FeatureCatalogTests
     private static void Main()
     {
         var expected = new Dictionary<FeatureCategory, int[]> {
-            [FeatureCategory.Items] = new[] { 2, 5, 7, 8, 9, 20, 22, 25, 26, 36, 38, 39, 40, 41 },
-            [FeatureCategory.Trade] = new[] { 1, 3, 4, 11, 16, 23, 24, 27, 28, 29, 34 },
+            [FeatureCategory.Items] = new[] { 2, 5, 7, 8, 9, 20, 25, 36, 38, 39, 40, 41 },
+            [FeatureCategory.Trade] = new[] { 1, 3, 4, 11, 16, 23, 24, 28, 34 },
             [FeatureCategory.Machines] = new[] { 10, 12, 19, 30, 31, 32, 33, 35, 37 },
-            [FeatureCategory.Calendar] = new[] { 13, 14, 15, 17, 18, 21 },
+            [FeatureCategory.Calendar] = new[] { 14, 15, 17, 18, 21 },
             [FeatureCategory.Playback] = new[] { 42 }
         };
-        Check(FeatureCatalog.All.Count == 41 && FeatureCatalog.All.Select(feature => feature.Id).Distinct().Count() == 41,
+        Check(FeatureCatalog.All.Count == 36 && FeatureCatalog.All.Select(feature => feature.Id).Distinct().Count() == 36,
             "Features must have one descriptor each");
         foreach (var pair in expected)
             Check(FeatureCatalog.All.Where(feature => feature.Category == pair.Key).Select(feature => feature.Id).SequenceEqual(pair.Value),
                 "Wrong category: " + pair.Key);
         var tiers = new Dictionary<FeatureTier, int[]> {
-            [FeatureTier.Basic] = new[] { 2, 3, 4, 5, 13, 14, 15, 16, 17, 18, 19, 20, 21, 23, 28, 38, 39, 40, 41, 42 },
-            [FeatureTier.RuleBased] = new[] { 1, 7, 8, 9, 22, 24, 25, 26, 27, 29, 31, 32, 33, 35, 37 },
+            [FeatureTier.Basic] = new[] { 2, 3, 4, 5, 14, 15, 16, 17, 18, 19, 20, 21, 23, 28, 38, 39, 40, 41, 42 },
+            [FeatureTier.RuleBased] = new[] { 1, 7, 8, 9, 24, 25, 31, 32, 33, 35, 37 },
             [FeatureTier.Planning] = new[] { 10, 11, 12, 30, 34, 36 }
         };
         foreach (var pair in tiers)
@@ -45,7 +45,7 @@ internal static class FeatureCatalogTests
         Check(!FeatureCatalog.ToggleDefault("f01.wholesale", true) && !FeatureCatalog.ToggleDefault("f05.auto_insert", true) &&
             !FeatureCatalog.ToggleDefault("f04.unseen", true),
             "Cross-tier suboptions must default off");
-        foreach (string key in new[] { "f04.stolen", "f04.contraband", "f29.price", "f40.occupied_drag" })
+        foreach (string key in new[] { "f04.stolen", "f04.contraband", "f40.occupied_drag" })
             Check(FeatureCatalog.ToggleDefault(key, true) && !FeatureCatalog.ToggleDefault(key, false),
                 "An ordinary safety or behavior suboption lost its requested default: " + key);
         bool rejectedDefault = false;
@@ -53,6 +53,8 @@ internal static class FeatureCatalogTests
         catch (ArgumentException) { rejectedDefault = true; }
         Check(rejectedDefault, "Planning features may not declare an enabled primary default");
         Check(FeatureCatalog.RequiredSettings("f07.open").SequenceEqual(new[] { "f07.enabled" }), "Rule editing depends on routing");
+        Check(FeatureCatalog.For("f25.open").SettingKey == "f25.return_mode" &&
+            FeatureCatalog.RequiredSettings("f25.open").SequenceEqual(new[] { "f25.return_mode" }), "Cargo must have a single primary mode.");
         Check(FeatureCatalog.RequiredSettings("f08.open").SequenceEqual(new[] { "f08.enabled" }), "Routing depends on rule editing");
         Check(FeatureCatalog.RequiredSettings("f09.mode").SequenceEqual(new[] { "f09.enabled", "f08.enabled" }), "Preview dependency missing");
         Check(FeatureCatalog.RequiredSettings("f12.enabled").SequenceEqual(new[] { "f12.enabled", "f10.enabled" }), "Module cabinet dependency missing");
@@ -70,16 +72,16 @@ internal static class FeatureCatalogTests
             FeatureCatalog.Order("f12.enabled") < FeatureCatalog.Order("f19.enabled"), "Related features are not contiguous");
         Check(FeatureCatalog.Order("f05.enabled") < FeatureCatalog.Order("f03.enabled") &&
             FeatureCatalog.Order("f03.enabled") < FeatureCatalog.Order("f19.enabled") &&
-            FeatureCatalog.Order("f19.enabled") < FeatureCatalog.Order("f13.enabled"),
+            FeatureCatalog.Order("f19.enabled") < FeatureCatalog.Order("f14.enabled"),
             "Purpose groups do not have a stable order within each level");
         Check(FeatureCatalog.For("f42.speed").Category == FeatureCategory.Playback &&
             FeatureCatalog.RequiredSettings("f42.key").SequenceEqual(new[] { "f42.enabled" }), "Playback settings are not discoverable");
-        foreach (string invalid in new[] { "", "f00.enabled", "f06.enabled", "f06.hold", "f43.enabled", "abc", "f1.enabled" })
+        foreach (string invalid in new[] { "", "f00.enabled", "f06.enabled", "f06.hold", "f13.enabled", "f22.enabled", "f26.enabled", "f27.enabled", "f29.enabled", "f43.enabled", "abc", "f1.enabled" })
         {
             bool rejected = false;
             try { FeatureCatalog.For(invalid); } catch (ArgumentException) { rejected = true; }
             Check(rejected, "Invalid key was accepted: " + invalid);
         }
-        Console.WriteLine("PASS 41 categories, tiers, primary defaults, cross-tier options, groups and dependencies");
+        Console.WriteLine("PASS 36 categories, tiers, primary defaults, cross-tier options, groups and dependencies");
     }
 }

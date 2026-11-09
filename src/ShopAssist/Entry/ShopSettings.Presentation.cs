@@ -15,7 +15,7 @@ namespace ShopAssist
 
         // Keep saved keys and values stable; grouping changes only their presentation.
         private static bool PrimaryOption(string key) => key.EndsWith(".enabled", StringComparison.Ordinal) ||
-            key == "f04.unseen" || key == "f05.auto_insert" || key == "f01.wholesale";
+            key == "f04.unseen" || key == "f05.auto_insert" || key == "f01.wholesale" || key == "f25.return_mode";
 
         private static int OptionOrder(string key) => FeatureCatalog.Order(key);
 

@@ -34,6 +34,8 @@ namespace ShopAssist
             bool Read(string name)
             {
                 var toggle = options.Get(ModEntry.Id + ":" + name);
+                if (name == "f25.return_mode") return toggle?.dropdown != null ? toggle.GetIndex() > 0 :
+                    (config.Get(name) as ConfigEntry<int>)?.Value > 0;
                 return toggle?.toggle != null ? toggle.GetBool() : (config.Get(name) as ConfigEntry<bool>)?.Value == true;
             }
             return FeatureCatalog.RequiredSettings(key).All(Read);

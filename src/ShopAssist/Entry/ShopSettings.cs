@@ -128,6 +128,17 @@ namespace ShopAssist
             return entry;
         }
 
+        internal int LegacyCargoMode()
+        {
+            // Read legacy values without registering a second visible setting.
+            var values = AccessTools.Field(typeof(ModConfig), "rawValues")?.GetValue(config) as Dictionary<string, string>;
+            bool? oldEnabled = values != null && values.TryGetValue("f25.enabled", out string enabledRaw) &&
+                bool.TryParse(enabledRaw, out bool enabledValue) ? enabledValue : (bool?)null;
+            int? oldMode = values != null && values.TryGetValue("f25.mode", out string modeRaw) &&
+                int.TryParse(modeRaw, out int modeValue) ? modeValue : (int?)null;
+            return TripCargoRules.MigrateMode(oldEnabled, oldMode);
+        }
+
         internal void Action(string labelKey, Action callback, Func<bool> available = null)
         {
             Action(labelKey, callback, () => available == null || available()
@@ -146,8 +157,15 @@ namespace ShopAssist
         internal ActionAvailability FeatureAvailability(string key)
         {
             foreach (string setting in FeatureCatalog.RequiredSettings(key))
+            {
+                if (setting == "f25.return_mode")
+                {
+                    if ((config.Get(setting) as ConfigEntry<int>)?.Value > 0) continue;
+                    return ActionAvailability.Blocked(ActionUnavailableReason.Disabled, "availability.disabled", setting);
+                }
                 if ((config.Get(setting) as ConfigEntry<bool>)?.Value != true)
                     return ActionAvailability.Blocked(ActionUnavailableReason.Disabled, "availability.disabled", setting);
+            }
             return ActionAvailability.Ready;
         }
 
@@ -159,7 +177,7 @@ namespace ShopAssist
         {
             if (key == "f08.open" && ShopSelection.Current().Count == 0)
                 return ActionAvailability.Blocked(ActionUnavailableReason.MissingSelection, "availability.selection");
-            string context = key == "f10.open" ? "availability.machine" : key == "f13.groups" ? "availability.coordinator" :
+            string context = key == "f10.open" ? "availability.machine" :
                 key == "f19.choose" ? "availability.liquid" : key == "f23.open" ? "availability.appraisal" :
                 key == "f34.open" ? "availability.demand" : key == "f36.open" ? "availability.ground" : null;
             if (context != null) return ActionAvailability.Blocked(ActionUnavailableReason.MissingObject, context);

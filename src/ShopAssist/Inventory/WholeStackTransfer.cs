@@ -1,24 +1,38 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using Newtonsoft.Json;
 using UnityEngine;
 
 namespace ShopAssist
 {
-    // Shared by routing, trip unloading and field packing. Only whole instances
-    // are moved; a stack target must accept the entire source in one operation.
+    // Shared by routing, trip unloading and field packing. Partial transfers
+    // are limited to routing into an existing, compatible stack.
     internal static class WholeStackTransfer
     {
+        [ThreadStatic] internal static bool AllowFieldContainerCargo;
         internal enum Result { Applied, Unchanged, Pending, Unavailable }
         internal sealed class Plan
         {
             internal GameItem Item, Stack;
             internal GameInventory From, To;
             internal GridShape Before, After;
-            internal int Amount, StackBefore;
+            internal int Amount, SourceBefore, StackBefore;
             internal string SourceState, StackState;
+            internal List<ContainerPart> Cargo;
             internal bool IsStack => Stack != null;
+        }
+
+        internal sealed class ContainerPart
+        {
+            internal GameItem Item;
+            internal GameInventory Parent;
+            internal GameGridInventory Contents;
+            internal PixelWindow Window;
+            internal GridShape Shape, ContentsShape;
+            internal string State;
+            internal int Id, Count;
         }
 
         internal sealed class Reservations
@@ -28,9 +42,17 @@ namespace ShopAssist
             internal readonly HashSet<GameItem> ExcludedStacks = new HashSet<GameItem>();
         }
 
+        internal sealed class FieldReplacement
+        {
+            internal Plan Leave, IncomingOriginal, Take;
+            internal GameItem Incoming;
+            internal string Record;
+        }
+
         [Serializable] private sealed class Journal
         {
-            [JsonRequired] public int version = 1, slot, source, target, amount, targetBefore, sourceX, sourceY, targetX, targetY;
+            [JsonRequired] public int version = 2, slot, source, target, amount, targetBefore, sourceX, sourceY, targetX, targetY;
+            public int sourceBefore;
             [JsonRequired] public string run, action, state, sourceName, targetName, location, sourceKey, targetKey;
         }
         private const string DataKey = "wholeStackTransfer";
@@ -70,18 +92,24 @@ namespace ShopAssist
 
         private static bool Valid(Journal value, string currentRun, int currentSlot)
         {
-            if (value == null || value.version != 1 || value.run != currentRun || value.slot != currentSlot ||
+            if (value == null || (value.version != 1 && value.version != 2 && value.version != 3) || value.run != currentRun || value.slot != currentSlot ||
                 value.sourceName == null || value.targetName == null || value.location == null || value.sourceKey == null || value.targetKey == null ||
                 value.sourceName.Length > 4096 || value.targetName.Length > 4096 || value.location.Length > 8192 ||
                 value.sourceKey.Length > 4096 || value.targetKey.Length > 4096 || value.targetBefore < 0 ||
                 value.sourceX < 0 || value.sourceY < 0 || value.targetX < 0 || value.targetY < 0) return false;
             if (value.state == "reset")
                 return value.action == "" && value.source == 0 && value.target == 0 && value.amount == 0 &&
-                    value.targetBefore == 0 && value.sourceX == 0 && value.sourceY == 0 && value.targetX == 0 && value.targetY == 0 &&
+                    value.targetBefore == 0 && value.sourceBefore == 0 && value.sourceX == 0 && value.sourceY == 0 && value.targetX == 0 && value.targetY == 0 &&
                     value.sourceName == "" && value.targetName == "" && value.location == "" && value.targetKey == "" &&
                     value.sourceKey.StartsWith(BackupPrefix, StringComparison.Ordinal) &&
                     Guid.TryParseExact(value.sourceKey.Substring(BackupPrefix.Length), "N", out _);
             return value.source > 0 && value.target >= 0 && value.amount > 0 &&
+                (value.version == 1 || value.version == 3 && value.action == "f36.open" && value.target > 0 &&
+                    value.target != value.source && value.sourceBefore == value.amount && value.targetBefore > 0 &&
+                    value.sourceKey.StartsWith("field:", StringComparison.Ordinal) && value.targetKey == "field:ground" ||
+                 value.version == 2 && value.sourceBefore >= value.amount &&
+                    (value.target > 0 || value.sourceBefore == value.amount) &&
+                    (long)value.targetBefore + value.amount <= int.MaxValue) &&
                 (value.state == "pending" || value.state == "done" || value.state == "resolved") &&
                 (value.action == "f08.open" || value.action == "f11.open" || value.action == "f25.open" || value.action == "f36.open");
         }
@@ -226,26 +254,103 @@ namespace ShopAssist
         {
             if (!Ready) return false;
             var next = new Journal { run = run, slot = slot, action = action, state = "pending",
-                source = plan.Item.GetUniqueID(), target = plan.Stack?.GetUniqueID() ?? 0, amount = plan.Amount,
+                source = plan.Item.GetUniqueID(), target = plan.Stack?.GetUniqueID() ?? 0, amount = plan.Amount, sourceBefore = plan.SourceBefore,
                 sourceName = plan.Item.GetDisplayName(true) ?? "", targetName = plan.Stack?.GetDisplayName(true) ?? "",
                 sourceX = plan.Before.minX, sourceY = plan.Before.minY, targetX = plan.After.minX, targetY = plan.After.minY,
                 targetBefore = plan.StackBefore, sourceKey = sourceKey ?? "", targetKey = targetKey ?? "", location = location ?? "" };
             return Write(next);
         }
 
+        internal static FieldReplacement BeginFieldReplacement(Plan leave, GameItem incoming, string location, string sourceKey)
+        {
+            if (!Ready || leave == null || leave.Stack != null || leave.Item == null || incoming == null ||
+                leave.Amount != leave.SourceBefore || incoming.unitCount <= 0 || ReferenceEquals(leave.Item, incoming) ||
+                !ReferenceEquals(incoming.parentInventory, leave.To) || !leave.To.childItems.Contains(incoming) ||
+                !SafeSource(incoming) || !ShopInventory.Movable(incoming)) return null;
+            Plan incomingOriginal = Create(incoming, leave.From, null, incoming.modifiedShape, 0);
+            if (incomingOriginal == null) return null;
+            var next = new Journal { version = 3, run = run, slot = slot, action = "f36.open", state = "pending",
+                source = leave.Item.GetUniqueID(), target = incoming.GetUniqueID(), amount = leave.Amount,
+                sourceBefore = leave.SourceBefore, targetBefore = incoming.unitCount,
+                sourceName = leave.Item.GetDisplayName(true) ?? "", targetName = incoming.GetDisplayName(true) ?? "",
+                sourceX = leave.Before.minX, sourceY = leave.Before.minY, targetX = leave.After.minX, targetY = leave.After.minY,
+                sourceKey = sourceKey ?? "", targetKey = "field:ground", location = location ?? "" };
+            return Write(next) ? new FieldReplacement { Leave = leave, Incoming = incoming, IncomingOriginal = incomingOriginal, Record = raw } : null;
+        }
+
+        private static bool ReplacementMatches(FieldReplacement replacement) => replacement != null && Load() &&
+            journal?.version == 3 && journal.state == "pending" && raw == replacement.Record;
+
+        private static bool ReplacementAllows(FieldReplacement replacement, Plan plan) => ReplacementMatches(replacement) &&
+            plan != null && plan.Stack == null && plan.Amount == plan.SourceBefore &&
+            (ReferenceEquals(plan.Item, replacement.Leave.Item) &&
+                (ReferenceEquals(plan.From, replacement.Leave.From) && ReferenceEquals(plan.To, replacement.Leave.To) ||
+                 ReferenceEquals(plan.From, replacement.Leave.To) && ReferenceEquals(plan.To, replacement.Leave.From)) ||
+             ReferenceEquals(plan.Item, replacement.Incoming) && ReferenceEquals(plan.From, replacement.Leave.To) &&
+                ReferenceEquals(plan.To, replacement.Leave.From));
+
+        internal static bool FieldReplacementOriginal(FieldReplacement replacement, GameInventory inventory)
+        {
+            Plan leave = replacement?.Leave;
+            return leave != null && ReplacementMatches(replacement) && ReferenceEquals(leave.Item.parentInventory, inventory) &&
+                inventory != null && inventory.childItems.Contains(leave.Item) && leave.Item.unitCount == leave.SourceBefore &&
+                State(leave.Item) == leave.SourceState && CargoUnchanged(leave) &&
+                (ReferenceEquals(inventory, leave.From) ? !leave.To.childItems.Contains(leave.Item) &&
+                    InventorySortPlan.SameShape(leave.Item.modifiedShape, leave.Before) :
+                 ReferenceEquals(inventory, leave.To) && !leave.From.childItems.Contains(leave.Item) &&
+                    InventorySortPlan.SameShape(leave.Item.modifiedShape, leave.After));
+        }
+
+        internal static bool FieldReplacementIncomingOriginal(FieldReplacement replacement)
+        {
+            Plan original = replacement?.IncomingOriginal;
+            return ReplacementMatches(replacement) && original != null && ReferenceEquals(original.Item.parentInventory, original.From) &&
+                original.From.childItems.Contains(original.Item) && !original.To.childItems.Contains(original.Item) &&
+                original.Item.unitCount == original.SourceBefore && State(original.Item) == original.SourceState &&
+                InventorySortPlan.SameShape(original.Item.modifiedShape, original.Before) && CargoUnchanged(original);
+        }
+
+        internal static bool RecoverDetachedFieldItem(FieldReplacement replacement, bool incoming, Func<bool> scope)
+        {
+            Plan original = incoming ? replacement?.IncomingOriginal : replacement?.Leave;
+            if (!ReplacementMatches(replacement) || original == null || scope == null || !scope()) return false;
+            GameItem item = original.Item;
+            GridShape attempted = incoming ? replacement.Take?.After : original.After;
+            if (item == null || item.parentInventory != null || original.From.childItems.Contains(item) || original.To.childItems.Contains(item) ||
+                item.unitCount != original.SourceBefore || State(item) != original.SourceState ||
+                !(InventorySortPlan.SameShape(item.modifiedShape, original.Before) || InventorySortPlan.SameShape(item.modifiedShape, attempted)) ||
+                !InventoryAutoInsert.KnownMutationPatches() || !DetachedItemSafe(item) || !CargoUnchanged(original, true) ||
+                !SafeTarget(original.From) || original.From.IsInsertLocked() || !GeneralHelper.MayPlayerInsertInto(original.From)) return false;
+            SlotMarker marker = original.From.TryInventorySlot(item, original.SourceBefore, original.Before);
+            if (marker?.inventory != original.From || marker.item != item || marker.targetItem != null ||
+                marker.numTransfer < original.SourceBefore || !InventorySortPlan.SameShape(marker.itemGridShape, original.Before)) return false;
+            try { marker.TryAcceptOnce(original.SourceBefore); }
+            catch (Exception error) { Debug.LogWarning("[ShopAssist] Detached field item recovery failed: " + error); }
+            return scope() && (incoming ? FieldReplacementIncomingOriginal(replacement) : FieldReplacementOriginal(replacement, original.From));
+        }
+
+        internal static bool FinishFieldReplacement(FieldReplacement replacement) =>
+            ReplacementMatches(replacement) && Finish("done");
+
         private static bool Finish(string state)
         {
             if (!Load() || journal?.state != "pending") return false;
-            var next = new Journal { run = journal.run, slot = journal.slot, action = journal.action, state = state,
-                source = journal.source, target = journal.target, amount = journal.amount,
+            var next = new Journal { version = journal.version, run = journal.run, slot = journal.slot, action = journal.action, state = state,
+                source = journal.source, target = journal.target, amount = journal.amount, sourceBefore = journal.sourceBefore,
                 sourceName = journal.sourceName, targetName = journal.targetName, location = journal.location,
                 sourceX = journal.sourceX, sourceY = journal.sourceY, targetX = journal.targetX, targetY = journal.targetY,
                 targetBefore = journal.targetBefore, sourceKey = journal.sourceKey, targetKey = journal.targetKey };
             return Write(next);
         }
 
-        private static string Detail(Journal value) => ShopSettings.Format("f08.journal_detail", value.location,
-            value.sourceX + 1, value.sourceY + 1, value.targetX + 1, value.targetY + 1, value.amount, value.targetBefore);
+        private static string Detail(Journal value)
+        {
+            int before = value.version == 1 ? value.amount : value.sourceBefore;
+            object sourceCount = before == value.amount ? (object)before : before + " -> " + (before - value.amount);
+            object targetCount = before == value.amount ? (object)value.targetBefore : value.targetBefore + " -> " + (value.targetBefore + value.amount);
+            return ShopSettings.Format("f08.journal_detail", value.location,
+                value.sourceX + 1, value.sourceY + 1, value.targetX + 1, value.targetY + 1, sourceCount, targetCount);
+        }
 
         internal static string FieldPending()
         {
@@ -410,7 +515,7 @@ namespace ShopAssist
         }
 
         // StateSignature contains the instance ID. Strip only its known prefix;
-        // all game state, exposed features and reservation information remain.
+        // all game state, exposed features and pin state remain.
         private static string State(GameItem item)
         {
             if (item == null || string.IsNullOrEmpty(item.identifier)) return null;
@@ -431,7 +536,7 @@ namespace ShopAssist
                 first.contentWindow != null || second.contentWindow != null || first.identifier != second.identifier ||
                 first.IsTag("BOUGHT_PRICE_TAG") || second.IsTag("BOUGHT_PRICE_TAG") ||
                 first.IsTag(WineHelper.WINE_YEAST_REUSABLE_TAG) || second.IsTag(WineHelper.WINE_YEAST_REUSABLE_TAG) ||
-                RequestBook.Reserved(first) || RequestBook.Reserved(second) || first.customText != second.customText ||
+                ItemPinHelper.IsPinned(first) || ItemPinHelper.IsPinned(second) || first.customText != second.customText ||
                 first.GetDisplayName(true) != second.GetDisplayName(true) || first.unitValue != second.unitValue ||
                 first.lateUnitValue != second.lateUnitValue || first.unitBaseValue != second.unitBaseValue ||
                 first.backupUnitValue != second.backupUnitValue || first.forceDisableActivate != second.forceDisableActivate ||
@@ -447,7 +552,101 @@ namespace ShopAssist
         }
 
         internal static bool SafeSource(GameItem item) => item != null && InventoryAutoInsert.KnownMutationPatches() &&
-            InventoryAutoInsert.SafeItem(item, true, true) && InventoryAutoInsert.SafeTransferInventory(item.parentInventory, item);
+            (InventoryAutoInsert.SafeItem(item, true, true) || AllowFieldContainerCargo && SafeFieldContainer(item)) &&
+            InventoryAutoInsert.SafeTransferInventory(item.parentInventory, item);
+
+        private static bool SafeFieldContainer(GameItem item) => CaptureCargo(item, out _);
+
+        private static bool SafeContainerItem(GameItem item, bool detached = false) => item != null && item.GetType() == typeof(GameItemElement) &&
+            item.unitCount == 1 && item.modifiedShape != null && !string.IsNullOrEmpty(item.identifier) && item.examineWindow == null &&
+            (detached ? ShopInventory.IsOrdinaryContainer(item) && item.contentWindow != null && !item.contentWindow.isLocked &&
+                !LockHelper.IsCurrentlyLocked(item) && !item.IsTag("LOCKED_TAG") &&
+                !(item.IsTag("TRACK_OPENED_TAG") && !item.IsTag("OPENED_TAG")) :
+                ShopInventory.SafeContainerForPeek(item) && ShopInventory.Movable(item)) &&
+            item.itemFeatures != null && item.itemFeatures.All(feature => feature != null && feature.GetType() == typeof(ItemFeature) &&
+                feature.featureType != ItemFeature.FeatureType.ClientTemporary && feature.category != null && feature.category != "contrabandMarkUp") &&
+            item.mayInventoryAddItemFunc == null && item.mayInventoryRemoveItemFunc == null && item.mayStackItemFunc == null &&
+            item.slotPriorityFunc == null && item.maxSlotAddItemFunc == null && item.maxSlotRemoveItemFunc == null &&
+            item.maxSlotAmountItemFunc == null && item.minSlotAmountItemFunc == null && item.isItemStateValidFunc == null &&
+            item.parentItemShapeModifierForItemFunc == null && item.parentItemStateModifierForItemFunc == null &&
+            item.parentItemSpriteModifierForItemFunc == null && item.getItemSpriteModifierForItemFunc == null &&
+            InventoryAutoInsert.KnownCallbacks(item.onSlotAddItemFunc, callback => ReferenceEquals(callback.Target, item) &&
+                InventoryAutoInsert.Method(callback, "GameItem", "<.ctor>b__177_0")) &&
+            item.onSlotRemoveItemFunc == null && item.onSlotChangeAmountItemFunc == null && item.onChangeAmountItemFunc == null;
+
+        internal static bool TryFieldContainerItems(GameItem item, out List<GameItem> items)
+        {
+            items = null;
+            if (!CaptureCargo(item, out var cargo)) return false;
+            items = cargo.Select(part => part.Item).ToList();
+            return true;
+        }
+
+        private static bool DetachedItemSafe(GameItem item) => item is GameItemElement element && !element.IsDestroyed() && item.parentInventory == null &&
+            GeneralHelper.IsItemOwned(item) && !item.IsTag("ITEM_HIDDEN_TAG") && !item.IsTag("ITEM_BEHIND_LOCK_TAG") &&
+            !ItemPinHelper.IsPinned(item) && !DebrisHelper.IsDebris(item) &&
+            (item.contentWindow == null ? InventoryAutoInsert.SafeItem(item, true, true) : SafeContainerItem(item, true));
+
+        private static bool CaptureCargo(GameItem root, out List<ContainerPart> cargo, bool detachedRoot = false)
+        {
+            cargo = new List<ContainerPart>();
+            if (root == null || !root.IsTag("BACKPACK_TAG") ||
+                !InventoryAutoInsert.KnownPatches(typeof(GameGridInventory).GetMethod(nameof(GameGridInventory.CheckShapePlacement)))) return false;
+            var pending = new Queue<GameItem>();
+            var seen = new HashSet<GameItem>();
+            var ids = new HashSet<int>();
+            pending.Enqueue(root);
+            while (pending.Count > 0)
+            {
+                GameItem item = pending.Dequeue();
+                bool detached = detachedRoot && ReferenceEquals(item, root);
+                if (item == null || !seen.Add(item) || cargo.Count >= 256 ||
+                    (detached ? !DetachedItemSafe(item) : item.parentInventory == null || !ShopInventory.Movable(item)) ||
+                    item.modifiedShape == null || item.unitCount <= 0) return false;
+                bool container = item.contentWindow != null;
+                if (container ? !SafeContainerItem(item, detached) : !InventoryAutoInsert.SafeItem(item, true, true) ||
+                    item.itemFeatures.Any(feature => feature.GetType() != typeof(ItemFeature))) return false;
+                int id = item.GetUniqueID();
+                if (id <= 0 || !ids.Add(id)) return false;
+                string state = State(item);
+                if (state == null) return false;
+                var part = new ContainerPart { Item = item, Parent = item.parentInventory, Id = id, Count = item.unitCount,
+                    Shape = item.modifiedShape.Clone(), State = state };
+                if (container)
+                {
+                    if (!(item.contentWindow.childElement is GameGridInventory grid) || grid.inventoryShape == null ||
+                        grid.inventoryShape.width > 64 || grid.inventoryShape.height > 64 || grid.childItems.Count > 256 ||
+                        !InventoryAutoInsert.SafeGrid(grid) || grid.GetParentItem() != item || grid.IsRemoveLocked()) return false;
+                    part.Window = item.contentWindow; part.Contents = grid; part.ContentsShape = grid.inventoryShape.Clone();
+                    foreach (GameItem child in grid.childItems)
+                    {
+                        if (child == null || child.parentInventory != grid || child.modifiedShape == null ||
+                            !grid.CheckShapePlacement(child, child.modifiedShape, new List<GameItem> { child })) return false;
+                        pending.Enqueue(child);
+                    }
+                }
+                cargo.Add(part);
+            }
+            return cargo.Count > 0 && cargo[0].Contents != null;
+        }
+
+        private static bool SameCargo(List<ContainerPart> a, List<ContainerPart> b)
+        {
+            if (a == null || b == null) return a == b;
+            if (a.Count != b.Count) return false;
+            for (int i = 0; i < a.Count; i++)
+            {
+                var x = a[i]; var y = b[i];
+                if (!ReferenceEquals(x.Item, y.Item) || i > 0 && (!ReferenceEquals(x.Parent, y.Parent) ||
+                    !InventorySortPlan.SameShape(x.Shape, y.Shape)) || !ReferenceEquals(x.Window, y.Window) || !ReferenceEquals(x.Contents, y.Contents) ||
+                    x.Contents != null && !InventorySortPlan.SameShape(x.ContentsShape, y.ContentsShape) ||
+                    x.Id != y.Id || x.Count != y.Count || x.State != y.State) return false;
+            }
+            return true;
+        }
+
+        private static bool CargoUnchanged(Plan plan, bool detachedRoot = false) => plan.Cargo == null ||
+            CaptureCargo(plan.Item, out var now, detachedRoot) && SameCargo(plan.Cargo, now);
 
         // Result cards share checks that depend only on their inventory path.
         // This snapshot is never used for planning or committing a transfer.
@@ -473,13 +672,19 @@ namespace ShopAssist
 
         internal static bool SafeTarget(GameInventory inventory) => InventoryAutoInsert.SafeTransferInventory(inventory);
 
-        private static Plan Create(GameItem item, GameInventory target, GameItem stack, GridShape after, int beforeCount)
+        private static Plan Create(GameItem item, GameInventory target, GameItem stack, GridShape after, int beforeCount,
+            int amount = -1, int sourceBefore = -1)
         {
             string sourceState = State(item), stackState = stack == null ? null : State(stack);
             if (sourceState == null || stack != null && stackState == null || item.modifiedShape == null || after == null) return null;
-            return new Plan { Item = item, From = item.parentInventory, To = target, Stack = stack, Amount = item.unitCount,
+            if (sourceBefore < 0) sourceBefore = item.unitCount;
+            if (amount < 0) amount = sourceBefore;
+            if (amount <= 0 || sourceBefore < amount || sourceBefore > item.unitCount || stack == null && amount != sourceBefore) return null;
+            List<ContainerPart> cargo = null;
+            if (item.contentWindow != null && (stack != null || amount != 1 || sourceBefore != 1 || !CaptureCargo(item, out cargo))) return null;
+            return new Plan { Item = item, From = item.parentInventory, To = target, Stack = stack, Amount = amount, SourceBefore = sourceBefore,
                 Before = item.modifiedShape.Clone(), After = after.Clone(), StackBefore = beforeCount,
-                SourceState = sourceState, StackState = stackState };
+                SourceState = sourceState, StackState = stackState, Cargo = cargo };
         }
 
         internal static Plan Stack(GameItem item, GameInventory target, Reservations reserved)
@@ -505,6 +710,30 @@ namespace ShopAssist
             return null;
         }
 
+        internal static Plan StackUpTo(GameItem item, GameInventory target, Reservations reserved, int sourceBefore)
+        {
+            if (item == null || target == null || reserved == null || sourceBefore <= 0 || sourceBefore > item.unitCount ||
+                !SafeSource(item) || !SafeTarget(target) || target == item.parentInventory || target.IsInsertLocked() ||
+                !GeneralHelper.MayPlayerInsertInto(target) || !ShopInventory.Movable(item) || item.MaxNumRemove() < item.unitCount ||
+                ShopInventory.WouldContainSelf(item, target)) return null;
+            foreach (GameItem resident in target.childItems)
+            {
+                if (resident == null || reserved.ExcludedStacks.Contains(resident) || resident.parentInventory != target ||
+                    !ShopInventory.Owned(resident) || !Compatible(item, resident)) continue;
+                SlotMarker marker = resident.GetStackSlot(item);
+                int already = reserved.Counts.TryGetValue(resident, out int count) ? count : 0;
+                if (marker?.inventory != target || marker.targetItem != resident || marker.item != item) continue;
+                long available = Math.Min((long)marker.numTransfer - already, (long)int.MaxValue - resident.unitCount - already);
+                int amount = (int)Math.Min(sourceBefore, Math.Max(0L, available));
+                if (amount == 0) continue;
+                Plan plan = Create(item, target, resident, resident.modifiedShape, resident.unitCount + already, amount, sourceBefore);
+                if (plan == null) continue;
+                reserved.Counts[resident] = already + amount;
+                return plan;
+            }
+            return null;
+        }
+
         // The pointer identifies the resident; never substitute a different stack.
         internal static Plan ExactStack(GameItem item, GameInventory target, GameItem resident)
         {
@@ -524,7 +753,7 @@ namespace ShopAssist
         internal static Plan ExactEmpty(GameItem item, GameGridInventory target, GridShape after)
         {
             if (item == null || target == null || after == null || !SafeSource(item) || !SafeTarget(target) ||
-                !ShopInventory.Movable(item) || RequestBook.Reserved(item) || item.MaxNumRemove() < item.unitCount ||
+                !ShopInventory.Movable(item) || item.MaxNumRemove() < item.unitCount ||
                 ShopInventory.WouldContainSelf(item, target)) return null;
             var marker = GridPlacements.Exact(target, item, after);
             return marker?.inventory == target && marker.item == item && marker.targetItem == null &&
@@ -533,14 +762,18 @@ namespace ShopAssist
         }
 
         internal static Plan Empty(GameItem item, GameGridInventory target, Reservations reserved)
+            => EmptyRemainder(item, target, reserved, item?.unitCount ?? 0);
+
+        internal static Plan EmptyRemainder(GameItem item, GameGridInventory target, Reservations reserved, int sourceBefore)
         {
-            if (item == null || target == null || reserved == null || !SafeSource(item) || !SafeTarget(target) || target == item.parentInventory ||
-                !ShopInventory.Movable(item) || RequestBook.Reserved(item) || item.MaxNumRemove() < item.unitCount ||
+            if (item == null || target == null || reserved == null || sourceBefore <= 0 || sourceBefore > item.unitCount ||
+                !SafeSource(item) || !SafeTarget(target) || target == item.parentInventory ||
+                !ShopInventory.Movable(item) || item.MaxNumRemove() < item.unitCount ||
                 ShopInventory.WouldContainSelf(item, target)) return null;
             if (!reserved.Shapes.TryGetValue(target, out var shapes)) reserved.Shapes[target] = shapes = new List<GridShape>();
-            var marker = GridPlacements.Empty(target, item, shapes);
-            if (marker?.inventory != target || marker.targetItem != null || marker.numTransfer < item.unitCount) return null;
-            Plan plan = Create(item, target, null, marker.itemGridShape, 0);
+            var marker = GridPlacements.Empty(target, item, shapes, sourceBefore);
+            if (marker?.inventory != target || marker.item != item || marker.targetItem != null || marker.numTransfer < sourceBefore) return null;
+            Plan plan = Create(item, target, null, marker.itemGridShape, 0, sourceBefore, sourceBefore);
             if (plan != null) shapes.Add(plan.After);
             return plan;
         }
@@ -548,7 +781,7 @@ namespace ShopAssist
         internal static Plan EmptySlot(GameItem item, GameInventory target)
         {
             if (item == null || target == null || !SafeSource(item) || !SafeTarget(target) || target == item.parentInventory || target.IsInsertLocked() ||
-                !GeneralHelper.MayPlayerInsertInto(target) || !ShopInventory.Movable(item) || RequestBook.Reserved(item) ||
+                !GeneralHelper.MayPlayerInsertInto(target) || !ShopInventory.Movable(item) ||
                 item.MaxNumRemove() < item.unitCount || ShopInventory.WouldContainSelf(item, target)) return null;
             var marker = target.TryFindOneValidInventorySlot(item);
             return marker?.inventory == target && marker.targetItem == null && marker.numTransfer >= item.unitCount
@@ -557,12 +790,12 @@ namespace ShopAssist
 
         internal static bool Same(Plan a, Plan b) => a != null && b != null && ReferenceEquals(a.Item, b.Item) &&
             ReferenceEquals(a.From, b.From) && ReferenceEquals(a.To, b.To) && ReferenceEquals(a.Stack, b.Stack) &&
-            a.Amount == b.Amount && a.StackBefore == b.StackBefore && a.SourceState == b.SourceState && a.StackState == b.StackState &&
-            InventorySortPlan.SameShape(a.Before, b.Before) && InventorySortPlan.SameShape(a.After, b.After);
+            a.Amount == b.Amount && a.SourceBefore == b.SourceBefore && a.StackBefore == b.StackBefore && a.SourceState == b.SourceState && a.StackState == b.StackState &&
+            InventorySortPlan.SameShape(a.Before, b.Before) && InventorySortPlan.SameShape(a.After, b.After) && SameCargo(a.Cargo, b.Cargo);
 
         internal static Result Apply(Plan plan, string action, string location, string sourceKey, string targetKey, Func<bool> scope, Func<bool> recordCompletion = null)
         {
-            try { return ApplyCore(plan, action, location, sourceKey, targetKey, scope, recordCompletion); }
+            try { return ApplyCore(plan, action, location, sourceKey, targetKey, scope, recordCompletion, null); }
             catch (Exception error)
             {
                 Debug.LogWarning("[ShopAssist] Whole-stack transfer failed: " + error);
@@ -570,15 +803,30 @@ namespace ShopAssist
             }
         }
 
-        private static Result ApplyCore(Plan plan, string action, string location, string sourceKey, string targetKey, Func<bool> scope, Func<bool> recordCompletion)
+        internal static Result ApplyFieldReplacement(FieldReplacement replacement, Plan plan, Func<bool> scope)
         {
-            if (plan == null || scope == null || !scope() || !Ready) return Result.Unavailable;
+            if (!ReplacementAllows(replacement, plan)) return Result.Unavailable;
+            if (ReferenceEquals(plan.Item, replacement.Incoming)) replacement.Take = plan;
+            try { return ApplyCore(plan, "f36.open", null, null, null, scope, null, replacement); }
+            catch (Exception error)
+            {
+                Debug.LogWarning("[ShopAssist] Field replacement transfer failed: " + error);
+                return Result.Pending;
+            }
+        }
+
+        private static Result ApplyCore(Plan plan, string action, string location, string sourceKey, string targetKey, Func<bool> scope,
+            Func<bool> recordCompletion, FieldReplacement replacement)
+        {
+            if (plan == null || scope == null || !scope() || (replacement == null ? !Ready : !ReplacementAllows(replacement, plan)) ||
+                plan.Amount <= 0 || plan.SourceBefore < plan.Amount ||
+                plan.SourceBefore != plan.Amount && (action != "f08.open" || !plan.IsStack)) return Result.Unavailable;
             var item = plan.Item; var target = plan.Stack;
             if (item == null || !SafeSource(item) || !SafeTarget(plan.To) || item.parentInventory != plan.From || !plan.From.childItems.Contains(item) ||
-                item.unitCount != plan.Amount || !ShopInventory.Movable(item) || RequestBook.Reserved(item) ||
+                item.unitCount != plan.SourceBefore || !ShopInventory.Movable(item) ||
                 item.MaxNumRemove() < plan.Amount || plan.To.IsInsertLocked() || !GeneralHelper.MayPlayerInsertInto(plan.To) ||
                 !InventorySortPlan.SameShape(item.modifiedShape, plan.Before) || State(item) != plan.SourceState ||
-                ShopInventory.WouldContainSelf(item, plan.To)) return Result.Unchanged;
+                ShopInventory.WouldContainSelf(item, plan.To) || !CargoUnchanged(plan)) return Result.Unchanged;
             SlotMarker marker;
             if (target != null)
             {
@@ -595,35 +843,38 @@ namespace ShopAssist
                 if (marker?.inventory != plan.To || marker.item != item || marker.targetItem != null || marker.numTransfer < plan.Amount ||
                     !InventorySortPlan.SameShape(marker.itemGridShape, plan.After)) return Result.Unchanged;
             }
-            if (!Begin(plan, action, location, sourceKey, targetKey)) return Result.Unavailable;
+            if (replacement == null && !Begin(plan, action, location, sourceKey, targetKey)) return Result.Unavailable;
             int accepted = 0;
             bool threw = false;
             try { accepted = marker.TryAcceptOnce(plan.Amount); }
             catch (Exception error) { threw = true; Debug.LogWarning("[ShopAssist] Whole-stack transfer interrupted: " + error); }
-            bool applied = !threw && accepted == plan.Amount && scope() && (target == null ?
+            bool applied = !threw && accepted == plan.Amount && scope() && CargoUnchanged(plan) && (target == null ?
                 ReferenceEquals(item.parentInventory, plan.To) && item.unitCount == plan.Amount && plan.To.childItems.Contains(item) &&
                     (ReferenceEquals(plan.From, plan.To) || !plan.From.childItems.Contains(item)) &&
                     InventorySortPlan.SameShape(item.modifiedShape, plan.After) && State(item) == plan.SourceState :
-                item.unitCount == 0 && item.parentInventory == null && !plan.From.childItems.Contains(item) &&
+                (plan.SourceBefore == plan.Amount ?
+                    item.unitCount == 0 && item.parentInventory == null && !plan.From.childItems.Contains(item) :
+                    item.unitCount == plan.SourceBefore - plan.Amount && item.parentInventory == plan.From && plan.From.childItems.Contains(item) &&
+                    InventorySortPlan.SameShape(item.modifiedShape, plan.Before) && State(item) == plan.SourceState) &&
                     target.parentInventory == plan.To && plan.To.childItems.Contains(target) &&
                     target.unitCount == plan.StackBefore + plan.Amount && InventorySortPlan.SameShape(target.modifiedShape, plan.After) &&
                     State(target) == plan.StackState);
             if (applied)
             {
-                if (target != null)
+                if (target != null && plan.SourceBefore == plan.Amount)
                 {
                     try { item.Destroy(); }
                     catch (Exception error) { Debug.LogWarning("[ShopAssist] Consumed stack cleanup failed: " + error); return Result.Pending; }
                 }
                 try { if (recordCompletion != null && !recordCompletion()) return Result.Pending; }
                 catch (Exception error) { Debug.LogWarning("[ShopAssist] Whole-stack completion record failed: " + error); return Result.Pending; }
-                return Finish("done") ? Result.Applied : Result.Pending;
+                return replacement != null || Finish("done") ? Result.Applied : Result.Pending;
             }
-            bool unchanged = item.parentInventory == plan.From && plan.From.childItems.Contains(item) && item.unitCount == plan.Amount &&
+            bool unchanged = CargoUnchanged(plan) && item.parentInventory == plan.From && plan.From.childItems.Contains(item) && item.unitCount == plan.SourceBefore &&
                 InventorySortPlan.SameShape(item.modifiedShape, plan.Before) && State(item) == plan.SourceState &&
                 (target == null ? ReferenceEquals(plan.From, plan.To) || !plan.To.childItems.Contains(item) : target.parentInventory == plan.To &&
                     plan.To.childItems.Contains(target) && target.unitCount == plan.StackBefore && State(target) == plan.StackState);
-            if (unchanged && Finish("done")) return Result.Unchanged;
+            if (unchanged && (replacement != null || Finish("done"))) return Result.Unchanged;
             AttentionBook.Changed();
             return Result.Pending;
         }

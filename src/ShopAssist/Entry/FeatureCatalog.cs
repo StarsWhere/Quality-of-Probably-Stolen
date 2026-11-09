@@ -14,7 +14,7 @@ namespace ShopAssist
         internal bool DefaultEnabled { get; }
         internal int Group { get; }
         internal string Dependency { get; }
-        internal string SettingKey => "f" + Id.ToString("00") + ".enabled";
+        internal string SettingKey => Id == 25 ? "f25.return_mode" : "f" + Id.ToString("00") + ".enabled";
         internal FeatureDescriptor(int id, FeatureCategory category, FeatureTier tier, bool defaultEnabled = false,
             int group = 0, string dependency = null)
         {
@@ -39,7 +39,6 @@ namespace ShopAssist
             new FeatureDescriptor(10, FeatureCategory.Machines, FeatureTier.Planning, group: 10),
             new FeatureDescriptor(11, FeatureCategory.Trade, FeatureTier.Planning),
             new FeatureDescriptor(12, FeatureCategory.Machines, FeatureTier.Planning, group: 10, dependency: "f10.enabled"),
-            new FeatureDescriptor(13, FeatureCategory.Calendar, FeatureTier.Basic),
             new FeatureDescriptor(14, FeatureCategory.Calendar, FeatureTier.Basic),
             new FeatureDescriptor(15, FeatureCategory.Calendar, FeatureTier.Basic),
             new FeatureDescriptor(16, FeatureCategory.Trade, FeatureTier.Basic),
@@ -48,14 +47,10 @@ namespace ShopAssist
             new FeatureDescriptor(19, FeatureCategory.Machines, FeatureTier.Basic),
             new FeatureDescriptor(20, FeatureCategory.Items, FeatureTier.Basic),
             new FeatureDescriptor(21, FeatureCategory.Calendar, FeatureTier.Basic),
-            new FeatureDescriptor(22, FeatureCategory.Items, FeatureTier.RuleBased),
             new FeatureDescriptor(23, FeatureCategory.Trade, FeatureTier.Basic),
             new FeatureDescriptor(24, FeatureCategory.Trade, FeatureTier.RuleBased),
             new FeatureDescriptor(25, FeatureCategory.Items, FeatureTier.RuleBased),
-            new FeatureDescriptor(26, FeatureCategory.Items, FeatureTier.RuleBased),
-            new FeatureDescriptor(27, FeatureCategory.Trade, FeatureTier.RuleBased),
             new FeatureDescriptor(28, FeatureCategory.Trade, FeatureTier.Basic),
-            new FeatureDescriptor(29, FeatureCategory.Trade, FeatureTier.RuleBased),
             new FeatureDescriptor(30, FeatureCategory.Machines, FeatureTier.Planning),
             new FeatureDescriptor(31, FeatureCategory.Machines, FeatureTier.RuleBased),
             new FeatureDescriptor(32, FeatureCategory.Machines, FeatureTier.RuleBased),
