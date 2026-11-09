@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using System.Text;
+using HarmonyLib;
 using TMPro;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -14,27 +16,38 @@ namespace ShopAssist
         private const float DoorWidth = 302f, DoorHeight = 241f;
         private const float Width = 250f, Height = 172f;
         private readonly Func<bool> calendarEnabled;
+        private readonly Func<bool> deadlinesEnabled;
+        private readonly Func<int> deadlineDays;
         private readonly Action<string> log;
         private readonly List<RaycastResult> hits = new List<RaycastResult>();
         private readonly List<Button> controls = new List<Button>();
         private readonly List<DoorNativeBlockerFilter> blockerFilters = new List<DoorNativeBlockerFilter>();
-        private RectTransform layer, viewport, paper, badge, note, taskRegion, wallTaskRegion, calendarRegion;
-        private CanvasGroup boardGroup, wallGroup, noteGroup;
+        private static readonly FieldInfo WindowOrder = AccessTools.Field(typeof(CustomUIManager), "windowOrder");
+        private static CustomUIManager windowOwner;
+        private static List<CustomUIWindow> foregroundWindows;
+        private RectTransform layer, viewport, paper, badge, note, wallLedger, taskRegion, wallTaskRegion, calendarRegion;
+        private CanvasGroup boardGroup, wallGroup, noteGroup, ledgerGroup;
         private Camera sceneCamera;
         private StoreShutterButton shutter;
         private Transform blockerContainer;
         private SpriteRenderer wires;
         private string signature, lastError;
         private float nextRead, focusUntil, retryAfter;
-        private int coverageFrame = -1;
-        private Vector2 coveragePoint;
-        private bool coverageResult;
-        private bool noteOpen, settledClosed, settledOpen, hasCalendar, hasTasks, hasDeadlines;
+        private bool positionDirty = true, positionReady;
+        private Vector3 lastShutterPosition, lastShutterStart;
+        private Vector2 lastLayerPivot;
+        private Matrix4x4 lastWireMatrix, lastLayerMatrix, lastSceneView, lastSceneProjection, lastCanvasView, lastCanvasProjection;
+        private Rect lastPixelRect, lastCanvasPixelRect;
+        private Camera lastCanvasCamera;
+        private Sprite lastWireSprite;
+        private bool lastSettledClosed, lastSettledOpen, lastFlipX, lastFlipY, lastNoteOpen;
+        private bool noteOpen, settledClosed, settledOpen, hasCalendar, hasTasks, hasDeadlines, hasDoorLedger, hasWallLedger;
         private int selectedDay, detailOffset, taskOffset, deadlineOffset;
         private int readDay;
         private bool readNight;
         private List<DoorCalendar.Day> calendar = new List<DoorCalendar.Day>();
         private List<TodoBook.DoorTask> tasks = new List<TodoBook.DoorTask>();
+        private ShopLedger.DoorSummary ledgerSummary;
         private readonly List<Deadline> deadlines = new List<Deadline>();
 
         private sealed class Deadline
@@ -43,9 +56,11 @@ namespace ShopAssist
             internal int Days;
         }
 
-        internal DoorBoard(Func<bool> calendarEnabled, Action<string> log)
+        internal DoorBoard(Func<bool> calendarEnabled, Func<bool> deadlinesEnabled, Func<int> deadlineDays, Action<string> log)
         {
             this.calendarEnabled = calendarEnabled ?? throw new ArgumentNullException(nameof(calendarEnabled));
+            this.deadlinesEnabled = deadlinesEnabled ?? throw new ArgumentNullException(nameof(deadlinesEnabled));
+            this.deadlineDays = deadlineDays ?? throw new ArgumentNullException(nameof(deadlineDays));
             this.log = log ?? throw new ArgumentNullException(nameof(log));
         }
 
@@ -59,8 +74,10 @@ namespace ShopAssist
                 if (!Ready()) { Hide(); return; }
                 bool enableCalendar = calendarEnabled();
                 bool enableTasks = TodoBook.DoorAvailable;
-                bool enableDeadlines = RequestBook.DoorRemindersEnabled;
-                if (!enableCalendar && !enableTasks && !enableDeadlines) { Hide(); return; }
+                bool enableDeadlines = deadlinesEnabled();
+                bool enableLedger = ShopLedger.DoorAvailable;
+                if (!enableTasks) noteOpen = false;
+                if (!enableCalendar && !enableTasks && !enableDeadlines && !enableLedger) { Hide(); return; }
                 if (!Attach()) { Hide(); return; }
                 Vector3 at = shutter.shutterGameObject.transform.position;
                 settledClosed = (at - shutter.startPosition).sqrMagnitude < 0.00001f;
@@ -69,35 +86,72 @@ namespace ShopAssist
                 // yet keeps moving it as the physical shutter's animation driver.
                 bool doorVisible = EmporiumEntry.Instance != null && EmporiumEntry.Instance.storeInteractables != null &&
                     EmporiumEntry.Instance.storeInteractables.activeInHierarchy && sceneCamera.isActiveAndEnabled;
-                bool any = enableCalendar || enableTasks || enableDeadlines;
+                bool morning = PlayerStore.Instance.storeState == PlayerStore.StoreState.MORNING;
+                bool showDoorLedger = enableLedger && morning && settledClosed;
+                bool showWallLedger = enableLedger && !morning && settledOpen;
+                bool any = enableCalendar || enableTasks || enableDeadlines || showDoorLedger;
                 bool obscured = BlockingModal();
                 viewport.gameObject.SetActive(any && doorVisible && !obscured);
                 badge.gameObject.SetActive(enableTasks && wires.gameObject.activeInHierarchy && !obscured);
-                if (!enableTasks) noteOpen = false;
+                wallLedger.gameObject.SetActive(showWallLedger && doorVisible && !obscured);
                 if (!settledClosed && !settledOpen) noteOpen = false;
                 bool onDoor = settledClosed && any && doorVisible;
                 note.gameObject.SetActive(enableTasks && noteOpen && !onDoor && settledOpen && !obscured);
-                Position();
+                Vector3 shutterPosition = shutter.shutterGameObject.transform.position;
+                Rect pixelRect = sceneCamera.pixelRect;
+                Camera canvasCamera = CanvasCamera();
+                bool wireChanged = !positionReady || wires.transform.localToWorldMatrix != lastWireMatrix ||
+                    wires.sprite != lastWireSprite || wires.flipX != lastFlipX || wires.flipY != lastFlipY;
+                bool canvasChanged = canvasCamera != lastCanvasCamera || layer.localToWorldMatrix != lastLayerMatrix ||
+                    layer.pivot != lastLayerPivot || (canvasCamera != null &&
+                    (canvasCamera.worldToCameraMatrix != lastCanvasView || canvasCamera.projectionMatrix != lastCanvasProjection ||
+                    canvasCamera.pixelRect != lastCanvasPixelRect));
+                if (positionDirty || !positionReady || shutterPosition != lastShutterPosition || pixelRect != lastPixelRect ||
+                    shutter.startPosition != lastShutterStart || sceneCamera.worldToCameraMatrix != lastSceneView ||
+                    sceneCamera.projectionMatrix != lastSceneProjection || settledClosed != lastSettledClosed ||
+                    settledOpen != lastSettledOpen || noteOpen != lastNoteOpen || wireChanged || canvasChanged)
+                {
+                    if (Position(canvasCamera))
+                    {
+                        lastShutterPosition = shutterPosition; lastShutterStart = shutter.startPosition; lastPixelRect = pixelRect;
+                        lastWireMatrix = wires.transform.localToWorldMatrix; lastWireSprite = wires.sprite;
+                        lastFlipX = wires.flipX; lastFlipY = wires.flipY;
+                        lastLayerMatrix = layer.localToWorldMatrix; lastLayerPivot = layer.pivot;
+                        lastSceneView = sceneCamera.worldToCameraMatrix; lastSceneProjection = sceneCamera.projectionMatrix;
+                        lastCanvasCamera = canvasCamera;
+                        if (canvasCamera != null)
+                        {
+                            lastCanvasView = canvasCamera.worldToCameraMatrix; lastCanvasProjection = canvasCamera.projectionMatrix;
+                            lastCanvasPixelRect = canvasCamera.pixelRect;
+                        }
+                        lastSettledClosed = settledClosed; lastSettledOpen = settledOpen; lastNoteOpen = noteOpen;
+                        positionReady = true; positionDirty = false;
+                    }
+                }
                 if (focusUntil > 0f && Time.unscaledTime >= focusUntil) { focusUntil = 0f; signature = null; }
-                if (obscured || (!onDoor && !badge.gameObject.activeInHierarchy && !note.gameObject.activeInHierarchy))
+                if (obscured || (!onDoor && !badge.gameObject.activeInHierarchy && !note.gameObject.activeInHierarchy &&
+                    !wallLedger.gameObject.activeInHierarchy))
                 {
                     boardGroup.interactable = boardGroup.blocksRaycasts = false;
                     wallGroup.interactable = wallGroup.blocksRaycasts = false;
                     noteGroup.interactable = noteGroup.blocksRaycasts = false;
+                    ledgerGroup.interactable = ledgerGroup.blocksRaycasts = false;
                     return;
                 }
                 bool showCalendar = enableCalendar && onDoor, showDeadlines = enableDeadlines && onDoor;
                 if (Time.unscaledTime >= nextRead || signature == null ||
-                    showCalendar != hasCalendar || enableTasks != hasTasks || showDeadlines != hasDeadlines || readDay != StoreStation.GetDayCounter() ||
+                    showCalendar != hasCalendar || enableTasks != hasTasks || showDeadlines != hasDeadlines ||
+                    showDoorLedger != hasDoorLedger || showWallLedger != hasWallLedger || readDay != StoreStation.GetDayCounter() ||
                     readNight != (PlayerStore.Instance.storeState == PlayerStore.StoreState.CLOSED))
                 {
                     nextRead = Time.unscaledTime + 0.5f;
-                    ReadAndBuild(showCalendar, enableTasks, showDeadlines);
+                    ReadAndBuild(showCalendar, enableTasks, showDeadlines, showDoorLedger, showWallLedger);
                 }
                 bool canInteract = CanInteract() && !OtherUiAtPointer();
                 boardGroup.interactable = boardGroup.blocksRaycasts = canInteract && settledClosed && doorVisible;
                 wallGroup.interactable = wallGroup.blocksRaycasts = canInteract && (settledClosed || settledOpen);
                 noteGroup.interactable = noteGroup.blocksRaycasts = canInteract && settledOpen;
+                ledgerGroup.interactable = ledgerGroup.blocksRaycasts = canInteract && showWallLedger;
                 if (canInteract && (settledClosed || settledOpen) && Input.mouseScrollDelta.y != 0f &&
                     !CoveredByForeground(Input.mousePosition))
                 {
@@ -143,10 +197,14 @@ namespace ShopAssist
             // foreground windows; paper and raised-window canvases remain above it.
             Transform currentBlocker = currentShutter.blockerGameObject != null ? currentShutter.blockerGameObject.transform.parent : null;
             var currentLayer = currentBlocker != null ? currentBlocker.parent as RectTransform : null;
-            Camera camera = Camera.main;
-            GameObject cameraObject = GameObject.Find("Emporium_camera");
-            if (cameraObject != null && cameraObject.GetComponent<Camera>() != null)
-                camera = cameraObject.GetComponent<Camera>();
+            Camera camera = sceneCamera;
+            if (camera == null || camera.gameObject.scene != currentShutter.gameObject.scene)
+            {
+                camera = Camera.main;
+                GameObject cameraObject = GameObject.Find("Emporium_camera");
+                if (cameraObject != null && cameraObject.GetComponent<Camera>() != null)
+                    camera = cameraObject.GetComponent<Camera>();
+            }
             if (currentLayer == null || camera == null || currentWires == null || currentWires.sprite == null) return false;
             if (layer != currentLayer || shutter != currentShutter || wires != currentWires || blockerContainer != currentBlocker || viewport == null)
             {
@@ -166,11 +224,15 @@ namespace ShopAssist
                 note.anchorMin = note.anchorMax = layer.pivot;
                 noteGroup = note.gameObject.AddComponent<CanvasGroup>();
                 note.gameObject.AddComponent<DoorRaycastFilter>().Allowed = point => settledOpen && CanInteract() && !CoveredByForeground(point);
+                wallLedger = NewRect("ShopAssist_WallLedger", layer, 0, 0, 106, 31);
+                wallLedger.anchorMin = wallLedger.anchorMax = layer.pivot;
+                ledgerGroup = wallLedger.gameObject.AddComponent<CanvasGroup>();
+                wallLedger.gameObject.AddComponent<DoorRaycastFilter>().Allowed = point => settledOpen && CanInteract() && !CoveredByForeground(point);
                 AttachBlockerFilter(shutter.blockerGameObject);
                 if (shutter.blockerMaskObject != null && shutter.blockerMaskObject.gameObject != shutter.blockerGameObject)
                     AttachBlockerFilter(shutter.blockerMaskObject.gameObject);
                 PositionLayers();
-                signature = null;
+                signature = null; positionDirty = true; positionReady = false;
             }
             PositionLayers();
             sceneCamera = camera;
@@ -184,6 +246,7 @@ namespace ShopAssist
             if (viewport.GetSiblingIndex() != at) viewport.SetSiblingIndex(at);
             if (badge.GetSiblingIndex() != at + 1) badge.SetSiblingIndex(at + 1);
             if (note.GetSiblingIndex() != at + 2) note.SetSiblingIndex(at + 2);
+            if (wallLedger.GetSiblingIndex() != at + 3) wallLedger.SetSiblingIndex(at + 3);
         }
 
         private void AttachBlockerFilter(GameObject target)
@@ -206,22 +269,27 @@ namespace ShopAssist
                 if (control == null || !control.gameObject.activeInHierarchy || !control.interactable) continue;
                 Transform target = control.transform;
                 if (target.IsChildOf(paper) && !settledClosed || target.IsChildOf(badge) && !(settledClosed || settledOpen) ||
-                    target.IsChildOf(note) && !settledOpen) continue;
+                    target.IsChildOf(note) && !settledOpen || target.IsChildOf(wallLedger) && !settledOpen) continue;
+                if (target.IsChildOf(paper) && !Contains(viewport, point)) continue;
                 if (Contains(target as RectTransform, point)) return true;
             }
             return false;
         }
 
-        private void Position()
+        private bool Position(Camera canvasCamera)
         {
             Rect pixels = sceneCamera.pixelRect;
+            if (pixels.width <= 0f || pixels.height <= 0f) return false;
             Vector2 topLeft = new Vector2(pixels.x + pixels.width * 329f / 960f,
                 pixels.y + pixels.height * (1f - 24f / 540f));
             Vector2 bottomRight = new Vector2(pixels.x + pixels.width * 631f / 960f,
                 pixels.y + pixels.height * (1f - 265f / 540f));
-            Camera canvasCamera = CanvasCamera();
             if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(layer, topLeft, canvasCamera, out Vector2 tl) ||
-                !RectTransformUtility.ScreenPointToLocalPointInRectangle(layer, bottomRight, canvasCamera, out Vector2 br)) return;
+                !RectTransformUtility.ScreenPointToLocalPointInRectangle(layer, bottomRight, canvasCamera, out Vector2 br)) return false;
+            viewport.anchorMin = viewport.anchorMax = layer.pivot;
+            badge.anchorMin = badge.anchorMax = layer.pivot;
+            note.anchorMin = note.anchorMax = layer.pivot;
+            wallLedger.anchorMin = wallLedger.anchorMax = layer.pivot;
             viewport.anchoredPosition = tl;
             viewport.sizeDelta = new Vector2(br.x - tl.x, tl.y - br.y);
             float sx = viewport.sizeDelta.x / DoorWidth, sy = viewport.sizeDelta.y / DoorHeight;
@@ -243,14 +311,15 @@ namespace ShopAssist
             float localY = (py - pivot.y) / sprite.pixelsPerUnit * (wires.flipY ? -1f : 1f);
             Vector3 housing = wires.transform.TransformPoint(new Vector3(localX, localY, 0f));
             Vector2 wallScreen = sceneCamera.WorldToScreenPoint(housing);
-            if (RectTransformUtility.ScreenPointToLocalPointInRectangle(layer, wallScreen, canvasCamera, out Vector2 wall))
-            {
-                badge.pivot = new Vector2(0.5f, 0.5f);
-                badge.anchoredPosition = wall;
-                badge.localScale = new Vector3(sx, sy, 1f);
-                note.anchoredPosition = wall + new Vector2(40f * sx, 18f * sy);
-                note.localScale = new Vector3(sx, sy, 1f);
-            }
+            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(layer, wallScreen, canvasCamera, out Vector2 wall)) return false;
+            badge.pivot = new Vector2(0.5f, 0.5f);
+            badge.anchoredPosition = wall;
+            badge.localScale = new Vector3(sx, sy, 1f);
+            note.anchoredPosition = wall + new Vector2(40f * sx, 18f * sy);
+            note.localScale = new Vector3(sx, sy, 1f);
+            wallLedger.anchoredPosition = wall + new Vector2(40f * sx, (noteOpen ? -132f : -20f) * sy);
+            wallLedger.localScale = new Vector3(sx, sy, 1f);
+            return true;
         }
 
         private Camera CanvasCamera()
@@ -259,13 +328,15 @@ namespace ShopAssist
             return canvas == null || canvas.renderMode == RenderMode.ScreenSpaceOverlay ? null : canvas.worldCamera;
         }
 
-        private void ReadAndBuild(bool showCalendar, bool showTasks, bool showDeadlines)
+        private void ReadAndBuild(bool showCalendar, bool showTasks, bool showDeadlines, bool showDoorLedger, bool showWallLedger)
         {
             hasCalendar = showCalendar; hasTasks = showTasks; hasDeadlines = showDeadlines;
+            hasDoorLedger = showDoorLedger; hasWallLedger = showWallLedger;
             int today = StoreStation.GetDayCounter();
             readDay = today;
             readNight = PlayerStore.Instance.storeState == PlayerStore.StoreState.CLOSED;
             calendar = showCalendar ? DoorCalendar.Read(today) : new List<DoorCalendar.Day>();
+            ledgerSummary = showDoorLedger ? ShopLedger.Summary(today - 1) : showWallLedger ? ShopLedger.Summary(today) : null;
             bool tasksValid = !showTasks || TodoBook.DoorTasks(out tasks);
             if (!showTasks || !tasksValid) tasks = new List<TodoBook.DoorTask>();
             deadlines.Clear();
@@ -274,10 +345,6 @@ namespace ShopAssist
                 PlayerStore store = PlayerStore.Instance;
                 if (store.IsPayingRent()) deadlines.Add(new Deadline { Title = ShopSettings.Text("door.rent"), Days = Math.Max(0, store.dayUntilRent) });
                 else if (store.isPayingMortgage) deadlines.Add(new Deadline { Title = ShopSettings.Text("door.mortgage"), Days = Math.Max(0, store.dayUntilRent) });
-                if (RequestBook.TryDoorDeadlines(out List<RequestBook.DoorDeadline> orders))
-                    foreach (RequestBook.DoorDeadline item in orders)
-                        deadlines.Add(new Deadline { Title = item.Title, Days = item.RemainingDays });
-                else deadlines.Add(new Deadline { Title = ShopSettings.Text("door.orders_error"), Days = -1 });
                 deadlines.Sort((a, b) => a.Days.CompareTo(b.Days));
             }
             taskOffset = Mathf.Clamp(taskOffset, 0, Math.Max(0, tasks.Count - 5));
@@ -286,12 +353,16 @@ namespace ShopAssist
                 .Append('|').Append(today).Append(':').Append(readNight).Append(':').Append(settledClosed)
                 .Append(':').Append(badge.gameObject.activeInHierarchy).Append(':').Append(note.gameObject.activeInHierarchy)
                 .Append('|').Append(showCalendar).Append(showTasks).Append(showDeadlines)
+                .Append(showDoorLedger).Append(showWallLedger)
                 .Append(tasksValid).Append('|').Append(selectedDay).Append('|').Append(detailOffset).Append('|').Append(taskOffset).Append('|').Append(deadlineOffset)
                 .Append('|').Append(ShopSettings.Text("door.tasks")).Append('|').Append(noteOpen);
             foreach (var day in calendar)
                 foreach (var item in day.Events) key.Append('|').Append(day.Number).Append(':').Append(item.Id).Append(':').Append(item.Name).Append(':').Append(item.Detail).Append(':').Append((int)item.DayType);
             foreach (var item in tasks) key.Append('|').Append(item.Id).Append(':').Append(item.Text).Append(':').Append(item.Done);
             foreach (var item in deadlines) key.Append('|').Append(item.Title).Append(':').Append(item.Days);
+            if (ledgerSummary != null) key.Append('|').Append(ledgerSummary.Day).Append(':').Append(ledgerSummary.Valid)
+                .Append(':').Append(ledgerSummary.Income).Append(':').Append(ledgerSummary.Expense)
+                .Append(':').Append(ledgerSummary.Margin).Append(':').Append(ledgerSummary.Unknown);
             string next = key.ToString();
             if (next == signature) return;
             signature = next;
@@ -301,13 +372,14 @@ namespace ShopAssist
             controls.AddRange(paper.GetComponentsInChildren<Button>(true));
             controls.AddRange(badge.GetComponentsInChildren<Button>(true));
             controls.AddRange(note.GetComponentsInChildren<Button>(true));
+            controls.AddRange(wallLedger.GetComponentsInChildren<Button>(true));
         }
 
         private void BuildBoard(int today, bool tasksValid)
         {
             Clear(paper);
             taskRegion = calendarRegion = null;
-            if (!hasCalendar && !hasTasks && !hasDeadlines) return;
+            if (!hasCalendar && !hasTasks && !hasDeadlines && !hasDoorLedger) return;
             if (hasCalendar || hasTasks)
                 Fill(paper, "paper", 0, 0, Width, Height, new Color32(185, 173, 145, 250));
             if (hasCalendar)
@@ -324,26 +396,30 @@ namespace ShopAssist
                 BuildTasks(paper, x, 4, width, hasDeadlines ? 138 : 164, tasksValid, false);
             }
             if (hasDeadlines) BuildDeadlines();
+            if (hasDoorLedger) BuildLedger(paper, 0, Height + 3, Width, 27);
         }
 
         private void BuildCalendar(int today, float width)
         {
             Fill(paper, "calendar-heading", 4, 4, width, 14, new Color32(104, 94, 76, 255));
             Label(paper, "calendar-title", 8, 4, width - 8, 13, ShopSettings.Text("door.calendar"), 9, Color.white, TextAlignmentOptions.Left);
-            float col = width / 7f, top = 27, row = hasDeadlines ? 49 : 62;
+            float col = width / 4f, top = 21, row = hasDeadlines ? 52 : 65;
             string[] weekdays = { "door.mon", "door.tue", "door.wed", "door.thu", "door.fri", "door.sat", "door.sun" };
-            for (int i = 0; i < 7; i++)
-                Label(paper, "weekday", 4 + col * i, 17, col - 1, 9, ShopSettings.Text(weekdays[i]), 7, Ink(), TextAlignmentOptions.Center);
             var previous = new Dictionary<StoreEvent, int>();
             for (int i = 0; i < calendar.Count; i++)
             {
-                int week = i / 7, column = i % 7;
+                int week = i / 4, column = i % 4;
                 if (column == 0) previous.Clear();
                 float x = 4 + col * column, y = top + row * week;
                 var day = calendar[i];
                 Fill(paper, "cell", x, y, col - 1, row - 1,
                     day.Number == today ? new Color32(244, 220, 163, 255) : new Color32(229, 219, 195, 255));
-                Label(paper, "date", x + 2, y + 2, col - 4, 10, day.Number.ToString(), 8, Ink(), TextAlignmentOptions.Left);
+                string weekday = ShopSettings.Text(weekdays[(day.Number + 6) % 7]);
+                var date = Label(paper, "date", x + 2, y + 2, col - 4, 10, weekday, 8, Ink(), TextAlignmentOptions.Left);
+                date.enableAutoSizing = true;
+                date.fontSizeMin = 5;
+                date.fontSizeMax = 8;
+                if (day.Number < 1) continue;
                 var used = new HashSet<int>();
                 var slots = new Dictionary<DoorCalendar.Entry, int>();
                 foreach (var entry in day.Events)
@@ -458,7 +534,8 @@ namespace ShopAssist
                     var longStroke = Fill(parent, "tick-right", x + 9, ty + 6, 6, 2, Color.white).rectTransform;
                     longStroke.localEulerAngles = new Vector3(0, 0, 42);
                 }
-                Label(parent, "task-text", x + 18, ty, width - 22, 16, row.Text, 7.3f,
+                string taskText = row.Target > 1 ? row.Text + " " + row.Progress + "/" + row.Target : row.Text;
+                Label(parent, "task-text", x + 18, ty, width - 22, 16, taskText, 7.3f,
                     row.Done ? new Color32(120, 117, 105, 255) : Ink(), TextAlignmentOptions.Left);
                 var taskButton = Button(parent, "ShopAssist_DoorTask_" + row.Id, x + 2, ty, width - 4, 17, "", () =>
                 {
@@ -500,7 +577,7 @@ namespace ShopAssist
             for (int i = 0; i < Math.Min(2, deadlines.Count - deadlineOffset); i++)
             {
                 var item = deadlines[deadlineOffset + i];
-                Color color = item.Days <= RequestBook.DoorReminderDays ? new Color32(255, 199, 126, 255) : Color.white;
+                Color color = item.Days <= deadlineDays() ? new Color32(255, 199, 126, 255) : Color.white;
                 Label(paper, "deadline-row", 6, y + 2 + i * 11, Width - 32, 11,
                     item.Days < 0 ? item.Title : ShopSettings.Format("door.deadline", item.Title, item.Days), 7.5f, color, TextAlignmentOptions.Left);
             }
@@ -533,6 +610,33 @@ namespace ShopAssist
                 Clear(note);
                 BuildTasks(note, 0, 0, 106, 145, valid, true);
                 Button(note, "ShopAssist_DoorNoteClose", 58, 2, 19, 13, "x", () => { noteOpen = false; Invalidate(); });
+            }
+            if (wallLedger.gameObject.activeInHierarchy)
+            {
+                Clear(wallLedger);
+                BuildLedger(wallLedger, 0, 0, 106, 31);
+            }
+        }
+
+        private void BuildLedger(RectTransform parent, float x, float y, float width, float height)
+        {
+            if (ledgerSummary == null) return;
+            Fill(parent, "ledger-paper", x, y, width, height, new Color32(69, 69, 60, 245));
+            string title = hasDoorLedger ? ShopSettings.Text("f28.yesterday") : ShopSettings.Text("f28.today");
+            string first = !ledgerSummary.Valid ? ShopSettings.Text("f28.invalid") : ledgerSummary.Day < 1 ?
+                ShopSettings.Text("f28.no_yesterday") : ShopSettings.Format("f28.door_cash", title, ledgerSummary.Income - ledgerSummary.Expense);
+            var cash = Label(parent, "ledger-cash", x + 4, y + 1, width - 8, 11, first, 7.5f, Color.white, TextAlignmentOptions.Left);
+            cash.enableAutoSizing = true; cash.fontSizeMin = 5; cash.fontSizeMax = 7.5f;
+            if (ledgerSummary.Valid && ledgerSummary.Day > 0)
+            {
+                var profit = Label(parent, "ledger-profit", x + 4, y + 13, width - 8, 11,
+                    ShopSettings.Format("f28.door_profit", ledgerSummary.Margin, ledgerSummary.Unknown), 7, Color.white, TextAlignmentOptions.Left);
+                profit.enableAutoSizing = true; profit.fontSizeMin = 5; profit.fontSizeMax = 7;
+            }
+            if (ledgerSummary.Day > 0 && ledgerSummary.Valid)
+            {
+                int day = ledgerSummary.Day;
+                Button(parent, "ShopAssist_LedgerSummary", x, y, width, height, "", () => ShopLedger.OpenDoorDay(day), true);
             }
         }
 
@@ -596,17 +700,10 @@ namespace ShopAssist
         private static bool CanInteract()
         {
             StoreUIManager ui = StoreUIManager.Instance;
-            return ShopInventory.InStore && !PlayerStore.Instance.cinematicMode && !StoreUIManager.IsAnyTyping() &&
+            return ShopInventory.InStore && PlayerStore.HasInstance && ui != null && CustomUIManager.Instance != null &&
+                !PlayerStore.Instance.cinematicMode && !StoreUIManager.IsAnyTyping() &&
                 !KeyBindHelper.IsCapturing && !UIDragHandler.isDraggingAnyUI && ItemMouseDragHandler.current?.IsDraggingItem != true &&
-                !ui.isAboutToStartMainDialog && DialogUIManager.Instance?.currentDialog == null && DialoguePhoneUIManager.Instance?.currentDialog == null &&
-                (ui.gameOptionUIManager == null || !ui.gameOptionUIManager.IsOpen) &&
-                (ui.escapeUIManager == null || !ui.escapeUIManager.menuPanel.activeInHierarchy) &&
-                (ui.blackscreen == null || !ui.blackscreen.gameObject.activeInHierarchy) &&
-                (ui.controlHintOverlay == null || !ui.controlHintOverlay.activeInHierarchy) &&
-                (ui.closeShutterConfirmationPanel == null || !ui.closeShutterConfirmationPanel.activeInHierarchy) &&
-                (GenericConfirmationUIManager.Instance == null || !GenericConfirmationUIManager.Instance.panel.activeInHierarchy) &&
-                (ui.confirmPanelUIManager == null || !ui.confirmPanelUIManager.panel.activeInHierarchy) &&
-                (AdvCalendarUIManager.Instance == null || AdvCalendarUIManager.Instance.UIPanel == null || !AdvCalendarUIManager.Instance.UIPanel.activeInHierarchy);
+                !BlockingModal();
         }
 
         private static bool BlockingModal()
@@ -634,29 +731,23 @@ namespace ShopAssist
             EventSystem system = EventSystem.current;
             if (system == null) return true;
             var pointer = new PointerEventData(system) { position = Input.mousePosition };
-            bool boardRaycasts = boardGroup.blocksRaycasts, wallRaycasts = wallGroup.blocksRaycasts, noteRaycasts = noteGroup.blocksRaycasts;
-            boardGroup.blocksRaycasts = wallGroup.blocksRaycasts = noteGroup.blocksRaycasts = true;
+            bool boardRaycasts = boardGroup.blocksRaycasts, wallRaycasts = wallGroup.blocksRaycasts, noteRaycasts = noteGroup.blocksRaycasts,
+                ledgerRaycasts = ledgerGroup.blocksRaycasts;
+            boardGroup.blocksRaycasts = wallGroup.blocksRaycasts = noteGroup.blocksRaycasts = ledgerGroup.blocksRaycasts = true;
             try { hits.Clear(); system.RaycastAll(pointer, hits); }
-            finally { boardGroup.blocksRaycasts = boardRaycasts; wallGroup.blocksRaycasts = wallRaycasts; noteGroup.blocksRaycasts = noteRaycasts; }
+            finally { boardGroup.blocksRaycasts = boardRaycasts; wallGroup.blocksRaycasts = wallRaycasts; noteGroup.blocksRaycasts = noteRaycasts; ledgerGroup.blocksRaycasts = ledgerRaycasts; }
             foreach (RaycastResult hit in hits)
             {
                 GameObject target = hit.gameObject;
                 if (target == null) continue;
-                if (target.transform.IsChildOf(paper) || target.transform.IsChildOf(badge) || target.transform.IsChildOf(note)) return false;
+                if (target.transform.IsChildOf(paper) || target.transform.IsChildOf(badge) || target.transform.IsChildOf(note) ||
+                    target.transform.IsChildOf(wallLedger)) return false;
                 if (hit.module is GraphicRaycaster) return true;
             }
             return false;
         }
 
-        private bool CoveredByForeground(Vector2 point)
-        {
-            if (coverageFrame == Time.frameCount && coveragePoint == point) return coverageResult;
-            coverageFrame = Time.frameCount; coveragePoint = point;
-            coverageResult = FindForegroundAt(point);
-            return coverageResult;
-        }
-
-        private static bool FindForegroundAt(Vector2 point)
+        private static bool CoveredByForeground(Vector2 point)
         {
             GameObject paperCanvas = StoreUIManager.Instance.paperUICanvasObject;
             if (paperCanvas != null)
@@ -670,8 +761,25 @@ namespace ShopAssist
                 foreach (PixelWindow window in WindowsHandler.current.visibleWindows)
                     if (window != null && (window.canMove || window.forceRaycast) && window.handler != null &&
                         window.handler.gameObject.activeInHierarchy && Contains(window.handler.rectTransform, point)) return true;
-            foreach (CustomUIWindowFrame frame in Object.FindObjectsOfType<CustomUIWindowFrame>())
-                if (frame != null && frame.gameObject.activeInHierarchy && Contains(frame.transform as RectTransform, point)) return true;
+            CustomUIManager manager = CustomUIManager.Instance;
+            if (windowOwner != manager)
+            {
+                windowOwner = manager;
+                foregroundWindows = WindowOrder?.GetValue(manager) as List<CustomUIWindow>;
+            }
+            if (foregroundWindows != null)
+            {
+                foreach (CustomUIWindow window in foregroundWindows)
+                {
+                    CustomUIWindowFrame frame = window?.frame;
+                    if (frame != null && frame.gameObject.activeInHierarchy && Contains(frame.transform as RectTransform, point)) return true;
+                }
+            }
+            else
+            {
+                foreach (CustomUIWindowFrame frame in Object.FindObjectsOfType<CustomUIWindowFrame>())
+                    if (frame != null && frame.gameObject.activeInHierarchy && Contains(frame.transform as RectTransform, point)) return true;
+            }
             return false;
         }
 
@@ -688,6 +796,7 @@ namespace ShopAssist
             if (viewport != null) viewport.gameObject.SetActive(false);
             if (badge != null) badge.gameObject.SetActive(false);
             if (note != null) note.gameObject.SetActive(false);
+            if (wallLedger != null) wallLedger.gameObject.SetActive(false);
         }
 
         private void ResetObjects()
@@ -698,10 +807,11 @@ namespace ShopAssist
             if (viewport != null) Object.Destroy(viewport.gameObject);
             if (badge != null) Object.Destroy(badge.gameObject);
             if (note != null) Object.Destroy(note.gameObject);
-            viewport = paper = badge = note = layer = taskRegion = wallTaskRegion = calendarRegion = null;
-            boardGroup = wallGroup = noteGroup = null;
+            if (wallLedger != null) Object.Destroy(wallLedger.gameObject);
+            viewport = paper = badge = note = wallLedger = layer = taskRegion = wallTaskRegion = calendarRegion = null;
+            boardGroup = wallGroup = noteGroup = ledgerGroup = null;
             shutter = null; blockerContainer = null; wires = null; sceneCamera = null; hoverPanel = taskHover = null; signature = null;
-            coverageFrame = -1;
+            positionReady = false; positionDirty = true;
         }
 
         internal void Reset()

@@ -132,7 +132,28 @@ internal static class TodoBookTests
         Window.Click("task_retry");
         Need(Window.buttons.ContainsKey("task_reset"), "A successful retry did not identify the unreadable checklist");
 
+        PlayerStore.Instance.runID = "counted-run";
+        book.Tick();
+        settings.actions["f17.open"]();
+        Window.Get("task_text").SetString("three times");
+        Window.Get("task_kind").SetIndex(1);
+        Window.Get("task_target").SetIndex(2);
+        Window.Click("task_save");
+        var counted = Tasks().Single();
+        Need(counted.Target == 3 && counted.Progress == 0 && !counted.Done, "Target count was not saved");
+        Need(TodoBook.DoorSetDone(counted, true), "Could not advance counted task");
+        Need(!TodoBook.DoorSetDone(counted, true), "Stale task snapshot advanced progress twice");
+        counted = Tasks().Single();
+        Need(counted.Progress == 1 && !counted.Done, "First completion did not retain partial progress");
+        Need(TodoBook.DoorSetDone(counted, true), "Could not advance counted task again");
+        counted = Tasks().Single();
+        Need(TodoBook.DoorSetDone(counted, true) && Tasks().Single().Done, "Counted task did not complete at its target");
+        StoreStation.Day = 2;
+        counted = Tasks().Single();
+        Need(counted.Progress == 0 && !counted.Done, "Daily counted task did not reset on the next day");
+        StoreStation.Day = 1;
+
         book.Dispose();
-        Console.WriteLine("PASS task ordering, confirmed scoped clearing, unreadable-data recovery, and capacity");
+        Console.WriteLine("PASS task ordering, counted progress, confirmed scoped clearing, unreadable-data recovery, and capacity");
     }
 }

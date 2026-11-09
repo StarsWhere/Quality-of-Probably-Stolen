@@ -1,7 +1,6 @@
 using System;
 using System.IO;
 using System.Linq;
-using System.Reflection;
 using TMPro;
 using UnityEngine;
 
@@ -65,8 +64,9 @@ public sealed class DailyDeadlineScenario
             Need(Row("door.mortgage", 1) == null && Row("door.rent", 1) == null, "Paid property retained a rent or mortgage deadline");
             SetOption(false, 2); Wait(7); return false;
         }
-        if (Find("ShopAssist_DoorViewport")?.activeInHierarchy == true && Time.realtimeSinceStartup - since < 8f) return false;
-        Need(Find("ShopAssist_DoorViewport")?.activeInHierarchy != true, "Disabled F21 retained the deadline board: " + State());
+        if (Find("deadlines")?.activeInHierarchy == true && Time.realtimeSinceStartup - since < 8f) return false;
+        Need(Find("deadlines")?.activeInHierarchy != true && Row("door.rent", 1) == null && Row("door.mortgage", 1) == null,
+            "Disabled F21 retained deadline content: " + State());
         result = "PASS F21 live rent/mortgage deadlines, reminder threshold changes, paid property and disable";
         return true;
     }
@@ -130,13 +130,10 @@ public sealed class DailyDeadlineScenario
         var rows = Resources.FindObjectsOfTypeAll<TMP_Text>()
             .Where(value => value.name == "deadline-row" && value.gameObject.scene.IsValid())
             .Select(value => "[" + value.text + "; active=" + value.gameObject.activeInHierarchy + "; color=" + (Color32)value.color + "]").ToArray();
-        var mod = ModLoader.Mods.FirstOrDefault(value => value.Manifest?.ID == Mod);
-        Type book = mod?.Instance?.GetType().Assembly.GetType("ShopAssist.RequestBook");
-        object reminder = book?.GetProperty("DoorRemindersEnabled", BindingFlags.Static | BindingFlags.NonPublic)?.GetValue(null);
         var camera = GameObject.Find("Emporium_camera")?.GetComponent<Camera>();
         return "store=" + (store != null) + " location=" + store?.playerLocation + " state=" + store?.storeState +
             " rent=" + (store?.IsPayingRent() == true) + " mortgage=" + store?.isPayingMortgage + " paid=" + store?.IsPropertyPaid +
-            " days=" + store?.dayUntilRent + " reminders=" + reminder +
+            " days=" + store?.dayUntilRent +
             " f21=" + ModConfig.Find(Mod)?.Get("f21.enabled")?.BoxedValue + " lead=" + ModConfig.Find(Mod)?.Get("f21.days")?.BoxedValue +
             " doorDistance=" + (shutter?.shutterGameObject != null ? Vector3.Distance(shutter.shutterGameObject.transform.position, shutter.startPosition).ToString() : "null") +
             " camera=" + (camera?.isActiveAndEnabled == true) + " interactables=" + (EmporiumEntry.Instance?.storeInteractables?.activeInHierarchy == true) +

@@ -23,10 +23,13 @@ namespace ShopAssist
             var result = new List<Day>();
             var manager = StoreStation.Instance.storeEventManager;
             PlayerStore store = PlayerStore.Instance;
-            int first = today - (today - 1) % 7;
-            for (int number = first; number < first + 14; number++)
+            // Keep the useful window around the current day: yesterday is the
+            // first cell and today is always the second cell.
+            int first = today - 1;
+            for (int number = first; number < first + 8; number++)
             {
                 var day = new Day { Number = number };
+                if (number < 1) { result.Add(day); continue; }
                 foreach (StoreEvent item in manager.GetActiveEventOnDay(number, true, true))
                 {
                     if (item == null) continue;

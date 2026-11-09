@@ -32,10 +32,12 @@ namespace ShopAssist
             var playback = new FastPlayback(settings, warn);
             Add("F42", playback.Start, playback.Tick, playback.Dispose);
             var enabled = settings.Toggle("f15.enabled", "f15.tip");
+            var deadlines = settings.Toggle("f21.enabled", "f21.tip");
+            var deadlineDays = settings.Integer("f21.days", "f21.days.tip", 1, 0, 3);
             MorningCalendar calendar = null;
             Add("F15", () =>
             {
-                calendar = new MorningCalendar(() => enabled.Value, message => log.Log(message));
+                calendar = new MorningCalendar(() => enabled.Value, () => deadlines.Value, () => deadlineDays.Value, message => log.Log(message));
                 settings.Changed += calendar.SettingsChanged;
                 calendar.Start();
             }, () => calendar.Tick(), () =>
@@ -55,8 +57,6 @@ namespace ShopAssist
             Add("F01", purchases.Start, null, purchases.Dispose);
             var ledger = new ShopLedger(settings, warn);
             Add("F16/F28", ledger.Start, ledger.Tick, ledger.Dispose);
-            var requests = new RequestBook(settings, warn);
-            Add("F21/F27", requests.Start, requests.Tick, requests.Dispose);
             var yeast = new YeastReturn(settings, warn);
             Add("F37", yeast.Start, null, yeast.Dispose);
             var machines = new MachineTools(settings, warn);
@@ -69,17 +69,13 @@ namespace ShopAssist
             Add("F39", knownMarkers.Start, knownMarkers.Tick, knownMarkers.Dispose);
             var listings = new CustomerInventory(settings, clues, warn);
             Add("F11", listings.Start, listings.Tick, listings.Dispose);
-            var shortcuts = new ContextShortcuts(settings, listings, warn);
+            var shortcuts = new ContextShortcuts(settings, warn);
             Add("Context buttons", shortcuts.Start, shortcuts.Tick, shortcuts.Dispose);
             var cargo = new TripCargo(settings, warn);
-            Add("F25", cargo.Start, null, cargo.Dispose);
+            Add("F25", cargo.Start, cargo.Tick, cargo.Dispose);
             var peek = new ContainerPeek(settings, warn);
             Add("F20", peek.Start, peek.Tick, peek.Dispose);
-            var labeler = new BatchLabeler(settings);
-            Add("F22", labeler.Start, labeler.Tick, labeler.Dispose);
-            var display = new DisplayRestock(settings, warn);
-            Add("F29", display.Start, null, display.Dispose);
-            var basket = new CustomerBasket(settings, clues, listings);
+            var basket = new CustomerBasket(settings, clues, listings.PurchaseLabel);
             Add("F34", basket.Start, basket.Tick, basket.Dispose);
             var packing = new FieldPacking(settings);
             Add("F36", packing.Start, packing.Tick, packing.Dispose);
@@ -93,8 +89,6 @@ namespace ShopAssist
             var groupPlace = settings.Toggle("f41.enabled", "f41.tip", true);
             Add("F40/F41", () => GroupPlacement.Register(() => groupPlace.Value, () => groupRotate.Value, warn),
                 null, GroupPlacement.Unregister);
-            var gather = new WaterGather(settings);
-            Add("F26", gather.Start, gather.Tick, gather.Dispose);
             var slips = new AppraisalReceipt(settings, warn);
             Add("F24", slips.Start, null, slips.Dispose);
         }

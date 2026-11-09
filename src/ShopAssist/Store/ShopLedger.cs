@@ -3,14 +3,12 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Reflection;
 using HarmonyLib;
-using Newtonsoft.Json;
 using UnityEngine;
 
 namespace ShopAssist
 {
-    internal sealed class ShopLedger : IDisposable
+    internal sealed partial class ShopLedger : IDisposable
     {
-        private enum Kind { Other, Purchase, Sale, Wholesale, Appraisal, Rent, Service, Barter }
         private const string DataKey = "ledger";
         private const string WindowId = ModEntry.Id + ".ledger";
         private static ShopLedger active;
@@ -20,20 +18,11 @@ namespace ShopAssist
         private readonly ShopSettings settings;
         private readonly Action<string> log;
 
-        [Serializable]
-        private sealed class DayEntry
+        internal sealed class DoorSummary
         {
-            public int day;
-            public Kind kind;
-            public long income, expense, knownMargin;
-            public int events, unknownCost, knownCostCount;
-        }
-
-        [Serializable]
-        private sealed class History
-        {
-            [JsonRequired] public int schemaVersion = 1;
-            [JsonRequired] public List<DayEntry> entries = new List<DayEntry>();
+            internal int Day, Unknown;
+            internal long Income, Expense, Margin;
+            internal bool Valid;
         }
 
         private sealed class Span
@@ -115,12 +104,7 @@ namespace ShopAssist
                 string raw = ModHelper.GetModData(ModEntry.Id, DataKey, null);
                 try
                 {
-                    history = raw == null ? new History() : ShopData.Decode<History>(raw, 8388608);
-                    if (history == null || history.schemaVersion != 1 || history.entries == null ||
-                        history.entries.Count > 40000 || history.entries.Exists(e => e == null || e.day <= 0 ||
-                        !Enum.IsDefined(typeof(Kind), e.kind) || e.income < 0 || e.expense < 0 ||
-                        e.events < 0 || e.unknownCost < 0 || e.knownCostCount < 0))
-                        throw new FormatException("Invalid history");
+                    history = raw == null ? new History() : DecodeHistory(raw);
                 }
                 catch (Exception error)
                 {
@@ -130,6 +114,29 @@ namespace ShopAssist
             }
             if (wasRecording != ledger.Value) { balance = store.playerCash; wasRecording = ledger.Value; }
             return true;
+        }
+
+        internal static bool DoorAvailable => active != null && active.ledger.Value && active.Ensure();
+
+        internal static DoorSummary Summary(int day)
+        {
+            var summary = new DoorSummary { Day = day };
+            if (active == null || !active.ledger.Value || !active.Ensure() || active.history == null) return summary;
+            summary.Valid = true;
+            foreach (DayEntry row in active.history.entries)
+            {
+                if (row.day != day) continue;
+                summary.Income += row.income; summary.Expense += row.expense;
+                summary.Margin += row.knownMargin; summary.Unknown += row.unknownCost;
+            }
+            return summary;
+        }
+
+        internal static void OpenDoorDay(int day)
+        {
+            if (active == null || day < 1 || !active.ledger.Value || !active.Ensure()) return;
+            active.lastViewedDays[(active.run, active.slot)] = day;
+            active.OpenHistory();
         }
 
         private void SettingsChanged()
@@ -148,20 +155,19 @@ namespace ShopAssist
             if (!ledger.Value || history == null || (change == 0 && kind != Kind.Barter)) return;
             int day = StoreStation.GetDayCounter();
             if (day < 1) return;
-            var row = history.entries.FindLast(e => e.day == day && e.kind == kind);
-            if (row == null)
+            try
             {
-                row = new DayEntry { day = day, kind = kind };
-                history.entries.Add(row);
+                Append(history, day, kind, change, kind == Kind.Sale ? cost : null);
+                string raw = ShopData.Encode(history);
+                if (raw.Length > 8388608) throw new FormatException("Ledger size limit reached");
+                CheckedModData.Write(DataKey, raw);
             }
-            row.events++;
-            if (change > 0) row.income += change; else row.expense -= change;
-            if (kind == Kind.Sale && change >= 0)
+            catch (Exception error)
             {
-                if (cost.HasValue) { row.knownMargin += change - cost.Value; row.knownCostCount++; }
-                else row.unknownCost++;
+                history = null;
+                log("F28 recording stopped after an invalid write: " + error.Message);
+                ShopNotice.Show(ShopSettings.Text("f28.write_error"));
             }
-            ModHelper.SetModData(ModEntry.Id, DataKey, ShopData.Encode(history));
         }
 
         private void Reconcile()
@@ -356,17 +362,30 @@ namespace ShopAssist
             long income = 0, expense = 0, margin = 0;
             int unknown = 0, known = 0;
             b.AddLabel(ShopSettings.Format("f28.cash", PlayerStore.Instance.playerCash));
-            LedgerRow(b, ShopSettings.Text("f28.kind"), ShopSettings.Text("f28.income"), ShopSettings.Text("f28.expense"));
+            LedgerRow(b, ShopSettings.Text("f28.kind"), ShopSettings.Text("f28.change"), ShopSettings.Text("f28.profit"));
             b.BeginScrollFlexible(110);
             bool any = false;
             foreach (var row in history.entries)
             {
                 if (row.day != viewedDay || (viewedKind > 0 && (int)row.kind != viewedKind - 1)) continue;
-                any = true;
-                LedgerRow(b, ShopSettings.Text("f28." + row.kind.ToString().ToLowerInvariant()),
-                    row.income.ToString("N0"), row.expense.ToString("N0"));
                 income += row.income; expense += row.expense; margin += row.knownMargin;
                 known += row.knownCostCount; unknown += row.unknownCost;
+            }
+            foreach (var row in history.legacy)
+            {
+                if (row.day != viewedDay || (viewedKind > 0 && (int)row.kind != viewedKind - 1)) continue;
+                any = true;
+                LedgerRow(b, ShopSettings.Format("f28.legacy", ShopSettings.Text("f28." + row.kind.ToString().ToLowerInvariant()), row.events),
+                    (row.income - row.expense).ToString("+0;-0;0"), row.kind == Kind.Sale ?
+                        (row.unknownCost > 0 ? ShopSettings.Text("f28.unknown") : row.knownMargin.ToString("+0;-0;0")) : "—");
+            }
+            foreach (var row in history.transactions)
+            {
+                if (row.day != viewedDay || (viewedKind > 0 && (int)row.kind != viewedKind - 1)) continue;
+                any = true;
+                LedgerRow(b, ShopSettings.Text("f28." + row.kind.ToString().ToLowerInvariant()), row.change.ToString("+0;-0;0"),
+                    row.kind != Kind.Sale || row.change < 0 ? "—" : row.cost.HasValue ?
+                        (row.change - row.cost.Value).ToString("+0;-0;0") : ShopSettings.Text("f28.unknown"));
             }
             if (!any) b.AddLabel(ShopSettings.Text("f28.empty"));
             b.End().AddLabel(ShopSettings.Format("f28.total", income - expense));

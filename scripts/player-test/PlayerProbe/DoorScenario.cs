@@ -19,6 +19,10 @@ public sealed class DoorScenario
     private string firstId, secondId;
     private float after, started = Time.realtimeSinceStartup;
     private float closedPaperY;
+    private Vector2 ledgerClosedPosition, badgePosition;
+    private Vector3 layerScale;
+    private Rect viewportBounds;
+    private bool flipX, flipY;
     private bool sawMotion;
 
     public bool Tick(out string result)
@@ -48,7 +52,7 @@ public sealed class DoorScenario
             data.Append("]}");
             ModHelper.SetModData(Mod, "todo", data.ToString());
             TradeScenario.SetOptions(true, "f15.enabled", "f17.enabled", "f21.enabled");
-            TradeScenario.SetOptions(false, "f27.enabled");
+            TradeScenario.SetOptions(false, "f28.enabled");
             after = Time.realtimeSinceStartup + 1f; step++; return false;
         }
         if (Time.realtimeSinceStartup < after) return false;
@@ -59,7 +63,25 @@ public sealed class DoorScenario
                 GameObject viewport = Find("ShopAssist_DoorViewport");
                 GameObject board = Find("ShopAssist_DoorBoard");
                 if (viewport == null || board == null || !viewport.activeInHierarchy) return false;
-                Need(FindAll("ShopAssist_DoorDay_").Count == 14, "The complete two-week calendar is not visible");
+                int expectedDateButtons = today > 1 ? 8 : 7;
+                Need(FindAll("ShopAssist_DoorDay_").Count == expectedDateButtons,
+                    "The yesterday-to-six-days-ahead calendar is missing date buttons; expected " + expectedDateButtons);
+                var cells = board.GetComponentsInChildren<RectTransform>().Where(rect => rect.name == "cell").ToArray();
+                var dates = board.GetComponentsInChildren<TMP_Text>().Where(text => text.name == "date").ToArray();
+                string[] weekdays = { "door.mon", "door.tue", "door.wed", "door.thu", "door.fri", "door.sat", "door.sun" };
+                int firstDay = today - 1;
+                Need(cells.Length == 8 && dates.Length == 8, "The calendar must have eight slots and weekday labels");
+                for (int i = 0; i < dates.Length; i++)
+                {
+                    string expected = ModHelper.GetLocalized(Mod, weekdays[(firstDay + i + 6) % weekdays.Length]);
+                    dates[i].ForceMeshUpdate();
+                    Need(Vector2.Distance(dates[i].rectTransform.anchoredPosition, cells[i].anchoredPosition + new Vector2(2, -2)) < .1f &&
+                        dates[i].text == expected && !dates[i].isTextTruncated &&
+                        dates[i].textInfo.characterInfo.Take(dates[i].textInfo.characterCount).Any(character => character.isVisible),
+                        "Weekday label is incorrect or truncated: " + dates[i].text + "; expected " + expected);
+                }
+                Need(Vector2.Distance(((RectTransform)ButtonFor("ShopAssist_DoorDay_" + today).transform).anchoredPosition,
+                    cells[1].anchoredPosition) < .1f, "Today is not in the second calendar slot");
                 Need(Children(board, "ShopAssist_DoorTask_").Count == 5, "The door does not show the first task page");
                 Need(Find("ShopAssist_DoorBadge")?.activeInHierarchy == true && Find("deadlines") != null,
                     "The housing badge or deadline strip is missing");
@@ -127,7 +149,7 @@ public sealed class DoorScenario
                 after = Time.realtimeSinceStartup + 0.8f; step++; return false;
             case 7:
                 Need(Find("ShopAssist_DoorViewport", false)?.activeInHierarchy != true, "Door stayed visible with all three features off");
-                TradeScenario.SetOptions(true, "f15.enabled", "f17.enabled", "f21.enabled");
+                TradeScenario.SetOptions(true, "f15.enabled", "f17.enabled", "f21.enabled", "f28.enabled");
                 after = Time.realtimeSinceStartup + 0.8f; step++; return false;
             case 8:
             {
@@ -158,13 +180,20 @@ public sealed class DoorScenario
                     }
                 }
                 if (Vector3.Distance(door.shutterGameObject.transform.position, door.endPosition) > 0.001f) return false;
+                var ledger = Find("ShopAssist_WallLedger");
+                if (ledger == null) return false;
                 Need(sawMotion, "The opening animation was not observed");
+                ledgerClosedPosition = ((RectTransform)ledger.transform).anchoredPosition;
                 ButtonFor("ShopAssist_DoorBadgeButton").onClick.Invoke();
                 after = Time.realtimeSinceStartup + 0.8f; step++; return false;
             }
             case 10:
                 Need(Find("ShopAssist_DoorNote")?.activeInHierarchy == true && Children(Find("ShopAssist_DoorNote"), "ShopAssist_DoorTask_").Count == 5,
                     "Open shutter badge did not show the compact task board");
+                var openLedger = (RectTransform)Find("ShopAssist_WallLedger").transform;
+                Need(openLedger.anchoredPosition.y < ledgerClosedPosition.y - 20f &&
+                    !Bounds(openLedger).Overlaps(Bounds((RectTransform)Find("ShopAssist_DoorNote").transform)),
+                    "Wall ledger did not move clear of the open task note");
                 Capture("qa-door-open.png");
                 var task = Children(Find("ShopAssist_DoorNote"), "ShopAssist_DoorTask_" + secondId).SingleOrDefault();
                 Need(task != null, "An unfinished task is missing from the compact note");
@@ -173,14 +202,68 @@ public sealed class DoorScenario
             case 11:
                 Need(CheckedDay(ModHelper.GetModData(Mod, "todo", ""), secondId) == today, "Wall note did not update the task book");
                 Need(AdvCalendarUIManager.Instance.UIPanel.activeSelf == false, "Original calendar opened unexpectedly");
-                result = "PASS shutter calendar and independent switches; shared task checking; motion clipping and noninteractive animation; housing badge and open-shutter note";
+                ButtonFor("ShopAssist_DoorNoteClose").onClick.Invoke();
+                after = 0; checkFrame = Time.frameCount + 2; step++; return false;
+            case 12:
+            {
+                if (Time.frameCount < checkFrame) return false;
+                Need(Find("ShopAssist_DoorNote") == null &&
+                    Vector2.Distance(((RectTransform)Find("ShopAssist_WallLedger").transform).anchoredPosition, ledgerClosedPosition) < .1f,
+                    "Wall ledger did not return after the task note closed");
+                var wire = StoreUIManager.Instance.wireRenderer;
+                flipX = wire.flipX; flipY = wire.flipY;
+                badgePosition = ((RectTransform)Find("ShopAssist_DoorBadge").transform).anchoredPosition;
+                wire.flipX = !flipX; checkFrame = Time.frameCount + 2; step++; return false;
+            }
+            case 13:
+            {
+                if (Time.frameCount < checkFrame) return false;
+                var wire = StoreUIManager.Instance.wireRenderer;
+                Need(Math.Abs(((RectTransform)Find("ShopAssist_DoorBadge").transform).anchoredPosition.x - badgePosition.x) > 1f,
+                    "Badge did not follow the horizontally flipped wire sprite");
+                wire.flipX = flipX; wire.flipY = !flipY; checkFrame = Time.frameCount + 2; step++; return false;
+            }
+            case 14:
+            {
+                if (Time.frameCount < checkFrame) return false;
+                var wire = StoreUIManager.Instance.wireRenderer;
+                Need(Math.Abs(((RectTransform)Find("ShopAssist_DoorBadge").transform).anchoredPosition.y - badgePosition.y) > 1f,
+                    "Badge did not follow the vertically flipped wire sprite");
+                wire.flipY = flipY;
+                var viewport = (RectTransform)Find("ShopAssist_DoorViewport", false).transform;
+                viewportBounds = Bounds(viewport);
+                var layer = (RectTransform)viewport.parent;
+                layerScale = layer.localScale;
+                layer.localScale = layerScale * .9f;
+                checkFrame = Time.frameCount + 2; step++; return false;
+            }
+            case 15:
+            {
+                if (Time.frameCount < checkFrame) return false;
+                var viewport = (RectTransform)Find("ShopAssist_DoorViewport", false).transform;
+                Canvas.ForceUpdateCanvases();
+                Rect actual = Bounds(viewport);
+                ((RectTransform)viewport.parent).localScale = layerScale;
+                Need(Vector2.Distance(actual.min, viewportBounds.min) < 2f && Vector2.Distance(actual.max, viewportBounds.max) < 2f,
+                    "Canvas scaling displaced the shutter viewport");
+                result = "PASS shutter calendar, task state, motion, note/ledger positioning, sprite flips and canvas scaling";
                 return true;
+            }
             default: throw new InvalidOperationException("Unknown door QA step " + step);
         }
     }
 
     private static GameObject Find(string name, bool active = true) => Resources.FindObjectsOfTypeAll<GameObject>()
         .FirstOrDefault(item => item.name == name && item.scene.IsValid() && (!active || item.activeInHierarchy));
+    private static Rect Bounds(RectTransform rect)
+    {
+        var canvas = rect.GetComponentInParent<Canvas>();
+        Camera camera = canvas == null || canvas.renderMode == RenderMode.ScreenSpaceOverlay ? null : canvas.worldCamera;
+        var corners = new Vector3[4]; rect.GetWorldCorners(corners);
+        Vector2 min = RectTransformUtility.WorldToScreenPoint(camera, corners[0]);
+        Vector2 max = RectTransformUtility.WorldToScreenPoint(camera, corners[2]);
+        return Rect.MinMaxRect(min.x, min.y, max.x, max.y);
+    }
     private static List<GameObject> FindAll(string prefix) => Resources.FindObjectsOfTypeAll<GameObject>()
         .Where(item => item.name.StartsWith(prefix, StringComparison.Ordinal) && item.scene.IsValid() && item.activeInHierarchy).ToList();
     private static List<GameObject> Children(GameObject root, string prefix) => root == null ? new List<GameObject>() :
@@ -193,4 +276,35 @@ public sealed class DoorScenario
             ScreenCapture.CaptureScreenshot(Path.Combine(Application.persistentDataPath, file));
     }
     private static void Need(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
+}
+
+public sealed class DoorEnglishScenario
+{
+    private DoorScenario scenario;
+    private int step;
+    private readonly float deadline = Time.realtimeSinceStartup + 150f;
+
+    public bool Tick(out string result)
+    {
+        result = null;
+        if (Time.realtimeSinceStartup > deadline) throw new InvalidOperationException("English door QA timed out at step " + step);
+        if (step == 0)
+        {
+            var menu = MainMenuUIController.Instance;
+            if (menu?.localeDropdown == null || menu.localeDropdown.options.Count == 0) return false;
+            int english = menu.localeDropdown.options.FindIndex(option => option.text == "English");
+            if (english < 0) throw new InvalidOperationException("Native English locale is unavailable");
+            menu.localeDropdown.SetValueWithoutNotify(english);
+            menu.OnLocaleChanged(english);
+            step = 1;
+            return false;
+        }
+        if (step == 1)
+        {
+            if (LocHelper.GetCurrentLocaleCode() != "en") return false;
+            scenario = new DoorScenario();
+            step = 2;
+        }
+        return scenario.Tick(out result);
+    }
 }

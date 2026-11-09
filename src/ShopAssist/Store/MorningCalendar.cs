@@ -9,9 +9,9 @@ namespace ShopAssist
         private readonly DoorBoard board;
         private bool started;
 
-        internal MorningCalendar(Func<bool> isEnabled, Action<string> log)
+        internal MorningCalendar(Func<bool> isEnabled, Func<bool> deadlinesEnabled, Func<int> deadlineDays, Action<string> log)
         {
-            board = new DoorBoard(isEnabled, log);
+            board = new DoorBoard(isEnabled, deadlinesEnabled, deadlineDays, log);
         }
 
         internal void Start()

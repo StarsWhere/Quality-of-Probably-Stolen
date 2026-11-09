@@ -11,11 +11,13 @@ namespace ShopAssist
     {
         internal readonly struct DoorTask
         {
-            internal DoorTask(string id, string text, bool done, string run, int slot, int day, bool night)
-            { Id = id; Text = text; Done = done; Run = run; Slot = slot; Day = day; Night = night; }
+            internal DoorTask(string id, string text, bool done, int progress, int target, string run, int slot, int day, bool night)
+            { Id = id; Text = text; Done = done; Progress = progress; Target = target; Run = run; Slot = slot; Day = day; Night = night; }
             internal string Id { get; }
             internal string Text { get; }
             internal bool Done { get; }
+            internal int Progress { get; }
+            internal int Target { get; }
             internal string Run { get; }
             internal int Slot { get; }
             internal int Day { get; }
@@ -39,6 +41,8 @@ namespace ShopAssist
             public string text;
             public Repeat repeat;
             public int checkedDay;
+            public int target = 1;
+            public int? completedCount;
         }
 
         [Serializable]
@@ -65,6 +69,8 @@ namespace ShopAssist
         private bool reminderNight;
         private string editId, draftId, draft = "";
         private Repeat draftRepeat;
+        private int draftTarget = 1;
+        private int presetIndex;
         private Book book;
         private Book cachedBook;
         private Exception cachedReadError;
@@ -130,7 +136,7 @@ namespace ShopAssist
             {
                 var outstanding = ReadBook().rows.FindAll(r => (r.repeat == Repeat.Once || r.repeat == Repeat.Daily ||
                     r.repeat == (nowNight ? Repeat.Night : Repeat.Day)) &&
-                    (r.checkedDay == 0 || (r.repeat != Repeat.Once && r.checkedDay != today)));
+                    !DoneFor(r, today));
                 if (outstanding.Count > 0) ShopNotice.Show(ShopSettings.Format("f17.reminder", outstanding.Count, outstanding[0].text));
             }
             catch (Exception error) { log("F17 reminder could not read the current task book: " + error.Message); }
@@ -155,8 +161,7 @@ namespace ShopAssist
                 {
                     if (row.repeat != Repeat.Once && row.repeat != Repeat.Daily &&
                         row.repeat != (isNight ? Repeat.Night : Repeat.Day)) continue;
-                    rows.Add(new DoorTask(row.id, row.text,
-                        row.checkedDay > 0 && (row.repeat == Repeat.Once || row.checkedDay == today),
+                    rows.Add(new DoorTask(row.id, row.text, DoneFor(row, today), ProgressFor(row, today), Math.Max(1, row.target),
                         PlayerStore.Instance.runID, PlayerStore.Instance.saveSlotId, today, isNight));
                 }
                 rows = rows.OrderBy(row => row.Done).ToList();
@@ -185,9 +190,11 @@ namespace ShopAssist
                 int today = StoreStation.GetDayCounter();
                 if (row == null || today < 1 || (row.repeat != Repeat.Once && row.repeat != Repeat.Daily &&
                     row.repeat != (task.Night ? Repeat.Night : Repeat.Day))) return false;
-                bool currentDone = row.checkedDay > 0 && (row.repeat == Repeat.Once || row.checkedDay == today);
-                if (currentDone != task.Done) return false;
-                row.checkedDay = done ? today : 0;
+                int progress = ProgressFor(row, today);
+                if (DoneFor(row, today) != task.Done || progress != task.Progress || Math.Max(1, row.target) != task.Target) return false;
+                progress = done ? Math.Min(task.Target, progress + 1) : Math.Max(0, progress - 1);
+                row.checkedDay = progress > 0 ? today : 0;
+                row.completedCount = progress;
                 owner.WriteBook(source);
                 DoorChanged?.Invoke();
                 if (owner.window != null && owner.window.IsAlive && owner.SameRun())
@@ -240,8 +247,12 @@ namespace ShopAssist
             {
                 if (row == null || !Guid.TryParseExact(row.id, "N", out _) || !ids.Add(row.id) ||
                     string.IsNullOrWhiteSpace(row.text) || row.text.Length > MaxText ||
-                    !Enum.IsDefined(typeof(Repeat), row.repeat) || row.checkedDay < 0)
+                    !Enum.IsDefined(typeof(Repeat), row.repeat) || row.checkedDay < 0 || row.target < 0 ||
+                    (row.completedCount.HasValue && row.completedCount.Value < 0))
                     throw new FormatException("Invalid task");
+                if (row.target == 0) row.target = 1;
+                if (!row.completedCount.HasValue) row.completedCount = row.checkedDay > 0 ? row.target : 0;
+                if (row.completedCount.Value > row.target) throw new FormatException("Invalid task progress");
             }
             return parsed;
         }
@@ -276,7 +287,8 @@ namespace ShopAssist
         {
             var copy = new Book();
             foreach (TaskRow row in source.rows)
-                copy.rows.Add(new TaskRow { id = row.id, text = row.text, repeat = row.repeat, checkedDay = row.checkedDay });
+                copy.rows.Add(new TaskRow { id = row.id, text = row.text, repeat = row.repeat, checkedDay = row.checkedDay,
+                    target = Math.Max(1, row.target), completedCount = row.completedCount });
             return copy;
         }
 
@@ -286,7 +298,13 @@ namespace ShopAssist
             catch (Exception error) { copy = null; log("F17 could not read tasks for editing: " + error); Feedback("f17.invalid"); return false; }
         }
 
-        private bool IsDone(TaskRow row) => row.checkedDay > 0 && (row.repeat == Repeat.Once || row.checkedDay == day);
+        private static int ProgressFor(TaskRow row, int today)
+        {
+            if (row == null || row.checkedDay <= 0 || (row.repeat != Repeat.Once && row.checkedDay != today)) return 0;
+            return Math.Max(0, Math.Min(row.completedCount ?? Math.Max(1, row.target), Math.Max(1, row.target)));
+        }
+        private static bool DoneFor(TaskRow row, int today) => row != null && ProgressFor(row, today) >= Math.Max(1, row.target);
+        private bool IsDone(TaskRow row) => DoneFor(row, day);
 
         private void RetryUnreadable()
         {
@@ -378,11 +396,21 @@ namespace ShopAssist
             }
             string[] kinds = { ShopSettings.Text("f17.once"), ShopSettings.Text("f17.daily"),
                 ShopSettings.Text("f17.day"), ShopSettings.Text("f17.night") };
+            string[] presets = { ShopSettings.Text("f17.custom"), ShopSettings.Text("f17.preset_stock"),
+                ShopSettings.Text("f17.preset_check"), ShopSettings.Text("f17.preset_machine"), ShopSettings.Text("f17.preset_customer") };
+            string[] counts = Enumerable.Range(1, 10).Select(value => value.ToString()).ToArray();
             builder.AddLabel(ShopSettings.Format("f17.when", day, night ? kinds[3] : kinds[2]))
-                .BeginRow().AddInput(ShopSettings.Text("f17.placeholder"), draft, v => draft = v, "task_text", v => draft = v);
+                .BeginRow().AddDropdown(presets, presetIndex, index =>
+                {
+                    presetIndex = index;
+                    if (index > 0) draft = ShopSettings.Text("f17.preset_" + index);
+                    Render();
+                }, "task_preset")
+                .AddInput(ShopSettings.Text("f17.placeholder"), draft, v => draft = v, "task_text", v => draft = v);
             builder.Last.input.characterLimit = MaxText;
             builder.Last.SetFlexible(1, 0);
-            builder.AddDropdown(kinds, (int)draftRepeat, i => draftRepeat = (Repeat)i, "task_kind").End();
+            builder.AddDropdown(kinds, (int)draftRepeat, i => draftRepeat = (Repeat)i, "task_kind");
+            builder.AddDropdown(counts, Math.Max(0, Math.Min(draftTarget - 1, counts.Length - 1)), i => draftTarget = i + 1, "task_target").End();
             builder.BeginRow().AddButton(ShopSettings.Text(editId == null ? "f17.add" : "f17.save"), SaveDraft, "task_save");
             if (editId != null)
             {
@@ -394,7 +422,7 @@ namespace ShopAssist
                 allPhases = value;
                 Render();
             }).End();
-            int completedOnce = book.rows.Count(row => row.repeat == Repeat.Once && row.checkedDay > 0);
+            int completedOnce = book.rows.Count(row => row.repeat == Repeat.Once && IsDone(row));
             if (completedOnce > 0 || clearIds != null)
             {
                 builder.BeginRow().AddButton(clearIds == null ? ShopSettings.Format("f17.clear_completed", completedOnce) :
@@ -408,7 +436,16 @@ namespace ShopAssist
             {
                 if (!Visible(row)) continue;
                 any = true;
-                builder.BeginRow().AddToggle(row.text, IsDone(row), value =>
+                builder.BeginRow();
+                if (row.target > 1)
+                {
+                    builder.AddLabel(row.text);
+                    if (builder.Last.text != null) builder.Last.text.richText = false;
+                    builder.AddButton("-", () => ChangeProgress(row.id, -1), "less_" + row.id)
+                        .AddLabel(ProgressFor(row, day) + "/" + row.target)
+                        .AddButton("+", () => ChangeProgress(row.id, 1), "more_" + row.id);
+                }
+                else builder.AddToggle(row.text, IsDone(row), value =>
                 {
                     if (!SameRun()) { Close(); return; }
                     if (TryEdit(out Book next))
@@ -417,7 +454,8 @@ namespace ShopAssist
                         if (changed != null)
                         {
                             changed.checkedDay = value ? day : 0;
-                            if (Persist(next)) { row.checkedDay = changed.checkedDay; reorderPending = true; return; }
+                            changed.completedCount = value ? Math.Max(1, changed.target) : 0;
+                            if (Persist(next)) { row.checkedDay = changed.checkedDay; row.completedCount = changed.completedCount; reorderPending = true; return; }
                         }
                     }
                     window.Get("done_" + row.id).SetBool(IsDone(row), false);
@@ -430,6 +468,8 @@ namespace ShopAssist
                         editId = row.id;
                         draft = row.text;
                         draftRepeat = row.repeat;
+                        draftTarget = Math.Max(1, row.target);
+                        presetIndex = 0;
                         confirmingDelete = false;
                         Render();
                     }, "edit_" + row.id).End();
@@ -437,6 +477,17 @@ namespace ShopAssist
             if (!any) builder.AddLabel(ShopSettings.Text("f17.empty"));
             builder.End().Show();
             if (pos.HasValue) ((RectTransform)window.root.transform).anchoredPosition = pos.Value;
+        }
+
+        private void ChangeProgress(string id, int delta)
+        {
+            if (!SameRun() || !TryEdit(out Book next)) return;
+            TaskRow row = next.rows.Find(candidate => candidate.id == id);
+            if (row == null) return;
+            int progress = Math.Max(0, Math.Min(Math.Max(1, row.target), ProgressFor(row, day) + delta));
+            row.checkedDay = progress == 0 ? 0 : day;
+            row.completedCount = progress;
+            if (Persist(next)) { DoorChanged?.Invoke(); Render(); }
         }
 
         private void SaveDraft()
@@ -461,10 +512,11 @@ namespace ShopAssist
             {
                 row = next.rows.Find(item => item.id == editId);
                 if (row == null) { ClearDraft(); Render(); return; }
-                if (row.repeat != draftRepeat) row.checkedDay = 0;
+                if (row.repeat != draftRepeat || row.target != draftTarget) { row.checkedDay = 0; row.completedCount = 0; }
             }
             row.text = text;
             row.repeat = draftRepeat;
+            row.target = Math.Max(1, draftTarget);
             if (!Persist(next)) return;
             ClearDraft();
             Render();
@@ -487,13 +539,13 @@ namespace ShopAssist
             if (!TryEdit(out Book next)) return;
             if (clearIds == null)
             {
-                clearIds = new HashSet<string>(next.rows.Where(row => row.repeat == Repeat.Once && row.checkedDay > 0).Select(row => row.id));
+                clearIds = new HashSet<string>(next.rows.Where(row => row.repeat == Repeat.Once && DoneFor(row, day)).Select(row => row.id));
                 if (clearIds.Count == 0) { clearIds = null; book = next; Render(); return; }
                 book = next;
                 Render();
                 return;
             }
-            next.rows.RemoveAll(row => clearIds.Contains(row.id) && row.repeat == Repeat.Once && row.checkedDay > 0);
+            next.rows.RemoveAll(row => clearIds.Contains(row.id) && row.repeat == Repeat.Once && DoneFor(row, day));
             if (!Persist(next))
             {
                 // Verification can fail after the write. Read the authoritative copy
@@ -518,7 +570,7 @@ namespace ShopAssist
             DoorChanged?.Invoke();
             return true;
         }
-        private void ClearDraft() { editId = draftId = null; draft = ""; draftRepeat = Repeat.Once; confirmingDelete = false; }
+        private void ClearDraft() { editId = draftId = null; draft = ""; draftRepeat = Repeat.Once; draftTarget = 1; presetIndex = 0; confirmingDelete = false; }
         private void Close()
         {
             if (window != null && window.IsAlive) window.Close();

@@ -10,15 +10,15 @@ internal static class CalendarTests
         {
             Reset(today);
             var days = DoorCalendar.Read(today);
-            int first = today - (today - 1) % 7;
-            Check(days.Count == 14 && days.Select(day => day.Number).SequenceEqual(Enumerable.Range(first, 14)),
-                "Fourteen dates start on this week's Monday: " + today);
+            int first = today - 1;
+            Check(days.Count == 8 && days.Select(day => day.Number).SequenceEqual(Enumerable.Range(first, 8)),
+                "Eight dates start with yesterday and put today second: " + today);
         }
 
         Reset(5);
         var calendar = DoorCalendar.Read(5);
-        Check(Has(calendar, 7, "rent_day") && Has(calendar, 14, "rent_day") && !Has(calendar, 6, "rent_day"),
-            "Rent is projected on future Sundays only");
+        Check(Has(calendar, 7, "rent_day") && !Has(calendar, 6, "rent_day"),
+            "Rent is projected on future Sundays inside the eight-day window");
         Check(calendar.SelectMany(d => d.Events).Where(e => e.Id == "rent_day").All(e => e.Event == null && e.Name == "event_rent_due"),
             "Projected rent is read-only and localized");
 
@@ -31,8 +31,8 @@ internal static class CalendarTests
 
         Reset(1); PlayerStore.Instance.chemist = true;
         calendar = DoorCalendar.Read(1);
-        Check(Has(calendar, 1, "cartel_visit") && Has(calendar, 8, "cartel_visit") && !Has(calendar, 7, "cartel_visit"),
-            "Chemist visits are Mondays");
+        Check(Has(calendar, 1, "cartel_visit") && !Has(calendar, 7, "cartel_visit") && calendar[0].Number == 0 && calendar[0].Events.Count == 0,
+            "Chemist visits are Mondays and the day before day one has no events");
         PlayerStore.Instance.isCartelExited = true;
         Check(!DoorCalendar.Read(1).SelectMany(d => d.Events).Any(e => e.Id == "cartel_visit"), "Exited cartel has no projected visit");
 
@@ -58,11 +58,11 @@ internal static class CalendarTests
         Reset(5); manager = StoreStation.Instance.storeEventManager;
         manager.future.Add(new StoreEvent { identifier = "rent_day", startDay = 7, IsKnown = false }); manager.futureDay.Add(2);
         calendar = DoorCalendar.Read(5);
-        Check(!Has(calendar, 7, "rent_day") && Has(calendar, 14, "rent_day"), "A hidden queued event is not disclosed");
+        Check(!Has(calendar, 7, "rent_day") && !calendar.SelectMany(d => d.Events).Any(e => e.Id == "rent_day"), "A hidden queued event is not disclosed");
         Reset(7); manager = StoreStation.Instance.storeEventManager;
         manager.active.Add(new StoreEvent { identifier = "rent_day", startDay = 7, IsKnown = false });
         calendar = DoorCalendar.Read(7);
-        Check(!Has(calendar, 7, "rent_day") && !Has(calendar, 14, "rent_day"), "A hidden active event is not disclosed");
+        Check(!Has(calendar, 7, "rent_day") && !calendar.SelectMany(d => d.Events).Any(e => e.Id == "rent_day"), "A hidden active event is not disclosed");
 
         Console.WriteLine("Door calendar tests passed.");
     }

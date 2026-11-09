@@ -1,13 +1,13 @@
 door.calendar,日历
 door.tasks,待办
 door.badge,待办
-door.mon,一
-door.tue,二
-door.wed,三
-door.thu,四
-door.fri,五
-door.sat,六
-door.sun,日
+door.mon,星期一
+door.tue,星期二
+door.wed,星期三
+door.thu,星期四
+door.fri,星期五
+door.sat,星期六
+door.sun,星期日
 door.day,第 {0} 天
 door.no_events,无事件
 door.no_tasks,暂无待办
@@ -16,5 +16,4 @@ door.mortgage,按揭
 door.deadline,{0}还剩 {1} 天
 door.event_summary,第 {0} 天 · {1}
 door.no_deadlines,暂无期限
-door.orders_error,无法读取已跟踪委托
 door.task_error,无法更新待办，请重试。

@@ -7,7 +7,6 @@ using UnityEngine.UI;
 // Cold-loads the exact save produced by MorningScenario without any UI receipt.
 public sealed class CalendarReloadScenario
 {
-    private const string Mod = "starswhere.shopassist";
     private DoorQaContext.Snapshot context;
     private QaLoadSlot load;
     private int step, frame;
@@ -50,11 +49,11 @@ public sealed class CalendarReloadScenario
         Need(!AdvCalendarUIManager.Instance.UIPanel.activeSelf, "Door opened the original calendar after reload");
         GameObject board = DoorQaContext.Find("ShopAssist_DoorBoard");
         if (board == null) return false;
-        Need(board.GetComponentsInChildren<Button>().Count(button => button.name.StartsWith("ShopAssist_DoorDay_", StringComparison.Ordinal)) == 14,
-            "Reloaded door is missing dates");
+        int dateCount = board.GetComponentsInChildren<Button>().Count(button => button.name.StartsWith("ShopAssist_DoorDay_", StringComparison.Ordinal));
+        int expectedDateButtons = context.day > 1 ? 8 : 7;
+        Need(dateCount == expectedDateButtons, "Reloaded door has " + dateCount + " date buttons; expected " + expectedDateButtons);
         Need(observed == DoorQaContext.EventState(), "Reloaded door mutated native event state");
-        Need((ModHelper.GetModData(Mod, "f15.calendar", "") ?? "") == context.oldMarker, "Reloaded door wrote the obsolete receipt");
-        result = "PASS cold reload: same run, slot and morning; visible door without original popup, receipt writes or event mutation";
+        result = "PASS cold reload: same run, slot and morning; visible door without original popup or event mutation";
         return true;
     }
     private static void Need(bool value, string message) { if (!value) throw new InvalidOperationException(message); }

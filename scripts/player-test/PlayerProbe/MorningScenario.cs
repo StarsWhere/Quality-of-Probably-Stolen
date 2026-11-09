@@ -10,7 +10,6 @@ using UnityEngine.UI;
 // Fresh, isolated save used by the normal calendar -> calendar-reload driver.
 public sealed class MorningScenario
 {
-    private const string Mod = "starswhere.shopassist";
     private readonly QaNewRun start = new QaNewRun();
     private int step, frame, day;
     private float since = Time.realtimeSinceStartup;
@@ -31,7 +30,6 @@ public sealed class MorningScenario
             TradeScenario.SetOptions(true, "f15.enabled");
             TradeScenario.SetOptions(false, "f17.enabled", "f21.enabled");
             day = StoreStation.GetDayCounter(); before = DoorQaContext.EventState();
-            Need(ModHelper.GetModData(Mod, "f15.calendar", null) == null, "Fresh run already has an obsolete F15 receipt");
             frame = Time.frameCount + 4; step++; return false;
         }
         if (Time.frameCount < frame) return false;
@@ -40,8 +38,9 @@ public sealed class MorningScenario
             GameObject board = DoorQaContext.Find("ShopAssist_DoorBoard");
             if (board == null) return false;
             Need(!AdvCalendarUIManager.Instance.UIPanel.activeSelf, "Door opened the original calendar");
-            Need(board.GetComponentsInChildren<Button>().Count(button => button.name.StartsWith("ShopAssist_DoorDay_", StringComparison.Ordinal)) == 14,
-                "Door is missing one or more dates");
+            int dateCount = board.GetComponentsInChildren<Button>().Count(button => button.name.StartsWith("ShopAssist_DoorDay_", StringComparison.Ordinal));
+            int expectedDateButtons = day > 1 ? 8 : 7;
+            Need(dateCount == expectedDateButtons, "Door has " + dateCount + " date buttons; expected " + expectedDateButtons);
             Need(before == DoorQaContext.EventState(), "Displaying the door changed native event state");
             Button date = DoorQaContext.Find("ShopAssist_DoorDay_" + day)?.GetComponent<Button>();
             Need(date != null, "Today's door date is missing"); date.onClick.Invoke();
@@ -55,11 +54,10 @@ public sealed class MorningScenario
             frame = Time.frameCount + 2; step++; return false;
         }
         Need(before == DoorQaContext.EventState(), "Using door details changed native event state");
-        Need(ModHelper.GetModData(Mod, "f15.calendar", null) == null, "Door wrote an obsolete F15 receipt");
         PlayerStore.Instance.SaveGame();
         Need(File.Exists(SaveFiles.AbsolutePath(SaveFiles.Slot(PlayerStore.Instance.saveSlotId))), "Native SaveGame did not produce the QA save");
         DoorQaContext.Write(day);
-        result = "PASS new isolated morning: 14 visible dates and internal detail, no original popup or event mutation; native save prepared for cold reload";
+        result = "PASS new isolated morning: 8 visible dates and internal detail, no original popup or event mutation; native save prepared for cold reload";
         return true;
     }
     private static void Need(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
@@ -70,7 +68,7 @@ internal static class DoorQaContext
     [Serializable] internal sealed class Snapshot
     {
         public int version = 1, slot, day;
-        public string run = "", events = "", oldMarker = "";
+        public string run = "", events = "";
     }
     private const string Mod = "starswhere.shopassist";
     private static string PathName => Path.Combine(Application.persistentDataPath, "qa-door-readonly.json");
@@ -79,7 +77,7 @@ internal static class DoorQaContext
     {
         var p = PlayerStore.Instance;
         var context = new Snapshot { run = p.runID, slot = p.saveSlotId, day = day,
-            events = EventState(), oldMarker = ModHelper.GetModData(Mod, "f15.calendar", "") ?? "" };
+            events = EventState() };
         File.WriteAllText(PathName, JsonUtility.ToJson(context));
     }
     internal static Snapshot Read()
@@ -87,7 +85,7 @@ internal static class DoorQaContext
         if (!File.Exists(PathName)) throw new InvalidOperationException("Missing isolated door QA context");
         Snapshot snapshot = JsonUtility.FromJson<Snapshot>(File.ReadAllText(PathName));
         if (snapshot == null || snapshot.version != 1 || !Guid.TryParse(snapshot.run, out Guid run) || run == Guid.Empty ||
-            snapshot.slot < 0 || snapshot.day < 1 || snapshot.events == null || snapshot.oldMarker == null)
+            snapshot.slot < 0 || snapshot.day < 1 || snapshot.events == null)
             throw new InvalidOperationException("Invalid isolated door QA context");
         return snapshot;
     }

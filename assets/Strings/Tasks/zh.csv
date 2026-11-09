@@ -9,6 +9,16 @@ f17.day,白天
 f17.night,夜间
 f17.when,第 {0} 天 · {1}
 f17.placeholder,输入待办事项
+f17.custom,手动输入
+f17.preset_stock,补充库存
+f17.preset_check,检查设备
+f17.preset_machine,维护机器
+f17.preset_customer,处理顾客事项
+f17.preset_1,补充库存
+f17.preset_2,检查设备
+f17.preset_3,维护机器
+f17.preset_4,处理顾客事项
+f17.target,次数
 f17.add,添加
 f17.save,保存
 f17.cancel,取消

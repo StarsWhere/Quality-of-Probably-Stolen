@@ -83,14 +83,42 @@ public sealed class DoorLayerScenario
                 ScreenCapture.CaptureScreenshot(Path.Combine(Application.persistentDataPath, "qa-door-after-scanner.png"));
             frame = Time.frameCount + 3; step++; return false;
         }
-        var visibleBoard = Find("ShopAssist_DoorBoard");
-        var day = Find("ShopAssist_DoorDay_" + StoreStation.GetDayCounter())?.GetComponent<Button>();
-        Need(visibleBoard != null && day != null, "Door did not reappear after scanner close");
-        var group = visibleBoard.GetComponent<CanvasGroup>(); bool previous = group.blocksRaycasts;
-        group.blocksRaycasts = true;
-        try { Need(Hit(day), "Uncovered calendar date is not reachable by native raycast"); }
-        finally { group.blocksRaycasts = previous; }
-        result = "PASS door above native shutter art, scanner overlap and unobstructed native raycasts";
+        if (step == 6)
+        {
+            var visibleBoard = Find("ShopAssist_DoorBoard");
+            var day = Find("ShopAssist_DoorDay_" + StoreStation.GetDayCounter())?.GetComponent<Button>();
+            Need(visibleBoard != null && day != null, "Door did not reappear after scanner close");
+            var group = visibleBoard.GetComponent<CanvasGroup>(); bool previous = group.blocksRaycasts;
+            group.blocksRaycasts = true;
+            try { Need(Hit(day), "Uncovered calendar date is not reachable by native raycast"); }
+            finally { group.blocksRaycasts = previous; }
+            Vector2 point = ScreenRect((RectTransform)day.transform).center;
+            var filter = visibleBoard.GetComponents<MonoBehaviour>().OfType<ICanvasRaycastFilter>().FirstOrDefault();
+            Need(filter != null && filter.IsRaycastLocationValid(point, null), "Door did not accept an uncovered point");
+
+            var popup = CustomUIManager.Window("door.qa.foreground", "QA", CustomUIManager.LAYER_META).SetSize(200, 150).GetWindow();
+            popup.Show(); Canvas.ForceUpdateCanvases();
+            var popupFrame = (RectTransform)popup.frame.transform;
+            Need(RectTransformUtility.ScreenPointToWorldPointInRectangle(popupFrame, point, CameraFor(popupFrame), out Vector3 world),
+                "Cannot position foreground test window");
+            popup.root.transform.position += world - popupFrame.TransformPoint(popupFrame.rect.center);
+            Need(RectTransformUtility.RectangleContainsScreenPoint(popupFrame, point, CameraFor(popupFrame)), "Foreground test window does not overlap the date");
+            Need(!filter.IsRaycastLocationValid(point, null), "A newly shown foreground window did not block the door in the same frame");
+            var hits = new List<RaycastResult>();
+            EventSystem.current.RaycastAll(new PointerEventData(EventSystem.current) { position = point }, hits);
+            Need(!hits.Any() || !hits[0].gameObject.transform.IsChildOf(visibleBoard.transform), "A new foreground window allowed a click through to the door");
+            popup.Close();
+
+            var map = MapUIManager.Instance?.mapPanel;
+            Need(map != null && !map.activeInHierarchy, "Map modal is unavailable or already open");
+            map.SetActive(true);
+            try { Need(!filter.IsRaycastLocationValid(point, null), "A newly opened map did not block the door in the same frame"); }
+            finally { map.SetActive(false); }
+            frame = Time.frameCount + 3; step++; return false;
+        }
+        var reopenedDay = Find("ShopAssist_DoorDay_" + StoreStation.GetDayCounter())?.GetComponent<Button>();
+        Need(reopenedDay != null && Hit(reopenedDay), "Door did not accept input after foreground windows closed");
+        result = "PASS door layering, same-frame foreground/modal blocking and restored native raycasts";
         return true;
     }
 

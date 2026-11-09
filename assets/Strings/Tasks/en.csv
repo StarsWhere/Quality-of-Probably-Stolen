@@ -9,6 +9,16 @@ f17.day,Daytime
 f17.night,Night
 f17.when,Day {0} · {1}
 f17.placeholder,Task name
+f17.custom,Enter manually
+f17.preset_stock,Restock inventory
+f17.preset_check,Check equipment
+f17.preset_machine,Maintain machines
+f17.preset_customer,Handle customer tasks
+f17.preset_1,Restock inventory
+f17.preset_2,Check equipment
+f17.preset_3,Maintain machines
+f17.preset_4,Handle customer tasks
+f17.target,Count
 f17.add,Add
 f17.save,Save
 f17.cancel,Cancel
