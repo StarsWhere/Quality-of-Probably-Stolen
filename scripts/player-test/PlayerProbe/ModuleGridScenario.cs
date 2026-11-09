@@ -348,7 +348,7 @@ public sealed class ModuleGridScenario
             window.Rect.rect.width <= Mathf.Min(layer.rect.width * .8f, layer.rect.width - 32) + 2 &&
             window.Rect.rect.height >= layer.rect.height * .4f - 2 && window.Rect.rect.height <= maxHeight + 2 &&
             window.Rect.rect.height < maxHeight - 2, "Workbench did not adapt its height to the small inventory");
-        Check(window.Get("search").Rect.rect.width <= 221, "Search field expanded beyond its useful width");
+        Check(window.Get("attribute")?.dropdown != null, "Module attribute selector is missing");
         var source = (MonoBehaviour)Field(FindHit(window, sourceItem), "view"); var target = BoardView(window, bay);
         Check(source != null && target != null && !(bool)Field(Field(source, "Options"), "Cards") &&
             (float)Field(source, "Cell") >= 32, "Source is not a dense real-shape grid");

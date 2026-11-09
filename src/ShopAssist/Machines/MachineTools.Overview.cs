@@ -34,6 +34,10 @@ namespace ShopAssist
         private string filterPath;
         private GameItem selectedOverviewMachine;
         private string selectedOverviewPath, selectedOverviewSlot;
+        private GameItem overviewClickMachine;
+        private GameInventory overviewClickSource;
+        private string overviewClickPath, overviewClickSlot;
+        private float overviewClickTime;
 
         private void InitMachineOverview()
         {
@@ -115,9 +119,12 @@ namespace ShopAssist
                 (filterPath == null || row.Path == filterPath)).ToList();
             int shaped = shown.Count(row => row.Item.modifiedShape != null && row.Item.modifiedShape.globalWidth > 0 &&
                 row.Item.modifiedShape.globalHeight > 0);
-            int gridRows = (shaped + 3) / 4;
-            float scrollHeight = Mathf.Min(205, Mathf.Max(50, gridRows * 100 + (shown.Count - shaped) * 28 + 4));
-            int height = Mathf.Clamp(Mathf.CeilToInt(240 + scrollHeight), 350, 480);
+            Vector2 availableSize = UiLayout.Fit(1000, 720);
+            int columns = Mathf.Clamp(Mathf.FloorToInt((availableSize.x - 48) / 180), 1, 5);
+            int gridRows = (shaped + columns - 1) / columns;
+            float contentHeight = gridRows * 116 + (shown.Count - shaped) * 32 + 4;
+            Vector2 size = UiLayout.Fit(1000, Mathf.Clamp(240 + contentHeight, 480, 720));
+            float scrollHeight = Mathf.Max(50, size.y - 240);
             float scrollPosition = machinesScroll?.GetComponentInParent<ScrollRect>()?.verticalNormalizedPosition ?? 1f;
             if (machinesWindow == null || !machinesWindow.IsAlive)
             {
@@ -138,7 +145,6 @@ namespace ShopAssist
             Vector2 position = own.Rect.anchoredPosition;
             UiLayout.Clear(own.ContentRoot, own);
             var builder = new CustomUIBuilder(CustomUIManager.Instance, own, own.ContentRoot);
-            Vector2 size = UiLayout.Fit(620, height);
             builder.SetSize(size.x, size.y);
             own.Rect.anchoredPosition = position;
             if (machinesTruncated) builder.AddWarning(ShopSettings.Text("machines.partial"));
@@ -168,13 +174,30 @@ namespace ShopAssist
                 cards.Add(entry); cardRows[entry] = row;
             }
             if (cards.Count > 0)
-                ItemGrid.Add(builder, cards, new ItemGrid.Options { Cards = true, Columns = 4, CardWidth = 140, CardHeight = 100,
+                ItemGrid.Add(builder, cards, new ItemGrid.Options { Cards = true, Columns = columns, CardWidth = 180, CardHeight = 116,
                     OnClick = entry =>
                     {
                         if (!CurrentView()) return;
                         if (!cardRows.TryGetValue(entry, out MachineRow row) || !ShopInventory.Owned(row.Item))
                         { overviewStructureDirty = true; machinesDirty = true; return; }
-                        SelectOverview(row); RenderMachines();
+                        string slot = OverviewSlot(row);
+                        // Keep the click identity outside the rebuilt cards: selecting the first
+                        // card also redraws the window before the second click can arrive.
+                        bool open = ReferenceEquals(overviewClickMachine, row.Item) &&
+                            ReferenceEquals(overviewClickSource, entry.Source) && overviewClickPath == row.Path &&
+                            overviewClickSlot == slot && Time.unscaledTime - overviewClickTime <= .4f;
+                        overviewClickMachine = open ? null : row.Item;
+                        overviewClickSource = entry.Source; overviewClickPath = row.Path;
+                        overviewClickSlot = slot; overviewClickTime = Time.unscaledTime;
+                        SelectOverview(row);
+                        if (open)
+                        {
+                            if (!OverviewMachine(row.Item) || !ReferenceEquals(row.Item.parentInventory, entry.Source) ||
+                                ItemMouseDoubleClickHandler.current == null)
+                            { overviewStructureDirty = true; machinesDirty = true; return; }
+                            ItemMouseDoubleClickHandler.current.OpenContentAction(row.Item, Input.mousePosition);
+                        }
+                        else RenderMachines();
                     } });
             foreach (MachineRow row in withoutShape)
             {
@@ -419,6 +442,7 @@ namespace ShopAssist
             CustomUIWindow window = machinesWindow;
             machinesWindow = null; machinesScroll = null; machinesRun = null; machinesDirty = false; filterPath = null; machinesRevision++;
             selectedOverviewMachine = null; selectedOverviewPath = selectedOverviewSlot = null;
+            overviewClickMachine = null; overviewClickSource = null; overviewClickPath = overviewClickSlot = null;
             overviewLocations = null; overviewBaseRows = null; overviewIssueRows = null;
             overviewInventoryOwners = null; overviewRowsByItem = null; overviewOwned = null;
             overviewChangedMachines.Clear(); overviewStructureDirty = overviewIssuesDirty = true;

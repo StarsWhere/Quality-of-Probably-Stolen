@@ -22,10 +22,11 @@ namespace ShopAssist
             [JsonRequired] public List<SeedGene> genes = new List<SeedGene>();
             public int? state;
             public string reason;
+            public string location;
         }
         [Serializable] private sealed class SeedRules
         {
-            [JsonRequired] public int version = 2;
+            [JsonRequired] public int version = 3;
             [JsonRequired] public string run;
             [JsonRequired] public int slot;
             [JsonRequired] public List<SeedRule> rules = new List<SeedRule>();
@@ -42,6 +43,8 @@ namespace ShopAssist
         private GameItem replantMachine;
         private string replantRun;
         private int replantSlot;
+        private string replantSourceKey;
+        private bool replantSourceLoaded;
         private bool replantDirty, replantScanner;
         private readonly HashSet<int> replantQueue = new HashSet<int>();
         private bool replantNeedsScan = true;
@@ -92,7 +95,7 @@ namespace ShopAssist
             if (replantQueue.Count == 0 || !ShopInput.Ready() || UIDragHandler.isDraggingAnyUI ||
                 ItemMouseDragHandler.current?.IsDraggingItem == true || DialogUIManager.Instance?.currentDialog != null ||
                 DialoguePhoneUIManager.Instance?.currentDialog != null || StoreUIManager.Instance?.isAboutToStartMainDialog == true) return;
-            foreach (int id in replantQueue.ToArray())
+            foreach (int id in replantQueue.OrderBy(value => value).ToArray())
             {
                 replantQueue.Remove(id);
                 SeedRules initial = scannedRules;
@@ -150,10 +153,11 @@ namespace ShopAssist
                 string raw = ModHelper.GetModData(ModEntry.Id, ReplantDataKey, null);
                 data = raw == null ? new SeedRules { run = PlayerStore.Instance.runID, slot = PlayerStore.Instance.saveSlotId } :
                     ShopData.Decode<SeedRules>(raw, 65536);
-                if (data == null || data.version != 2 || data.run != PlayerStore.Instance.runID ||
+                if (data == null || data.version != 2 && data.version != 3 || data.run != PlayerStore.Instance.runID ||
                     data.slot != PlayerStore.Instance.saveSlotId || data.rules == null || data.rules.Count > 100 ||
                     data.rules.Any(rule => rule == null || rule.machine <= 0 || string.IsNullOrEmpty(rule.plant) ||
-                        rule.plant.Length > 128 || !ValidGenes(rule.genes)) ||
+                        rule.plant.Length > 128 || !ValidGenes(rule.genes) || rule.location != null &&
+                            !MaintenanceSourceKey.TryParse(rule.location, 32, out _, out _, out _)) ||
                     data.rules.Select(rule => rule.machine).Distinct().Count() != data.rules.Count)
                     throw new FormatException("Invalid F32 rules or save identity");
                 foreach (SeedRule rule in data.rules)
@@ -162,6 +166,7 @@ namespace ShopAssist
                         throw new FormatException("Invalid F32 pending state");
                 }
                 replantReadError = null;
+                data.version = 3;
                 return true;
             }
             catch (Exception error)
@@ -175,6 +180,7 @@ namespace ShopAssist
         private static bool ValidReplantReason(SeedRule rule) => rule.reason == "" && rule.state == (int)ReplantPhase.Idle ||
             rule.state == (int)ReplantPhase.Pending && (rule.reason == "f32.pending" || rule.reason == "f32.missing" ||
                 rule.reason == "f32.stack" || rule.reason == "f32.unavailable" || rule.reason == "f32.waiting") ||
+            rule.state == (int)ReplantPhase.Pending && rule.reason == "f32.source_missing" ||
             rule.state == (int)ReplantPhase.Inspect && rule.reason == "f32.inspect";
 
         private static bool ValidGenes(List<SeedGene> genes) => genes != null && genes.Count <= 64 &&
@@ -198,7 +204,8 @@ namespace ShopAssist
             GameSlotInventory input = MachineHydroponic.GetInputSlot(replantMachine);
             GameGridInventory output = MachineHydroponic.GetOutputSlot(replantMachine);
             if (input == null || output == null) return result;
-            var items = new List<GameItem>(output.childItems);
+            GameGridInventory source = ResolveReplantSource(replantMachine, replantSourceKey);
+            var items = source == null ? new List<GameItem>() : new List<GameItem>(source.childItems);
             if (input.childItem != null) items.Add(input.childItem);
             foreach (GameItem item in items)
             {
@@ -219,8 +226,9 @@ namespace ShopAssist
             replantDirty = false;
             bool validRules = ReadSeedRules(out SeedRules data);
             bool scanner = PlantGeneticsHelper.IsScannerOn(); replantScanner = scanner;
-            List<SeedChoice> choices = validRules ? AvailableSeeds() : new List<SeedChoice>();
             SeedRule rule = validRules ? data.rules.Find(row => row.machine == replantMachine.uniqueId && row.machine > 0) : null;
+            if (!replantSourceLoaded) { replantSourceKey = rule?.location; replantSourceLoaded = true; }
+            List<SeedChoice> choices = validRules ? AvailableSeeds() : new List<SeedChoice>();
             SeedChoice selected = rule == null ? null : choices.Find(choice => choice.Plant == rule.plant &&
                 choice.Signature == Signature(rule.genes));
             if (selected != null && !scanner && choices.Count(choice => choice.Plant == selected.Plant) > 1) selected = null;
@@ -228,11 +236,21 @@ namespace ShopAssist
             int cardRows = (count + 3) / 4;
             float scrollHeight = count == 0 ? 36 : Mathf.Min(205, cardRows * 100 + 4);
             int statusHeight = rule != null && rule.state != (int)ReplantPhase.Idle ? 70 : 0;
-            int height = Mathf.Clamp(Mathf.CeilToInt(195 + scrollHeight + (rule == null ? 0 : 56) + statusHeight), 280, 560);
+            int height = Mathf.Clamp(Mathf.CeilToInt(265 + scrollHeight + (rule == null ? 0 : 56) + statusHeight), 350, 640);
             var builder = UiLayout.Rebuild(ref replantWindow, ModEntry.Id + ".f32", ShopSettings.Text("f32.open"), 600, height);
             replantWindow = builder.GetWindow(); CustomUIWindow own = replantWindow;
             builder.OnClose(() => { if (ReferenceEquals(replantWindow, own)) replantWindow = null; });
             if (!validRules) { builder.AddWarning(ShopSettings.Text("f32.invalid")).Show(); return; }
+            ShopInventory.Location supply = ReplantSourceLocation(replantSourceKey);
+            builder.BeginRow().AddButton(supply?.Name ?? ShopSettings.Text(replantSourceKey == null ? "vm.seed_output" : "f32.source_missing"), () =>
+            {
+                if (!ReplantContext()) return;
+                ChooseConsumableSource(ShopSettings.Text("f32.choose_source"), 32, replantMachine, supply,
+                    location => ChangeReplantSource(location.Key(true)), own);
+            }, "source");
+            if (replantSourceKey != null)
+                builder.AddButton(ShopSettings.Text("vm.seed_output"), () => ChangeReplantSource(null), "own_output");
+            builder.End();
             var header = new List<ItemGrid.Entry>
             {
                 new ItemGrid.Entry(replantMachine) { Caption = replantMachine.GetDisplayName(true), Badge = ShopSettings.Text("visual.machine") }
@@ -307,8 +325,39 @@ namespace ShopAssist
             builder.End().Show();
         }
 
-        private string SeedSource(GameItem seed) => ShopSettings.Text(ReferenceEquals(seed?.parentInventory,
-            MachineHydroponic.GetInputSlot(replantMachine)) ? "vm.seed_input" : "vm.seed_output");
+        private string SeedSource(GameItem seed) => ReferenceEquals(seed?.parentInventory, MachineHydroponic.GetInputSlot(replantMachine)) ?
+            ShopSettings.Text("vm.seed_input") : ReplantSourceLocation(replantSourceKey)?.Name ?? ShopSettings.Text("vm.seed_output");
+
+        private static ShopInventory.Location ReplantSourceLocation(string key)
+        {
+            if (key == null) return null;
+            var matches = ShopInventory.OwnedLocations(false).Where(location => location.Key() == key && IsMaintenanceSource(location, 32)).ToArray();
+            return matches.Length == 1 ? matches[0] : null;
+        }
+
+        private static GameGridInventory ResolveReplantSource(GameItem machine, string key)
+        {
+            GameGridInventory source = key == null ? MachineHydroponic.GetOutputSlot(machine) : ReplantSourceLocation(key)?.Inventory as GameGridInventory;
+            return source != null && InventoryRoutes.AutoTakeAllowed(source) ? source : null;
+        }
+
+        private void ChangeReplantSource(string key)
+        {
+            if (!ReplantContext() || key != null && !MaintenanceSourceKey.TryParse(key, 32, out _, out _, out _) ||
+                !ReadSeedRules(out SeedRules data)) return;
+            if (key != null && !ConsumableSources(32, replantMachine).Any(location => location.Key() == key))
+            { ShopNotice.Show(ShopSettings.Text("inv.changed")); return; }
+            SeedRule rule = data.rules.Find(value => value.machine == replantMachine.uniqueId);
+            if (rule?.state == (int)ReplantPhase.Inspect) { ShopNotice.Show(ShopSettings.Text("f32.inspect")); return; }
+            if (rule != null)
+            {
+                rule.location = key;
+                if (!SaveSeedRules(data)) return;
+                replantNeedsScan = true;
+            }
+            replantSourceKey = key;
+            DrawReplant();
+        }
 
         private static string SeedDetails(SeedChoice choice, bool scanner) => SeedDetails(choice.Genes, scanner);
 
@@ -330,11 +379,12 @@ namespace ShopAssist
                 available.Count(current => current.Plant == choice.Plant) > 1) { DrawReplant(); return; }
             int machineId = replantMachine.GetUniqueID();
             SeedRule existing = data.rules.Find(row => row.machine == machineId);
-            if (existing != null && existing.plant == choice.Plant && Signature(existing.genes) == choice.Signature) return;
+            if (existing != null && existing.plant == choice.Plant && Signature(existing.genes) == choice.Signature &&
+                existing.location == replantSourceKey) return;
             data.rules.RemoveAll(row => row.machine == machineId);
             if (data.rules.Count >= 100) { ShopNotice.Show(ShopSettings.Text("f32.limit")); return; }
             data.rules.Add(new SeedRule { machine = machineId, plant = choice.Plant, genes = choice.Genes,
-                state = (int)ReplantPhase.Idle, reason = "" });
+                location = replantSourceKey, state = (int)ReplantPhase.Idle, reason = "" });
             if (SaveSeedRules(data)) DrawReplant();
         }
 
@@ -433,9 +483,13 @@ namespace ShopAssist
                 MachineProgressHelper.GetMachineState(machine) != MachineProgressHelper.STATE_READY)
             { SetReplantState(data, rule, ReplantPhase.Pending, "f32.waiting", machine, true); return; }
             string signature = Signature(rule.genes);
-            var matching = output.childItems.Where(item => item != null && item.IsTag("SEED_ITEM_TAG") &&
+            GameGridInventory seedSource = ResolveReplantSource(machine, rule.location);
+            if (seedSource == null) { SetReplantState(data, rule, ReplantPhase.Pending, "f32.source_missing", machine, true); return; }
+            var matching = seedSource.childItems.Where(item => item != null && item.IsTag("SEED_ITEM_TAG") &&
                 HydroponicHelper.GetPlantId(item) == rule.plant && Genes(item) is List<SeedGene> genes && Signature(genes) == signature).ToList();
-            GameItem seed = matching.Find(item => item.unitCount == 1 && ShopInventory.Movable(item) && !RequestBook.Reserved(item));
+            GameItem seed = matching.OrderBy(item => item.modifiedShape?.minY ?? 0).ThenBy(item => item.modifiedShape?.minX ?? 0)
+                .ThenBy(item => item.uniqueId).FirstOrDefault(item => item.unitCount == 1 && ShopInventory.Movable(item) &&
+                    MaintenanceSwap.NativeTransferAllowed(seedSource, input, item));
             if (ReplantTaskRules.Decide(phase, replantEnabled.Value, false, true, seed != null) != ReplantDecision.Attempt)
             {
                 string reason = matching.Count == 0 ? "f32.missing" : matching.Any(item => item.unitCount == 1) ? "f32.unavailable" : "f32.stack";
@@ -450,12 +504,14 @@ namespace ShopAssist
                 PlayerStore.Instance.saveSlotId != data.slot || !ReferenceEquals(ReplantMachine(id), machine) ||
                 !ReadSeedRules(out SeedRules verified)) return;
             SeedRule pending = verified.rules.Find(row => row.machine == id && row.state == (int)ReplantPhase.Inspect &&
-                row.plant == rule.plant && Signature(row.genes) == signature);
+                row.plant == rule.plant && Signature(row.genes) == signature && row.location == rule.location);
             if (pending == null) return;
             if (!ReferenceEquals(MachineHydroponic.GetInputSlot(machine), input) || !ReferenceEquals(MachineHydroponic.GetOutputSlot(machine), output) ||
                 input.childItem != null || input.IsInsertLocked() || !GeneralHelper.MayPlayerInsertInto(input) ||
                 MachineProgressHelper.GetMachineState(machine) != MachineProgressHelper.STATE_READY ||
-                !ReferenceEquals(seed.parentInventory, output) || seed.unitCount != 1 || !ShopInventory.Movable(seed) || RequestBook.Reserved(seed))
+                !ReferenceEquals(ResolveReplantSource(machine, pending.location), seedSource) ||
+                !ReferenceEquals(seed.parentInventory, seedSource) || seed.unitCount != 1 || !ShopInventory.Movable(seed) ||
+                !MaintenanceSwap.NativeTransferAllowed(seedSource, input, seed))
             {
                 SetReplantState(verified, pending, input.childItem != null ? ReplantPhase.Idle : ReplantPhase.Pending,
                     input.childItem != null ? "" : "f32.waiting", machine, false);
@@ -472,7 +528,7 @@ namespace ShopAssist
                     if (ReadSeedRules(out SeedRules after))
                     {
                         SeedRule live = after.rules.Find(row => row.machine == id && row.state == (int)ReplantPhase.Inspect &&
-                            row.plant == rule.plant && Signature(row.genes) == signature);
+                            row.plant == rule.plant && Signature(row.genes) == signature && row.location == pending.location);
                         if (live != null) SetReplantState(after, live, ReplantPhase.Idle, "", machine, false);
                     }
                     return;
@@ -501,6 +557,8 @@ namespace ShopAssist
         {
             CustomUIWindow window = replantWindow; replantWindow = null; replantMachine = null; replantRun = null;
             replantDirty = false;
+            replantSourceKey = null; replantSourceLoaded = false;
+            ClearConsumableSourceMarkers();
             window?.Close();
         }
 

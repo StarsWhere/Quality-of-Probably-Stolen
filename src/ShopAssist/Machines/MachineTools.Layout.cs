@@ -121,12 +121,12 @@ namespace ShopAssist
         }
 
         private bool FixedInLayout(GameItem item) => moduleTarget.identifier == "evaporator" ||
-            !ShopInventory.Movable(item) || item.IsTag("MODULE_STUCK_TAG") || RequestBook.Reserved(item);
+            !ShopInventory.Movable(item) || item.IsTag("MODULE_STUCK_TAG");
 
         private bool Candidate(GameItem item, GameGridInventory bay, List<ShopInventory.Location> locations)
         {
             return item != null && item.unitCount > 0 && ShopInventory.Movable(item) && item.MaxNumRemove() >= item.unitCount &&
-                !RequestBook.Reserved(item) && !ShopInventory.WouldContainSelf(item, bay) && ModuleCompatibility(moduleTarget, item) > 0 &&
+                !ShopInventory.WouldContainSelf(item, bay) && ModuleCompatibility(moduleTarget, item) > 0 &&
                 !AttentionBook.HasInspection("f10.open", item.uniqueId) && !AttentionBook.HasInspection("f12.open", item.uniqueId) &&
                 locations.Any(location => ShopInventory.SearchableGoods(location) && ReferenceEquals(location.Inventory, item.parentInventory));
         }

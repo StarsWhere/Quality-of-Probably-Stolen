@@ -417,7 +417,7 @@ public sealed class FeedFullRecoveryScenario
     }
 }
 
-// Save one module-storage binding and one low-battery rule on separate native containers.
+// Save one module-storage binding and one battery rule on separate native containers.
 public sealed class MachineBindingScenario
 {
     private readonly QaNewRun start = new QaNewRun();
@@ -439,7 +439,7 @@ public sealed class MachineBindingScenario
             MachineFeatureQa.Put(MachineFeatureQa.Panel<GameGridInventory>(machine, "module"), module);
             MachineFeatureQa.Put((GameGridInventory)storage.contentWindow.childElement, stored);
             oldBattery = MachineFeatureQa.Item("energy_credit"); spare = MachineFeatureQa.Item("energy_credit");
-            PowerHelper.SetPowerSourceAt(oldBattery, 2); PowerHelper.SetPowerSourceAt(spare, 100);
+            PowerHelper.SetPowerSourceAt(oldBattery, 100); PowerHelper.SetPowerSourceAt(spare, 100);
             MachineFeatureQa.Put(MachineHelper.GetBatterySlot(machine), oldBattery);
             MachineFeatureQa.Put((GameGridInventory)supply.contentWindow.childElement, spare);
             MachineFeatureQa.Check(MachineHydroponic.GetInputSlot(machine).childItem == null &&
@@ -468,9 +468,15 @@ public sealed class MachineBindingScenario
             RoutingScenario.RunFeatureAction("f31.open");
             var options = CustomUIManager.Instance.GetWindow(MachineFeatureQa.Mod + ".maintenance");
             QaItemUi.Choose(options, "source", "QA cold battery supply"); options = CustomUIManager.Instance.GetWindow(MachineFeatureQa.Mod + ".maintenance");
-            options.Get("threshold").SetFloat(50, true); options.Get("enable").button.onClick.Invoke();
+            var hostSlot = options?.Get("host_slot")?.root;
+            var sourceSlot = options?.Get("source_slot")?.root;
+            var condition = options?.Get("condition"); var enable = options?.Get("enable")?.button;
+            MachineFeatureQa.Check(hostSlot != null && QaItemUi.Hit(hostSlot, machine) != null &&
+                sourceSlot != null && QaItemUi.Hit(sourceSlot, supply) != null && condition?.dropdown != null &&
+                condition.dropdown.options.Count > 0 && enable?.interactable == true, "F31 machine, source or condition unavailable");
+            condition.SetIndex(0, true); enable.onClick.Invoke();
             string rules = ModHelper.GetModData(MachineFeatureQa.Mod, "machineMaintenance", null);
-            MachineFeatureQa.Check(!string.IsNullOrEmpty(rules), "Battery maintenance rule not saved");
+            MachineFeatureQa.Check(options.IsAlive != true && !string.IsNullOrEmpty(rules), "Battery maintenance rule not saved");
             var player = PlayerStore.Instance;
             File.WriteAllText(Path.Combine(Application.persistentDataPath, "qa-machine-bindings.txt"), string.Join("|", "1", player.runID, player.saveSlotId,
                 machine.GetUniqueID(), module.GetUniqueID(), storage.GetUniqueID(), stored.GetUniqueID(), supply.GetUniqueID(), oldBattery.GetUniqueID(), spare.GetUniqueID()));
@@ -480,13 +486,14 @@ public sealed class MachineBindingScenario
     }
 }
 
-// Cold-load the same save, then test both bindings through actual pointer and machine callbacks.
+// Cold-load the same save, then test both bindings through actual item movement and machine callbacks.
 public sealed class MachineBindingReloadScenario
 {
     private QaLoadSlot load;
     private string[] context;
     private GameItem machine, module, storage, stored, supply, oldBattery, spare;
     private int step;
+    private float until;
     private readonly float deadline = Time.realtimeSinceStartup + 100;
     public bool Tick(out string result)
     {
@@ -541,7 +548,31 @@ public sealed class MachineBindingReloadScenario
         if (step == 2)
         {
             var power = MachineHelper.GetBatterySlot(machine); var source = supply.contentWindow.childElement as GameGridInventory;
-            MachineFeatureQa.Check(power.childItem == oldBattery && spare.parentInventory == source, "Saved battery fixture not restored");
+            MachineFeatureQa.Check(power?.childItem == oldBattery && source != null && spare.parentInventory == source &&
+                oldBattery.GetTagReadonly("power_source_item_energy").GetInt() == 100 &&
+                spare.GetTagReadonly("power_source_item_energy").GetInt() == 100, "Saved battery fixture not restored");
+            machine.contentWindow.ToFront(); RoutingScenario.RunFeatureAction("f31.open");
+            var options = CustomUIManager.Instance.GetWindow(MachineFeatureQa.Mod + ".maintenance");
+            var hostSlot = options?.Get("host_slot")?.root;
+            var sourceSlot = options?.Get("source_slot")?.root;
+            var condition = options?.Get("condition");
+            MachineFeatureQa.Check(options?.IsAlive == true && hostSlot != null && QaItemUi.Hit(hostSlot, machine) != null &&
+                sourceSlot != null && QaItemUi.Hit(sourceSlot, supply) != null && condition?.dropdown != null && condition.GetIndex() == 0,
+                "Cold-loaded F31 machine, source or best-energy condition was not restored");
+            options.Close();
+            PowerHelper.SetPowerSourceAt(oldBattery, 2);
+            until = Time.realtimeSinceStartup + 8f; step++; return false;
+        }
+        if (step == 3)
+        {
+            var power = MachineHelper.GetBatterySlot(machine); var source = supply.contentWindow.childElement as GameGridInventory;
+            if (power.childItem == oldBattery && Time.realtimeSinceStartup < until) return false;
+            MachineFeatureQa.Check(power.childItem == spare && oldBattery.parentInventory == source &&
+                source.childItems.Count(item => ReferenceEquals(item, oldBattery)) == 1 &&
+                oldBattery.GetTagReadonly("power_source_item_energy").GetInt() == 2 &&
+                spare.GetTagReadonly("power_source_item_energy").GetInt() == 100 &&
+                EmporiumEntry.Instance.swapBufferElement.childItem == null,
+                "F31 did not exchange the exact batteries using its cold-loaded source");
             var seed = MachineFeatureQa.Item("hydroreed_seed"); var freshWater = MachineFeatureQa.Item("wine_bottle");
             WaterHelper.AddWater(freshWater, 2, 750000);
             MachineFeatureQa.Put(MachineHydroponic.GetInputSlot(machine), seed);
@@ -553,8 +584,8 @@ public sealed class MachineBindingReloadScenario
             MachineFeatureQa.Check(power.childItem == spare && oldBattery.parentInventory == source &&
                 oldBattery.GetTagReadonly("power_source_item_energy").GetInt() == 2 &&
                 spare.GetTagReadonly("power_source_item_energy").GetInt() < 100 && WaterHelper.GetCurrentCapacityML(water) < before,
-                "F31 did not restore its source and exchange the exact batteries before a productive night callback");
-            result = "PASS F10 same-module drag to cold-loaded storage and F31 productive night callback swaps to cold-loaded supply"; return true;
+                "The machine did not use the exchanged battery in a productive night callback");
+            result = "PASS F10 same-module drag to cold-loaded storage and F31 periodic battery exchange from cold-loaded supply followed by productive operation"; return true;
         }
         throw new InvalidOperationException("Unknown machine binding reload step");
     }

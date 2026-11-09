@@ -362,7 +362,7 @@ namespace ShopAssist
 
         private static List<GameItem> FeedCandidates(GameGridInventory source, string material) => source == null ? new List<GameItem>() :
             source.childItems.Where(item => item != null && item.identifier == material && item.unitCount == 1 &&
-                ShopInventory.Movable(item) && !RequestBook.Reserved(item)).ToList();
+                ShopInventory.Movable(item)).ToList();
 
         private static List<ShopInventory.Location> FeedLocations() => ShopInventory.OwnedLocations(false)
             .Where(location => location.Ordinary && location.Inventory is GameGridInventory).ToList();
@@ -706,7 +706,7 @@ namespace ShopAssist
         private bool MoveToOrdinary(GameItem item, GameGridInventory source, GameGridInventory destination)
         {
             if (item == null || !ReferenceEquals(item.parentInventory, source) || !ShopInventory.Movable(item) ||
-                RequestBook.Reserved(item) || ShopInventory.WouldContainSelf(item, destination)) return false;
+                ShopInventory.WouldContainSelf(item, destination)) return false;
             SlotMarker slot = GridPlacements.Empty(destination, item);
             if (slot == null) return false;
             try { if (slot.TryAcceptOnce(item.unitCount) == item.unitCount && ReferenceEquals(item.parentInventory, destination)) return true; }

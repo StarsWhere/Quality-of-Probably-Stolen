@@ -20,178 +20,6 @@ namespace ShopAssist
             internal GameGridInventory Grid;
         }
 
-        // This records only what the current idle view drew. It is never used to authorize a move.
-        private sealed class ModuleEntrySnapshot
-        {
-            private readonly GameItem item;
-            private readonly GameInventory source;
-            private readonly GridShape shape;
-            private readonly int count;
-            private readonly bool selected, enabled, selectable, draggable, hasArt;
-            private readonly string caption, badge, marker, reason;
-            private readonly Sprite sprite;
-            private readonly Color color;
-            private readonly Vector2 rotationPivot, anchorMin, anchorMax, pivot, position, size;
-
-            internal ModuleEntrySnapshot(ItemGrid.Entry entry)
-            {
-                item = entry.Item; source = entry.Source; shape = entry.Shape?.Clone(); count = item.unitCount;
-                selected = entry.Selected; enabled = entry.Enabled; selectable = entry.Selectable; draggable = entry.Draggable;
-                caption = entry.Caption; badge = entry.Badge; marker = entry.Marker; reason = entry.Reason;
-                var element = item as GameItemElement;
-                var background = element?.background;
-                hasArt = background?.image?.sprite != null && background.rectTransform != null && element.rotator?.rectTransform != null;
-                if (!hasArt) return;
-                sprite = background.image.sprite; color = background.image.color; rotationPivot = element.rotator.rectTransform.pivot;
-                RectTransform rect = background.rectTransform;
-                anchorMin = rect.anchorMin; anchorMax = rect.anchorMax; pivot = rect.pivot; position = rect.anchoredPosition; size = rect.sizeDelta;
-            }
-
-            internal bool Matches(ItemGrid.Entry entry)
-            {
-                if (entry == null || !ReferenceEquals(item, entry.Item) || !ReferenceEquals(source, entry.Source) || item == null ||
-                    count != item.unitCount || !SameModuleShape(shape, entry.Shape) || selected != entry.Selected || enabled != entry.Enabled ||
-                    selectable != entry.Selectable || draggable != entry.Draggable || caption != entry.Caption || badge != entry.Badge || marker != entry.Marker || reason != entry.Reason) return false;
-                var element = item as GameItemElement;
-                var background = element?.background;
-                bool nowHasArt = background?.image?.sprite != null && background.rectTransform != null && element.rotator?.rectTransform != null;
-                if (hasArt != nowHasArt) return false;
-                if (!hasArt) return true;
-                RectTransform rect = background.rectTransform;
-                return ReferenceEquals(sprite, background.image.sprite) && color.Equals(background.image.color) &&
-                    rotationPivot.Equals(element.rotator.rectTransform.pivot) && anchorMin.Equals(rect.anchorMin) && anchorMax.Equals(rect.anchorMax) &&
-                    pivot.Equals(rect.pivot) && position.Equals(rect.anchoredPosition) && size.Equals(rect.sizeDelta);
-            }
-        }
-
-        private sealed class ModuleGridSnapshot
-        {
-            private sealed class Cell
-            {
-                internal GameItem Item;
-                internal GameInventory Source;
-                internal GridShape Shape;
-                internal int Count;
-                internal bool Owned;
-                internal ModuleEntrySnapshot Entry;
-                internal ModuleLayout.Part Part;
-            }
-
-            private readonly GameGridInventory grid;
-            private readonly GridShape board;
-            private readonly List<Cell> cells = new List<Cell>();
-
-            internal ModuleGridSnapshot(MachineTools owner, GameGridInventory value, bool showBay, List<ModuleRow> rows)
-            {
-                grid = value; board = grid?.inventoryShape?.Clone();
-                if (grid == null) return;
-                foreach (GameItem item in grid.childItems)
-                {
-                    var cell = new Cell { Item = item, Source = item?.parentInventory, Shape = item?.modifiedShape?.Clone(), Count = item?.unitCount ?? 0 };
-                    if (showBay && item?.modifiedShape != null)
-                    {
-                        cell.Owned = ShopInventory.Owned(item);
-                        if (cell.Owned)
-                        {
-                            cell.Entry = new ModuleEntrySnapshot(owner.ModuleBoardEntry(item, grid, rows));
-                            if (item.IsTag(ModuleHelper.MODULE_TAG) || item.IsGameItemType("NODE"))
-                                cell.Part = ModuleLayout.Snapshot(item, true, false);
-                        }
-                    }
-                    cells.Add(cell);
-                }
-            }
-
-            internal bool Matches(MachineTools owner, GameGridInventory value, bool showBay, List<ModuleRow> rows)
-            {
-                if (!ReferenceEquals(grid, value)) return false;
-                if (grid == null) return true;
-                if (!SameModuleShape(board, grid.inventoryShape) || cells.Count != grid.childItems.Count) return false;
-                for (int i = 0; i < cells.Count; i++)
-                {
-                    Cell before = cells[i]; GameItem item = grid.childItems[i];
-                    if (!ReferenceEquals(before.Item, item) || !ReferenceEquals(before.Source, item?.parentInventory) ||
-                        before.Count != (item?.unitCount ?? 0) || !SameModuleShape(before.Shape, item?.modifiedShape)) return false;
-                    if (!showBay || item?.modifiedShape == null) continue;
-                    if (before.Owned != ShopInventory.Owned(item)) return false;
-                    if (!before.Owned) continue;
-                    if (before.Entry == null || !before.Entry.Matches(owner.ModuleBoardEntry(item, grid, rows)) ||
-                        before.Part != null && !ModuleLayout.Same(before.Part)) return false;
-                }
-                return true;
-            }
-        }
-
-        private static bool SameModuleShape(GridShape left, GridShape right) =>
-            left == null ? right == null : right != null && ModuleLayout.SameShape(left, right);
-
-        private sealed class ModuleViewSnapshot
-        {
-            private static readonly string[] TextKeys = { "f10.open", "f10.search", "f10.empty", "grid.tab_idle", "grid.tab_other", "grid.tab_storage",
-                "grid.compatible", "grid.selected", "grid.current_bay", "grid.arrange", "grid.storage_footer", "grid.storage_missing",
-                "grid.choose_storage", "machines.refresh", "f10.all_types", "f10.universal", "f10.hydroponic",
-                "f10.evaporator", "f10.printer", "f10.furnace", "f10.other" };
-            private readonly CustomUIWindow window;
-            private readonly RectTransform results, idleGrid;
-            private readonly ScrollRect scroll;
-            private readonly GameItem target;
-            private readonly string title, storageName, culture;
-            private readonly string[] texts;
-            private readonly int page, category, columns, visibleRows, dockRows, width, screenWidth, screenHeight, selectedCount;
-            private readonly bool compatible, layoutEnabled;
-            private readonly float windowWidth, canvasScale, nativeGridSize;
-            private readonly Vector2 layerSize, windowSize, resultsSize, viewportSize;
-            private readonly Vector3 layerScale;
-            private readonly ModuleGridSnapshot bay, storage;
-            private readonly List<ModuleEntrySnapshot> entries;
-
-            internal ModuleViewSnapshot(MachineTools owner, List<ItemGrid.Entry> displayed, int idleWidth,
-                ShopInventory.Location location, List<ModuleRow> rows)
-            {
-                window = owner.modulesWindow; results = owner.moduleResults; idleGrid = owner.moduleIdleGrid; scroll = owner.moduleSourceScroll;
-                target = owner.moduleTarget; title = target.GetDisplayName(true); storageName = location?.Name;
-                culture = LocHelper.GetCurrentLocaleCode() + "|" + System.Globalization.CultureInfo.CurrentCulture.Name + "|" +
-                    System.Globalization.CultureInfo.CurrentUICulture.Name;
-                texts = TextKeys.Select(ShopSettings.Text).ToArray();
-                page = owner.modulePage; category = owner.moduleCategory; columns = owner.moduleColumns; visibleRows = owner.moduleVisibleRows;
-                dockRows = owner.moduleDockRows; width = idleWidth; compatible = owner.compatibleOnly;
-                layoutEnabled = owner.layoutEnabled.Value; selectedCount = owner.selectedModules.Count; windowWidth = owner.moduleWindowWidth;
-                screenWidth = Screen.width; screenHeight = Screen.height;
-                RectTransform layer = CustomUIManager.Instance.GetLayerRoot(CustomUIManager.LAYER_META);
-                layerSize = layer != null ? layer.rect.size : Vector2.zero; layerScale = layer != null ? layer.lossyScale : Vector3.zero;
-                canvasScale = layer?.GetComponentInParent<Canvas>()?.scaleFactor ?? 0;
-                nativeGridSize = UISettings.current?.gridSize ?? 0;
-                windowSize = window.Rect.rect.size; resultsSize = results.rect.size; viewportSize = scroll?.viewport != null ? scroll.viewport.rect.size : Vector2.zero;
-                bay = new ModuleGridSnapshot(owner, owner.moduleBay as GameGridInventory, true, rows);
-                storage = new ModuleGridSnapshot(owner, location?.Inventory as GameGridInventory, false, rows);
-                entries = displayed.Select(entry => new ModuleEntrySnapshot(entry)).ToList();
-            }
-
-            internal bool Matches(MachineTools owner, List<ItemGrid.Entry> displayed, int idleWidth,
-                ShopInventory.Location location, List<ModuleRow> rows)
-            {
-                if (window == null || !window.IsAlive || !ReferenceEquals(window, owner.modulesWindow) ||
-                    results == null || !ReferenceEquals(results, owner.moduleResults) || idleGrid == null || !idleGrid.gameObject.activeInHierarchy ||
-                    !ReferenceEquals(idleGrid, owner.moduleIdleGrid) || scroll == null || scroll.viewport == null || !ReferenceEquals(scroll, owner.moduleSourceScroll) ||
-                    !ReferenceEquals(target, owner.moduleTarget) || title != target.GetDisplayName(true) || storageName != location?.Name ||
-                    page != owner.modulePage || category != owner.moduleCategory || columns != owner.moduleColumns || visibleRows != owner.moduleVisibleRows ||
-                    dockRows != owner.moduleDockRows || width != idleWidth || compatible != owner.compatibleOnly ||
-                    layoutEnabled != owner.layoutEnabled.Value || selectedCount != owner.selectedModules.Count || windowWidth != owner.moduleWindowWidth ||
-                    screenWidth != Screen.width || screenHeight != Screen.height || nativeGridSize != (UISettings.current?.gridSize ?? 0) ||
-                    culture != LocHelper.GetCurrentLocaleCode() + "|" + System.Globalization.CultureInfo.CurrentCulture.Name + "|" +
-                        System.Globalization.CultureInfo.CurrentUICulture.Name ||
-                    !windowSize.Equals(window.Rect.rect.size) || !resultsSize.Equals(results.rect.size) || !viewportSize.Equals(scroll.viewport.rect.size)) return false;
-                RectTransform layer = CustomUIManager.Instance.GetLayerRoot(CustomUIManager.LAYER_META);
-                if (!(layer != null ? layer.rect.size : Vector2.zero).Equals(layerSize) || !(layer != null ? layer.lossyScale : Vector3.zero).Equals(layerScale) ||
-                    (layer?.GetComponentInParent<Canvas>()?.scaleFactor ?? 0) != canvasScale ||
-                    !texts.SequenceEqual(TextKeys.Select(ShopSettings.Text)) || entries.Count != displayed.Count ||
-                    !bay.Matches(owner, owner.moduleBay as GameGridInventory, true, rows) ||
-                    !storage.Matches(owner, location?.Inventory as GameGridInventory, false, rows)) return false;
-                for (int i = 0; i < entries.Count; i++) if (!entries[i].Matches(displayed[i])) return false;
-                return true;
-            }
-        }
-
         [Serializable]
         private sealed class ModuleStorageBinding
         {
@@ -210,12 +38,10 @@ namespace ShopAssist
         private GameInventory moduleBay;
         private string modulesRun;
         private int modulesSlot;
-        private bool modulesDirty, moduleSearchDirty, compatibleOnly;
+        private bool modulesDirty, moduleFilterDirty, compatibleOnly;
         private int modulePage;
-        private int moduleCategory, moduleTab, moduleColumns, moduleVisibleRows, moduleDockRows;
+        private int moduleAttribute, moduleTab, moduleColumns, moduleVisibleRows, moduleDockRows;
         private float moduleWindowWidth;
-        private string moduleSearch = "";
-        private ModuleViewSnapshot moduleView;
         private readonly HashSet<GameItem> selectedModules = new HashSet<GameItem>();
         private readonly HashSet<GameItem> selectedInstalledModules = new HashSet<GameItem>();
 
@@ -332,7 +158,7 @@ namespace ShopAssist
             if (modulesWindow != null)
             {
                 if (!modulesWindow.IsAlive || !SameModuleSession()) { CloseModules(); return; }
-                if ((modulesDirty || moduleSearchDirty) && !ItemGrid.DragActive) RenderModules(moduleSearchDirty && !modulesDirty);
+                if ((modulesDirty || moduleFilterDirty) && !ItemGrid.DragActive) RenderModules(moduleFilterDirty && !modulesDirty);
             }
             KeyCode key = modulesKey();
             if (key != KeyCode.None && ShopInput.Ready() && Input.GetKeyDown(key)) OpenModules();
@@ -344,11 +170,11 @@ namespace ShopAssist
 
         private void ModuleSettingsChanged() { if (!modulesEnabled.Value) CloseModules(); else modulesDirty = true; }
 
-        private void RenderModules(bool searchOnly = false)
+        private void RenderModules(bool filterOnly = false)
         {
             if (!SameModuleSession()) { CloseModules(); return; }
             if (ItemGrid.DragActive) { modulesDirty = true; return; }
-            modulesDirty = moduleSearchDirty = false;
+            modulesDirty = moduleFilterDirty = false;
             var locations = ModuleLocations();
             List<ModuleRow> rows = ModuleRows(locations);
             List<ShopInventory.Location> choices = ModuleStorageChoices();
@@ -357,28 +183,48 @@ namespace ShopAssist
             selectedModules.RemoveWhere(item => !available.Contains(item));
             selectedInstalledModules.RemoveWhere(item => item == null || !ShopInventory.Owned(item));
             var matching = rows.Where(r => r.Installed == (moduleTab == 1) && (!compatibleOnly || r.Compatibility > 0) &&
-                (string.IsNullOrWhiteSpace(moduleSearch) || r.Item.GetDisplayName(true).IndexOf(moduleSearch.Trim(), StringComparison.CurrentCultureIgnoreCase) >= 0) &&
-                (moduleCategory == 0 || ModuleCategory(r.Item) == moduleCategory)).ToList();
+                (moduleAttribute == 0 || ModuleAttributeValue(r.Item, moduleAttribute) > 0)).ToList();
             var displayed = OrderModules(matching).ToList();
-            bool filtered = compatibleOnly || !string.IsNullOrWhiteSpace(moduleSearch) || moduleCategory != 0;
+            bool filtered = compatibleOnly || moduleAttribute != 0;
             var bays = locations.Where(location => location.IsMachine && location.Role == "module" &&
                 location.Inventory is GameGridInventory && !ReferenceEquals(location.Inventory, moduleBay) &&
                 (!filtered || displayed.Any(row => ReferenceEquals(row.Grid, location.Inventory))))
-                .OrderBy(location => location.Name, StringComparer.CurrentCulture).ToList();
+                .OrderByDescending(location => moduleAttribute == 0 ? 0 : displayed.Where(row => ReferenceEquals(row.Grid, location.Inventory))
+                    .Select(row => ModuleAttributeValue(row.Item, moduleAttribute)).DefaultIfEmpty(0).Max())
+                .ThenBy(location => location.Name, StringComparer.CurrentCulture).ToList();
             var idleEntries = displayed.Select(ModuleEntry).ToList();
             int idleWidth = rows.Where(row => !row.Installed).Sum(row => row.Item.modifiedShape?.globalWidth ?? 0);
-            if (searchOnly && moduleTab == 0 && !layoutOpen && moduleView != null &&
-                moduleView.Matches(this, idleEntries, idleWidth, storage, rows)) return;
-            moduleView = null;
-            float extraHeight = 0, previewCell = 0;
             int dockRows = moduleDockRows;
-            bool settled = false;
+            float extraHeight = filterOnly ? FilterHeightHint(idleEntries, bays, storage, dockRows, idleWidth) : 0;
+            float previewCell = 0;
             for (int reflows = 0; reflows <= 4; reflows++)
                 if (!RenderModuleResults(rows, displayed, bays, idleEntries, idleWidth, storage,
-                    ref extraHeight, ref previewCell, ref dockRows)) { settled = true; break; }
+                    ref extraHeight, ref previewCell, ref dockRows)) break;
             moduleDockRows = dockRows;
-            if (settled && moduleTab == 0 && !layoutOpen && modulesWindow?.IsAlive == true && moduleIdleGrid != null)
-                moduleView = new ModuleViewSnapshot(this, idleEntries, idleWidth, storage, rows);
+        }
+
+        private float FilterHeightHint(List<ItemGrid.Entry> entries, List<ShopInventory.Location> bays,
+            ShopInventory.Location storage, int dockRows, int idleWidth)
+        {
+            if (moduleTab != 0 || layoutOpen || modulesWindow?.IsAlive != true || moduleSourceScroll?.viewport == null ||
+                moduleColumns < 1 || dockRows < 1) return 0;
+            if (moduleSourceScroll.horizontalScrollbar != null || entries.Any(entry => (entry.Shape?.globalWidth ?? 0) > moduleColumns)) return 0;
+            Vector2 size = ModuleWindowSize(out Vector2 available, entries, bays, storage, dockRows, idleWidth);
+            if (Mathf.Abs(modulesWindow.Rect.rect.width - size.x) > .5f) return 0;
+            float maxHeight = Mathf.Max(1, Mathf.Min(available.y * .8f, available.y - 32));
+            float remaining = maxHeight - size.y;
+            if (remaining <= .5f) return 0;
+            // Reuse only the measured window chrome; the current contents are packed again.
+            float chrome = modulesWindow.Rect.rect.height - moduleSourceScroll.viewport.rect.height;
+            if (chrome < 0 || chrome >= modulesWindow.Rect.rect.height) return 0;
+            float viewport = size.y - chrome;
+            if (viewport <= 0) return 0;
+            float rightWidth = ModuleDockWidth(Mathf.Max(80, size.x - 32));
+            int rowLimit = Mathf.Max(1, Mathf.CeilToInt((viewport + remaining) / 34));
+            float needed = ItemGrid.PackedRows(entries, moduleColumns,
+                ModuleDockArea(moduleColumns, rightWidth, dockRows), rowLimit) * 34 + 8;
+            float deficit = needed - viewport;
+            return deficit > .5f ? Mathf.Min(deficit + 2, remaining) : 0;
         }
 
         private bool RenderModuleResults(List<ModuleRow> rows, List<ModuleRow> displayed, List<ShopInventory.Location> bays,
@@ -412,7 +258,7 @@ namespace ShopAssist
                 shell.SetPosition(new Vector2(Mathf.Clamp(desired.x, -x, x), Mathf.Clamp(desired.y, -y, y)));
                 modulesWindow = shell.GetWindow();
                 CustomUIWindow own = modulesWindow;
-                shell.OnClose(() => { if (ReferenceEquals(modulesWindow, own)) { modulesWindow = null; moduleResults = moduleIdleGrid = null; moduleSourceScroll = moduleBayScroll = null; moduleTarget = null; moduleBay = null; moduleDockRows = 0; moduleView = null; modulesDirty = moduleSearchDirty = false; selectedModules.Clear(); selectedInstalledModules.Clear(); CloseLayout(); } });
+                shell.OnClose(() => { if (ReferenceEquals(modulesWindow, own)) { modulesWindow = null; moduleResults = moduleIdleGrid = null; moduleSourceScroll = moduleBayScroll = null; moduleTarget = null; moduleBay = null; moduleDockRows = 0; modulesDirty = moduleFilterDirty = false; selectedModules.Clear(); selectedInstalledModules.Clear(); CloseLayout(); } });
                 if (modulesWindow.frame?.titleText != null) modulesWindow.frame.titleText.richText = false;
                 DrawModuleToolbar(shell, bodyWidth);
                 shell.BeginColumn(); moduleResults = shell.CurrentContainer; FlexibleHeight(moduleResults); shell.End();
@@ -473,7 +319,8 @@ namespace ShopAssist
                 DrawRealModuleBoard(builder, grid, leftWidth, rows, new HashSet<GameItem>(displayed.Select(row => row.Item)));
             }
             else if (moduleTab == 2 && storage?.Inventory is GameGridInventory storageGrid)
-                DrawRealModuleBoard(builder, storageGrid, leftWidth, rows, null);
+                DrawRealModuleBoard(builder, storageGrid, leftWidth, rows,
+                    compatibleOnly || moduleAttribute != 0 ? new HashSet<GameItem>(displayed.Select(row => row.Item)) : null);
             else if (moduleTab != 2) builder.AddLabel(ShopSettings.Text("f10.empty"));
             builder.End().End();
             if (!wrap)
@@ -569,7 +416,7 @@ namespace ShopAssist
             float maxWidth = Mathf.Max(1, Mathf.Min(available.x * .8f, available.x - 32));
             if (moduleWindowWidth <= 0)
                 moduleWindowWidth = Mathf.Min(maxWidth, Mathf.Max(760, idleWidth * 34 + ModuleDockWidth(maxWidth - 32) + 56));
-            // A search or a category change must not move its own controls while the player uses them.
+            // Filtering must not move its own controls while the player uses them.
             float width = Mathf.Min(maxWidth, moduleWindowWidth);
             float maxHeight = Mathf.Max(1, Mathf.Min(available.y * .8f, available.y - 32));
             float minHeight = Mathf.Min(maxHeight, available.y * .40f);
@@ -583,7 +430,7 @@ namespace ShopAssist
             int rightRows = (moduleBay as GameGridInventory)?.inventoryShape?.height ?? 1;
             // Preview adds a control row, three readable statistics and board headings.
             float extraControls = layoutOpen ? (layoutPlan == null ? 44 : 235) : 0;
-            float chrome = (width - 32 < 760 ? 225 : 185) + (ModuleFooterRows(bodyWidth) - 1) * 40;
+            float chrome = (bodyWidth < 560 ? 225 : 185) + (ModuleFooterRows(bodyWidth) - 1) * 40;
             float contentHeight = moduleTab == 0 ? Mathf.Max(1, leftRows) * 34 :
                 Mathf.Max(Mathf.Max(1, leftRows) * 34, rightRows * 34 + extraControls);
             return new Vector2(width, Mathf.Clamp(chrome + contentHeight, minHeight, maxHeight));
@@ -674,21 +521,18 @@ namespace ShopAssist
             builder.Last.SetFixedWidth(100).SetInteractable(moduleTab != 1);
             builder.AddButton(ShopSettings.Text("grid.tab_storage"), () => SwitchModuleTab(2), "storage_tab");
             builder.Last.SetFixedWidth(78).SetInteractable(moduleTab != 2);
-            if (width < 760) builder.End().BeginRow();
-            builder.AddInput(ShopSettings.Text("f10.search"), moduleSearch, ChangeModuleSearch, "search", ChangeModuleSearch);
-            builder.Last.SetFixedWidth(Mathf.Clamp(width * .22f, 130, 220));
+            if (width < 560) builder.End().BeginRow();
             builder.AddToggle(ShopSettings.Text("grid.compatible"), compatibleOnly,
                 value => { compatibleOnly = value; modulePage = 0; modulesDirty = true; }, "compatible");
             builder.Last.SetFixedWidth(120);
-            builder.AddDropdown(ModuleCategories(), moduleCategory,
-                index => { moduleCategory = index; modulePage = 0; modulesDirty = true; }, "category");
-            builder.Last.SetFixedWidth(130);
+            builder.AddDropdown(ModuleAttributes(), moduleAttribute,
+                index => { moduleAttribute = Mathf.Clamp(index, 0, 3); modulePage = 0; moduleFilterDirty = true; }, "attribute");
+            builder.Last.SetFixedWidth(150);
             builder.End();
         }
 
-        private static string[] ModuleCategories() => new[] { ShopSettings.Text("f10.all_types"), ShopSettings.Text("f10.universal"),
-            ShopSettings.Text("f10.hydroponic"), ShopSettings.Text("f10.evaporator"), ShopSettings.Text("f10.printer"),
-            ShopSettings.Text("f10.furnace"), ShopSettings.Text("f10.other") };
+        private static string[] ModuleAttributes() => new[] { ShopSettings.Text("f10.all_attributes"), ShopSettings.Text("f10.performance_desc"),
+            ShopSettings.Text("f10.efficiency_desc"), ShopSettings.Text("f10.quality_desc") };
 
         private void RefreshModuleToolbar()
         {
@@ -705,25 +549,16 @@ namespace ShopAssist
             modulesWindow.Get("idle_tab")?.SetInteractable(moduleTab != 0);
             modulesWindow.Get("installed_tab")?.SetInteractable(moduleTab != 1);
             modulesWindow.Get("storage_tab")?.SetInteractable(moduleTab != 2);
-            if (modulesWindow.Get("search")?.input?.placeholder is TMPro.TMP_Text placeholder)
-                placeholder.text = ShopSettings.Text("f10.search");
-            CustomUIElement category = modulesWindow.Get("category");
-            string[] choices = ModuleCategories();
-            if (category?.dropdown != null && !category.dropdown.options.Select(option => option.text).SequenceEqual(choices))
+            CustomUIElement attribute = modulesWindow.Get("attribute");
+            string[] choices = ModuleAttributes();
+            if (attribute?.dropdown != null && !attribute.dropdown.options.Select(option => option.text).SequenceEqual(choices))
             {
-                category.SetOptions(choices);
-                category.SetIndex(moduleCategory, false);
+                attribute.SetOptions(choices);
+                attribute.SetIndex(moduleAttribute, false);
             }
         }
 
         private void SwitchModuleTab(int tab) { moduleTab = tab; modulePage = 0; RenderModules(); }
-
-        private void ChangeModuleSearch(string value)
-        {
-            string next = value ?? "";
-            if (moduleSearch == next) return;
-            moduleSearch = next; modulePage = 0; moduleSearchDirty = true;
-        }
 
         private void DrawSourceHeader(CustomUIBuilder builder, string title, int page, int pages)
         {
@@ -754,7 +589,8 @@ namespace ShopAssist
 
         private IOrderedEnumerable<ModuleRow> OrderModules(IEnumerable<ModuleRow> rows)
         {
-            return rows.OrderByDescending(row => row.Compatibility)
+            return rows.OrderByDescending(row => moduleAttribute == 0 ? 0 : ModuleAttributeValue(row.Item, moduleAttribute))
+                .ThenByDescending(row => row.Compatibility)
                 .ThenBy(row => row.Item.GetDisplayName(true), StringComparer.CurrentCulture)
                 .ThenBy(row => row.Path, StringComparer.CurrentCulture);
         }
@@ -770,7 +606,9 @@ namespace ShopAssist
             string compatible = row.Compatibility > 0 ? ShopSettings.Text("f10.type_match") :
                 row.Compatibility < 0 ? ShopSettings.Text("f10.type_mismatch") : ShopSettings.Text("f10.type_unknown");
             return new ItemGrid.Entry(item, item.parentInventory) { Caption = item.GetDisplayName(true),
-                Badge = state.Length > 0 ? state : compatible,
+                Badge = state.Length > 0 ? state : moduleAttribute == 0 ? compatible :
+                    ShopSettings.Text(moduleAttribute == 1 ? "f10.performance" : moduleAttribute == 2 ? "f10.efficiency" : "f10.quality") +
+                    " " + ModuleAttributeValue(item, moduleAttribute).ToString("+0;-0;0") + "%",
                 Marker = ModuleMarker(item),
                 Reason = string.Join(" · ", new[] { row.Path, compatible, state }.Where(value => !string.IsNullOrEmpty(value))),
                 Selected = row.Installed ? selectedInstalledModules.Contains(item) : selectedModules.Contains(item),
@@ -779,11 +617,10 @@ namespace ShopAssist
 
         private static string ModuleState(GameItem item) => item.IsTag(ModuleHelper.MODULE_STUCK_TAG) ? ShopSettings.Text("f10.stuck") :
             ItemPinHelper.IsPinned(item) ? ShopSettings.Text("f10.fixed") :
-            RequestBook.Reserved(item) ? ShopSettings.Text("f10.reserved") :
             item.parentInventory != null && item.parentInventory.IsRemoveLocked() ? ShopSettings.Text("f10.locked") : "";
 
         private static string ModuleMarker(GameItem item) => item.IsTag(ModuleHelper.MODULE_STUCK_TAG) ? ShopSettings.Text("grid.mark_stuck") :
-            ItemPinHelper.IsPinned(item) ? ShopSettings.Text("grid.mark_fixed") : RequestBook.Reserved(item) ? ShopSettings.Text("grid.mark_reserved") :
+            ItemPinHelper.IsPinned(item) ? ShopSettings.Text("grid.mark_fixed") :
             item.parentInventory != null && item.parentInventory.IsRemoveLocked() ? ShopSettings.Text("grid.mark_locked") : null;
 
         private ItemGrid.Options ModuleGridOptions(float width) => new ItemGrid.Options
@@ -928,15 +765,9 @@ namespace ShopAssist
             builder.End();
         }
 
-        private static int ModuleCategory(GameItem item)
-        {
-            if (item.IsTag("MODULE_TYPE_UNIVERSAL")) return 1;
-            if (item.IsTag("MODULE_TYPE_HYDROPONIC")) return 2;
-            if (item.IsTag("MODULE_TYPE_EVAPORATOR")) return 3;
-            if (item.IsTag("MODULE_TYPE_PRINTER")) return 4;
-            if (item.IsTag("MODULE_TYPE_FURNACE")) return 5;
-            return 6;
-        }
+        private static int ModuleAttributeValue(GameItem item, int attribute) => item.GetTagReadonly(attribute == 1 ?
+            "BONUS_PERCENTAGE_PERFORMANCE_INT" : attribute == 2 ? "BONUS_PERCENTAGE_EFFICIENCY_INT" :
+            "BONUS_PERCENTAGE_QUALITY_INT").GetInt();
 
         private List<ShopInventory.Location> ModuleStorageChoices() => ShopInventory.OwnedLocations(false)
             .Where(location => location.Ordinary && location.Inventory is GameGridInventory grid && grid.inventoryShape != null && ShopInventory.IsMainStockBranch(location) &&
@@ -979,7 +810,7 @@ namespace ShopAssist
             GameItem item = entry?.Item;
             if (!SameModuleSession() || item == null || destination == null || shape == null || item.parentInventory != entry.Source ||
                 !(item.IsTag(ModuleHelper.MODULE_TAG) || item.IsGameItemType("NODE")) || !ShopInventory.Movable(item) ||
-                item.MaxNumRemove() < item.unitCount || item.IsTag(ModuleHelper.MODULE_STUCK_TAG) || RequestBook.Reserved(item) ||
+                item.MaxNumRemove() < item.unitCount || item.IsTag(ModuleHelper.MODULE_STUCK_TAG) ||
                 AttentionBook.HasInspection("f10.open", item.uniqueId) || AttentionBook.HasInspection("f12.open", item.uniqueId) ||
                 AttentionBook.HasInspection("f12.open", moduleTarget.uniqueId) || ShopInventory.WouldContainSelf(item, destination)) return false;
             var locations = ModuleLocations();
@@ -1111,9 +942,9 @@ namespace ShopAssist
             CloseLayout();
             CustomUIWindow window = modulesWindow;
             modulesWindow = null; moduleResults = moduleIdleGrid = null; moduleSourceScroll = moduleBayScroll = null;
-            moduleTarget = null; moduleBay = null; selectedModules.Clear(); selectedInstalledModules.Clear(); modulesDirty = moduleSearchDirty = false;
+            moduleTarget = null; moduleBay = null; selectedModules.Clear(); selectedInstalledModules.Clear(); modulesDirty = moduleFilterDirty = false;
             moduleTab = 0; modulePage = 0;
-            moduleWindowWidth = 0; moduleColumns = moduleVisibleRows = moduleDockRows = 0; moduleView = null;
+            moduleWindowWidth = 0; moduleColumns = moduleVisibleRows = moduleDockRows = 0;
             window?.Close();
         }
     }

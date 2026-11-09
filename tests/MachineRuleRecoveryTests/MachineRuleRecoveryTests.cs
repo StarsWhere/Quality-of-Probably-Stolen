@@ -40,6 +40,28 @@ internal static class MachineRuleRecoveryTests
 
     private static void Main()
     {
+        var run = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+        string legacy = "{\"version\":4,\"run\":\"" + run.ToString("N") + "\",\"slot\":2,\"rules\":[" +
+            "{\"kind\":35,\"host\":8,\"threshold\":37,\"location\":\"root:stock\",\"condition\":1,\"materials\":7,\"grade\":1}," +
+            "{\"kind\":31,\"host\":9,\"threshold\":0,\"location\":\"root:stock\",\"condition\":2,\"materials\":null,\"grade\":null}]}";
+        var saved = MachineTools.DecodeMaintenance(legacy, run, 2);
+        Check(saved.version == 5 && saved.rules.Count == 2 && saved.rules[0].condition == 1 && saved.rules[0].threshold == 37 &&
+            saved.rules[0].materials == 7 && saved.rules[0].grade == 1 && saved.rules[1].condition == 2,
+            "Version 4 threshold rules and unrelated battery rules must remain readable without losing their fields.");
+        var roundTrip = MachineTools.DecodeMaintenance(ShopData.Encode(saved), run, 2);
+        Check(roundTrip.rules[0].threshold == 37 && roundTrip.rules[0].condition == 1 && roundTrip.rules[1].host == 9,
+            "Reading and saving a legacy rule must preserve the old threshold and the other rules.");
+        roundTrip.rules.Add(new MachineTools.MaintenanceRule { kind = 35, host = 10, threshold = 0,
+            location = "root:stock", condition = 1, materials = 7, grade = 0 });
+        var withNewRule = MachineTools.DecodeMaintenance(ShopData.Encode(roundTrip), run, 2);
+        Check(withNewRule.rules[2].condition == 1 && withNewRule.rules[2].threshold == 0 &&
+            withNewRule.rules[0].threshold == 37 && withNewRule.rules[1].host == 9,
+            "New best-durability rules must round-trip without changing legacy or battery rules.");
+        string oldVersion = legacy.Replace("\"version\":4", "\"version\":3");
+        var migrated = MachineTools.DecodeMaintenance(oldVersion, run, 2);
+        Check(migrated.version == 5 && migrated.rules[0].condition == 0 && migrated.rules[1].condition == 2,
+            "Version 3 filter and battery rules must retain their existing migration.");
+
         var store = NewStore();
         Check(Begin(store, () => false, out _) == MachineRuleResetResult.Changed && store.Writes == 0,
             "A changed save must not be written.");

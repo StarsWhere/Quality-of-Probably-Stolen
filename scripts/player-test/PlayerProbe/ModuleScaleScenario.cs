@@ -126,7 +126,7 @@ public class ModuleScaleScenario : EquipmentFixture
             Rect bounds = Bounds(browser.Rect);
             Check(bounds.xMin >= -2 && bounds.yMin >= -2 && bounds.xMax <= Screen.width + 2 && bounds.yMax <= Screen.height + 2,
                 "Workbench is clipped by the screen at scale " + scales[pass] + ": " + bounds);
-            Check(browser.Get("search").Rect.rect.width <= 221, "Search field is too wide");
+            Check(browser.Get("attribute")?.dropdown != null, "Module attribute selector is missing");
             foreach (string id in new[] { "source_title", "storage_status", "selected_count", "layout_performance", "layout_efficiency", "layout_quality" })
                 CheckGlyphs(browser.Get(id)?.text, id);
             Check(browser.Get("storage_status").text.text.Contains("QA Scale Storage"), "Bound storage capacity is absent");

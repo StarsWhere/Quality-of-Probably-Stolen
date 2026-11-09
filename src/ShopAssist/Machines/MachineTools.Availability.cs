@@ -76,12 +76,10 @@ namespace ShopAssist
 
         private ActionAvailability BatteryCapability(GameItem host, MethodBase callback = null)
         {
-            if (batteryHookFailed || batteryHarmony == null)
-                return ActionAvailability.Blocked(ActionUnavailableReason.Unsupported, "maintenance.unsupported");
-            if (callback == null && host != null) batteryCycles.TryGetValue(host.identifier, out callback);
             var methods = new System.Collections.Generic.List<MethodBase>(BatteryMethods);
-            if (host != null || callback != null) methods.Add(callback);
-            else { methods.AddRange(batteryCycles.Values); if (batteryCycles.Count != 2) methods.Add(null); }
+            methods.Add(AccessTools.Method(typeof(MachineHelper), nameof(MachineHelper.GetBatterySlot)));
+            methods.Add(AccessTools.Method(typeof(PowerHelper), nameof(PowerHelper.CanDrawPowerSource)));
+            if (callback != null) methods.Add(callback);
             ActionAvailability capability = MethodCapability(methods.ToArray());
             return capability.Allowed ? MaintenanceSwap.MethodCapability() : capability;
         }

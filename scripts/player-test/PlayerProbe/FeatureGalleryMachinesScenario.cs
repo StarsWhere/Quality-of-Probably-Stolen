@@ -66,11 +66,11 @@ public sealed class FeatureGalleryMachinesScenario
         {
             if (!ReferenceEquals(filterSeat.childItem, spareFilter)) return false;
             QaFeatureGallery.Need(ReferenceEquals(oldFilter.parentInventory, supplies), "Filter exchange did not retain the old filter");
-            gallery.Capture("f35-result"); afterFilterNotice = Time.realtimeSinceStartup + 4.2f; phase = 5; return false;
+            gallery.Capture("f35-result"); afterFilterNotice = Time.realtimeSinceStartup + 6.2f; phase = 5; return false;
         }
         if (phase == 5)
         {
-            if (!gallery.CaptureReady() || Time.realtimeSinceStartup < afterFilterNotice) return false;
+            if (!gallery.CaptureReady() || Time.realtimeSinceStartup < afterFilterNotice || QaFeatureGallery.NoticeVisible()) return false;
             ItemMouseDoubleClickHandler.current.OpenContentAction(furnace, new Vector2(Screen.width * .57f, Screen.height * .64f));
             furnace.contentWindow.ToFront(); QaFeatureGallery.Action("f33.open");
             var feed = QaFeatureGallery.Window("f33");

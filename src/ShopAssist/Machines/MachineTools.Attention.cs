@@ -84,14 +84,13 @@ namespace ShopAssist
             int energy = installed.GetTagReadonly("power_source_item_energy").GetInt();
             int capacity = installed.GetTagReadonly("power_source_item_max_energy").GetInt();
             if (energy < 0 || capacity <= 0) return "maintenance.swap_unavailable";
-            if ((long)energy * 100 >= (long)capacity * rule.threshold) return null;
             GameGridInventory source = ResolveMaintenanceSource(rule);
             if (source == null) return "maintenance.source_missing";
             int required = MachineryHelper.GetMachinePowerUsage(host);
             if (required < 0) return "maintenance.unsupported";
-            var candidates = Ordered(source).Where(candidate => EligibleBattery(candidate, installed, required)).ToList();
-            if (candidates.Count == 0) return "f31.missing";
-            if (candidates.Any(candidate => MaintenanceSwap.Ready(host, power, source, installed, candidate))) return "f31.next_attempt";
+            var candidates = BatteryCandidates(rule, installed, required, source).ToList();
+            if (candidates.Count == 0) return PowerHelper.CanDrawPowerSource(installed, required) ? null : "f31.missing";
+            if (candidates.Any(candidate => MaintenanceSwap.Ready(host, power, source, installed, candidate, allowOtherBattery: true))) return "f31.next_attempt";
             return candidates.Any(candidate => MaintenanceSwap.CallbackCapability(power, source, installed, candidate).Allowed) ?
                 "maintenance.swap_unavailable" : "maintenance.conflict";
         }

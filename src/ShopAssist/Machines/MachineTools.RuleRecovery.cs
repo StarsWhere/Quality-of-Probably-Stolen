@@ -53,7 +53,7 @@ namespace ShopAssist
         {
             if (key == FeedKey) return ShopData.Encode(new FeedRules { run = run, slot = slot });
             if (!Guid.TryParse(run, out Guid id) || id == Guid.Empty) throw new InvalidOperationException("Invalid reset scope.");
-            return ShopData.Encode(new MaintenanceData { version = 3, run = id.ToString("N"), slot = slot, rules = new List<MaintenanceRule>() });
+            return ShopData.Encode(new MaintenanceData { version = MaintenanceVersion, run = id.ToString("N"), slot = slot, rules = new List<MaintenanceRule>() });
         }
 
         private void ConfirmRuleReset(string key, string run, int slot)

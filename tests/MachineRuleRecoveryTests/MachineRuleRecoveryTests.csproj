@@ -11,6 +11,8 @@
     </Reference>
     <Compile Include="../../src/ShopAssist/State/ShopData.cs" />
     <Compile Include="../../src/ShopAssist/Machines/MachineRuleRecovery.cs" />
+    <Compile Include="../../src/ShopAssist/Machines/MachineTools.MaintenanceData.cs" />
+    <Compile Include="../../src/ShopAssist/Machines/MaintenanceSourceKey.cs" />
     <Compile Include="MachineRuleRecoveryTests.cs" />
   </ItemGroup>
 </Project>
