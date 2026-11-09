@@ -34,7 +34,7 @@ public sealed class TradeScenario
         if (step == 1)
         {
             if (e.storeInteractables == null || !e.storeInteractables.activeInHierarchy || StoreUIManager.Instance.gameOptionUIManager == null) return false;
-            SetOptions(true, "f01.enabled", "f16.enabled", "f21.enabled", "f27.enabled", "f28.enabled", "f37.enabled");
+            SetOptions(true, "f01.enabled", "f16.enabled", "f21.enabled", "f28.enabled", "f37.enabled");
             step++; return false;
         }
         if (step == 2)

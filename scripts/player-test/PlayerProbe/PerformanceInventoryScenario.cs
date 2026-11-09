@@ -169,7 +169,7 @@ public class PerformanceInventoryScenario
             if (kind == 2 && !ItemMultiSelectHandler.current.IsGroupDragging)
                 throw new InvalidOperationException("Native group drag ended during measurement");
             if (kind == 3 && sampleCount > 0 && sampleCount % 10 == 0 && actions < 5)
-                RunAction(ChangeSearch);
+                RunAction(ChangeModuleAttribute);
             if (sampleCount < Frames) return false;
             EndSample();
             CheckEnvironment();
@@ -294,7 +294,7 @@ public class PerformanceInventoryScenario
         environmentOutput = Path.Combine(Application.persistentDataPath, "qa-performance-" + label + "-environment.txt");
         environment = CaptureEnvironment();
         File.WriteAllLines(environmentOutput, environment);
-        rows.Add("# Real ModEntry.Update and native group-update samples include QA Harmony and Stopwatch overhead. Actions are timed separately outside Update; routing includes the native options and tools launcher, search times only input changes. Window calls count ShopAssist CustomUIManager.Window calls, not draw calls. One/two windows means extra backpack windows in addition to stock. Screen=" + Screen.width + "x" + Screen.height + "; graphics=" + SystemInfo.graphicsDeviceType + "; allocation_source=" + allocationSource + "; allocation_probe_bytes=" + allocationProbe + ". Unsupported allocation values are -1.");
+        rows.Add("# Real ModEntry.Update and native group-update samples include QA Harmony and Stopwatch overhead. Actions are timed separately outside Update; routing includes the native options and tools launcher, module filtering times only attribute changes. Window calls count ShopAssist CustomUIManager.Window calls, not draw calls. One/two windows means extra backpack windows in addition to stock. Screen=" + Screen.width + "x" + Screen.height + "; graphics=" + SystemInfo.graphicsDeviceType + "; allocation_source=" + allocationSource + "; allocation_probe_bytes=" + allocationProbe + ". Unsupported allocation values are -1.");
         rows.Add("scale,items,case,round,frames,update_mean_us,update_p95_us,update_alloc_mean_bytes,update_alloc_p95_bytes,locations_all,locations_in_update,window_calls_all,window_calls_in_update,group_update_calls,group_legal_calls,group_update_mean_us,group_update_p95_us,actions,action_mean_us,action_alloc_mean_bytes");
         File.WriteAllLines(output, rows);
     }
@@ -336,7 +336,10 @@ public class PerformanceInventoryScenario
             Screen.width != 1024 || Screen.height != 768 || Screen.fullScreenMode != FullScreenMode.Windowed ||
             QualitySettings.vSyncCount != 0 || Application.targetFrameRate != 60 ||
             EmporiumOption.Instance.fpsCapWhileMinimized || EmporiumOption.Instance.enableFpsCap)
-            throw new InvalidOperationException("Performance locale, display, or frame-rate conditions changed");
+            throw new InvalidOperationException("Performance environment changed: locale=" + LocHelper.GetCurrentLocaleCode() +
+                ", saved=" + ES3.LoadString("locale", "", null, null) + ", screen=" + Screen.width + "x" + Screen.height +
+                ", mode=" + Screen.fullScreenMode + ", vsync=" + QualitySettings.vSyncCount + ", target=" + Application.targetFrameRate +
+                ", minimizedCap=" + EmporiumOption.Instance.fpsCapWhileMinimized + ", cap=" + EmporiumOption.Instance.enableFpsCap);
         if (UISettings.current == null) throw new InvalidOperationException("Native UI settings unavailable");
 
         var lines = new List<string> { "performance_environment_version=2" };
@@ -451,7 +454,7 @@ public class PerformanceInventoryScenario
         {
             ItemMouseDoubleClickHandler.current.OpenContentAction(machine, new Vector2(260, 90));
             RoutingScenario.RunFeatureAction("f10.open");
-            if (Search() == null) throw new InvalidOperationException("Module search control unavailable");
+            if (ModuleAttribute() == null) throw new InvalidOperationException("Module attribute control unavailable");
         }
     }
 
@@ -482,12 +485,12 @@ public class PerformanceInventoryScenario
         if (!handler.IsGroupDragging) throw new InvalidOperationException("Native group drag did not start");
     }
 
-    private static TMP_InputField Search() => CustomUIManager.Instance.GetWindow(Mod + ".f10")?.Get("search")?.root?.GetComponentInChildren<TMP_InputField>(true);
-    private void ChangeSearch()
+    private static TMPro.TMP_Dropdown ModuleAttribute() => CustomUIManager.Instance.GetWindow(Mod + ".f10")?.Get("attribute")?.dropdown;
+    private void ChangeModuleAttribute()
     {
-        var inputField = Search();
-        if (inputField == null) throw new InvalidOperationException("Module search closed during measurement");
-        inputField.text = actions % 2 == 0 ? "performance" : "";
+        var attribute = ModuleAttribute();
+        if (attribute == null) throw new InvalidOperationException("Module filter closed during measurement");
+        attribute.value = actions % 2 == 0 ? 1 : 0;
     }
     private void OpenRoutingPreview()
     {
@@ -529,7 +532,7 @@ public class PerformanceInventoryScenario
         var sortedBytes = (long[])bytes.Clone(); Array.Sort(sortedBytes);
         var sortedGroup = groupTicks.Take(groupSamples).OrderBy(value => value).ToArray();
         double micros = 1000000d / Stopwatch.Frequency;
-        string[] names = { "idle_one_window", "idle_two_windows", "native_group_drag", "module_search", "routing_preview" };
+        string[] names = { "idle_one_window", "idle_two_windows", "native_group_drag", "module_attribute_filter", "routing_preview" };
         string F(double n) => n.ToString("F3", CultureInfo.InvariantCulture);
         rows.Add(string.Join(",", scale == 0 ? "small" : "large", scale == 0 ? "100" : "1000", names[kind], (round + 1).ToString(),
             sampleCount.ToString(), F(ticks.Average() * micros), F(sortedTicks[(int)Math.Ceiling(Frames * .95) - 1] * micros),
@@ -572,8 +575,10 @@ public class PerformanceInventoryScenario
 }
 
 public sealed class PerformanceSmallScenario : PerformanceInventoryScenario { public PerformanceSmallScenario() : base(false) { } }
-// The search case may exceed the Player's 180-second deadline when combined
+public sealed class PerformanceSmallCoreScenario : PerformanceInventoryScenario { public PerformanceSmallCoreScenario() : base(false, 0, 3, "core") { } }
+public sealed class PerformanceSmallFilterScenario : PerformanceInventoryScenario { public PerformanceSmallFilterScenario() : base(false, 3, 4, "filter") { } }
+// The filter case may exceed the Player's 180-second deadline when combined
 // with the other cases. Every part creates the same fixture and environment.
 public sealed class PerformanceLargeScenario : PerformanceInventoryScenario { public PerformanceLargeScenario() : base(true, 0, 3, "core") { } }
-public sealed class PerformanceLargeSearchScenario : PerformanceInventoryScenario { public PerformanceLargeSearchScenario() : base(true, 3, 4, "search") { } }
+public sealed class PerformanceLargeFilterScenario : PerformanceInventoryScenario { public PerformanceLargeFilterScenario() : base(true, 3, 4, "filter") { } }
 public sealed class PerformanceLargeRoutingScenario : PerformanceInventoryScenario { public PerformanceLargeRoutingScenario() : base(true, 4, 5, "routing") { } }

@@ -29,7 +29,7 @@ internal static class CustomerInventoryTests
         OverlayHandler.current = new OverlayHandler();
         ShopInventory.InStore = true;
         ShopInventory.SearchableLock = InventoryLockFake.Locked.Contains;
-        ShopInventory.Locations.Clear(); RequestBook.Reservations.Clear();
+        ShopInventory.Locations.Clear(); ItemPinHelper.Pinned.Clear();
         Time.unscaledTime = 0; Time.frameCount++;
         var window = new PixelWindow(); WindowsHandler.current.visibleWindows.Add(window);
         var stock = Grid(window);
@@ -45,7 +45,7 @@ internal static class CustomerInventoryTests
         }
         var ordinary = Add(stock, "ordinary", "FOOD");
         var hiddenAcceptance = Add(stock, "hidden acceptance", "FOOD"); hiddenAcceptance.hiddenAcceptance = true;
-        var reserved = Add(stock, "reserved", "FOOD"); RequestBook.Reservations.Add(reserved);
+        var reserved = Add(stock, "pinned", "FOOD"); ItemPinHelper.Pinned.Add(reserved);
         var custom = Add(stock, "custom", "FOOD", custom: true);
         custom.unitCount = 3; custom.removeLimit = 1;
         var other = Add(stock, "water", "WATER");
@@ -55,32 +55,23 @@ internal static class CustomerInventoryTests
         var settings = new ShopSettings(); var errors = new List<string>();
         using var indicators = new CustomerIndicators(settings, errors.Add);
         using var inventoryView = new CustomerInventory(settings, indicators, errors.Add);
-        string quote = "last quote 37";
-        inventoryView.QuoteLabel = item => ReferenceEquals(item, ordinary) ? quote : null;
         indicators.Start(); inventoryView.Start(); settings.Set("f11.enabled", true);
-        StoreClient client = PlayerStore.Instance.currentClientInstance.client;
-        client.clientBuyingTagList.Add("FOOD"); indicators.Tick();
-        inventoryView.OpenDemand();
+        inventoryView.Open();
         var entries = ItemGrid.LastEntries;
-        Check(entries.Count == 4 && entries.Count(entry => ReferenceEquals(entry.Item, ordinary)) == 1,
-            "query deduplicates real instances and includes known matching goods");
-        Check(!entries.Any(entry => ReferenceEquals(entry.Item, hiddenAcceptance) || ReferenceEquals(entry.Item, other)) &&
-            entries.Any(entry => ReferenceEquals(entry.Item, custom)),
-            "native refusal and acceptance decide the list independently of tooltip evidence");
+        Check(entries.Count == 5 && entries.Count(entry => ReferenceEquals(entry.Item, ordinary)) == 1,
+            "stock query deduplicates real instances");
+        Check(entries.Any(entry => ReferenceEquals(entry.Item, hiddenAcceptance)) &&
+            entries.Any(entry => ReferenceEquals(entry.Item, other)) && !entries.Any(entry => ReferenceEquals(entry.Item, machineItem)),
+            "stock search is independent of customer acceptance and excludes machines");
         var reservedEntry = entries.Single(entry => ReferenceEquals(entry.Item, reserved));
-        var machineEntry = entries.Single(entry => ReferenceEquals(entry.Item, machineItem));
-        Check(reservedEntry.StatusLabel == "f11.reserved" && machineEntry.StatusLabel == "f11.in_use" &&
-            reservedEntry.SourceLabel == "Stock" && reservedEntry.QuoteLabel == "f11.unquoted",
-            "query retains reserved and machine-source status");
-        Check(entries.Single(entry => ReferenceEquals(entry.Item, ordinary)).QuoteLabel == "last quote 37",
-            "source, status and last quote are separate card values");
+        Check(reservedEntry.StatusLabel == "f11.pinned" && reservedEntry.SourceLabel == "Stock",
+            "query retains pinned status and its source");
         Check(entries.Single(entry => ReferenceEquals(entry.Item, ordinary)).TooltipHint == "f11.drag_tip" &&
-            reservedEntry.TooltipHint == "f11.locate_tip" && machineEntry.TooltipHint == "f11.locate_tip" &&
-            !reservedEntry.Draggable && !machineEntry.Draggable &&
+            reservedEntry.TooltipHint == "f11.locate_tip" && !reservedEntry.Draggable &&
             entries.Single(entry => ReferenceEquals(entry.Item, custom)).StatusLabel == ShopSettings.Format("f11.partial", 1) &&
             !entries.Single(entry => ReferenceEquals(entry.Item, custom)).Draggable,
-            "full stacks advertise dragging, while reserved, machine and partial stacks remain individually locatable");
-        foreach (var value in new[] { reserved, custom, machineItem })
+            "full stacks advertise dragging, while reserved and partial stacks remain individually locatable");
+        foreach (var value in new[] { reserved, custom })
         {
             ItemGrid.LastOptions.OnClick(ItemGrid.LastEntries.Single(entry => ReferenceEquals(entry.Item, value)));
             Check(value.rotator.transform.Find("ShopAssist_LocateOutline") != null,
@@ -103,7 +94,7 @@ internal static class CustomerInventoryTests
         Time.unscaledTime += .6f; inventoryView.Tick();
         Check(ItemGrid.LastEntries.All(entry => entry.PurchaseLabel == null), "disabling comparison removes the purchase row");
         Check(!ItemGrid.LastOptions.CanDrop(ItemGrid.LastEntries.Single(entry => ReferenceEquals(entry.Item, reserved)), stock, new GridShape()),
-            "a reserved item cannot be moved from the customer list");
+            "a reserved item cannot be moved from stock search");
         var liveWindow = CustomUIManager.LastWindow;
         var scroll = liveWindow.root.GetComponentInChildren<UnityEngine.UI.ScrollRect>();
         Check(scroll != null, "the list has a scroll view");
@@ -111,42 +102,25 @@ internal static class CustomerInventoryTests
         int draws = ItemGrid.AddCount;
         Time.unscaledTime += .6f; inventoryView.Tick();
         Check(ItemGrid.AddCount == draws, "polling unchanged results does not rebuild item cards");
-        ordinary.hiddenAcceptance = true;
+        ordinary.tags.Add("ITEM_HIDDEN_TAG");
         Time.unscaledTime += .6f; inventoryView.Tick();
         scroll = liveWindow.root.GetComponentInChildren<UnityEngine.UI.ScrollRect>();
         Check(!ItemGrid.LastEntries.Any(entry => ReferenceEquals(entry.Item, ordinary)) &&
             Math.Abs(scroll.verticalNormalizedPosition - .32f) < .001f,
-            "a native refusal refreshes without an invalidation event and keeps scroll");
-        ordinary.hiddenAcceptance = false;
+            "a hidden item is removed without an invalidation event and scroll is preserved");
+        ordinary.tags.Remove("ITEM_HIDDEN_TAG");
         Input.MouseHeld[0] = true; Time.unscaledTime += 1; inventoryView.Tick();
         Check(!ItemGrid.LastEntries.Any(entry => ReferenceEquals(entry.Item, ordinary)), "refresh waits during a pointer press");
         Input.MouseHeld[0] = false; Input.MouseUp[0] = true; inventoryView.Tick();
         Check(!ItemGrid.LastEntries.Any(entry => ReferenceEquals(entry.Item, ordinary)), "refresh waits through pointer release");
         Input.MouseUp[0] = false; inventoryView.Tick();
         Check(ItemGrid.LastEntries.Any(entry => ReferenceEquals(entry.Item, ordinary)), "the deferred result appears after release");
-        quote = "last quote 44"; Time.unscaledTime += .6f; inventoryView.Tick();
-        Check(ItemGrid.LastEntries.Single(entry => ReferenceEquals(entry.Item, ordinary)).QuoteLabel == quote,
-            "quote changes independently trigger a new snapshot");
         UIDragHandler.isDraggingAnyUI = true; ordinary.name = "renamed"; Time.unscaledTime += .6f; inventoryView.Tick();
         Check(ItemGrid.LastEntries.Single(entry => ReferenceEquals(entry.Item, ordinary)).Caption == "ordinary",
             "refresh waits while a UI drag is active");
         UIDragHandler.isDraggingAnyUI = false; inventoryView.Tick();
         Check(ItemGrid.LastEntries.Single(entry => ReferenceEquals(entry.Item, ordinary)).Caption == "renamed",
             "a renamed item updates after the drag");
-
-        var observed = new RichText { nakedText = "Shown [Food]" };
-        CustomerIndicators.TooltipBuilt(custom, observed); CustomerIndicators.TooltipDisplayed(observed);
-        indicators.Tick(); Time.unscaledTime += 1; inventoryView.Tick();
-        Check(ItemGrid.LastEntries.Any(entry => ReferenceEquals(entry.Item, custom)),
-            "observing a tooltip does not change native matching");
-
-        ordinary.hiddenAcceptance = true; CustomerIndicators.DemandDisplayed(client);
-        Time.unscaledTime += 1; inventoryView.Tick();
-        Check(ReferenceEquals(liveWindow, CustomUIManager.LastWindow) &&
-            !ItemGrid.LastEntries.Any(entry => ReferenceEquals(entry.Item, ordinary)),
-            "a changed native refusal updates the list without closing its window");
-        ordinary.hiddenAcceptance = false; CustomerIndicators.DemandDisplayed(client);
-        Time.unscaledTime += 1; inventoryView.Tick();
 
         var stale = ItemGrid.LastEntries.Single(entry => ReferenceEquals(entry.Item, ordinary));
         var actions = ItemGrid.LastOptions;
@@ -184,15 +158,15 @@ internal static class CustomerInventoryTests
         PlayerStore.Instance.currentClientInstance = new StoreClientInstance();
         PlayerStore.Instance.currentClientInstance.client.clientBuyingTagList.Add("WATER");
         indicators.Tick(); Time.unscaledTime += 1; inventoryView.Tick();
-        Check(ReferenceEquals(reopened, CustomUIManager.LastWindow) && reopened.IsAlive && UiLayout.Pages == 1 &&
-            UiLayout.Previous == null && UiLayout.Next == null && ItemGrid.LastEntries.Count == 1 && ReferenceEquals(ItemGrid.LastEntries[0].Item, other),
-            "switching customer updates the existing list, clamps pagination and removes stale goods");
+        Check(ReferenceEquals(reopened, CustomUIManager.LastWindow) && reopened.IsAlive && UiLayout.Pages == 2 &&
+            ItemGrid.LastEntries.Any(entry => ReferenceEquals(entry.Item, ordinary)) &&
+            ItemGrid.LastEntries.Any(entry => ReferenceEquals(entry.Item, other)),
+            "switching customer does not filter or replace the stock search");
         PlayerStore.Instance.runID = "another run"; inventoryView.Tick();
         Check(!reopened.IsAlive, "a changed save identity closes an existing customer view");
         ModHook.LoadInit();
         PlayerStore.Instance.currentClientInstance = null;
-        Check(!indicators.Matches(custom) && inventoryView.CanOpen() && !inventoryView.CanOpenDemand(),
-            "stock search stays available without a customer");
+        Check(inventoryView.CanOpen(), "stock search stays available without a customer");
         var hidden = Add(stock, "hidden", "FOOD"); hidden.tags.Add("ITEM_HIDDEN_TAG");
         var unowned = Add(stock, "unowned", "FOOD"); unowned.isOwned = false;
         var front = Grid(window);
@@ -204,6 +178,12 @@ internal static class CustomerInventoryTests
         var manual = Add(stock, "manual transfer", "FOOD");
         stock.childItems.Remove(manual); stock.childItems.Insert(0, manual);
         inventoryView.Open();
+        settings.Set("f11.purchase", true);
+        Time.unscaledTime += .6f; inventoryView.Tick();
+        Check(ItemGrid.LastEntries.Single(entry => ReferenceEquals(entry.Item, ordinary)).PurchaseLabel == ShopSettings.Format("f11.purchase_record", 0),
+            "stock search retains the purchase comparison");
+        settings.Set("f11.purchase", false);
+        Time.unscaledTime += .6f; inventoryView.Tick();
         Check(ItemGrid.LastEntries.Any(entry => ReferenceEquals(entry.Item, ordinary)) &&
             ItemGrid.LastEntries.Any(entry => ReferenceEquals(entry.Item, other)) &&
             !ItemGrid.LastEntries.Any(entry => ReferenceEquals(entry.Item, machineItem) || ReferenceEquals(entry.Item, hidden) ||
@@ -230,9 +210,9 @@ internal static class CustomerInventoryTests
         Check(!stockActions.CanDrop(stockEntry, front, pose), "a newly hidden source cannot be moved");
         ordinary.tags.Remove("ITEM_HIDDEN_TAG"); ordinary.isOwned = false;
         Check(!stockActions.CanDrop(stockEntry, front, pose), "a source that lost ownership cannot be moved");
-        ordinary.isOwned = true; RequestBook.Reservations.Add(ordinary);
+        ordinary.isOwned = true; ItemPinHelper.Pinned.Add(ordinary);
         Check(!stockActions.CanDrop(stockEntry, front, pose), "a newly reserved source cannot be moved");
-        RequestBook.Reservations.Remove(ordinary);
+        ItemPinHelper.Pinned.Remove(ordinary);
         stock.childItems.Remove(ordinary);
         Check(!stockActions.CanDrop(stockEntry, front, pose), "the item must still belong to its original source list");
         stock.childItems.Insert(0, ordinary);
@@ -261,19 +241,19 @@ internal static class CustomerInventoryTests
         ordinary.tags.Add("ITEM_HIDDEN_TAG"); ShopNotice.Last = null;
         stockActions.OnReject(stockEntry, closedGrid, pose);
         Check(ShopNotice.Last == "inv.changed", "a hidden source takes precedence over target refusal");
-        ordinary.tags.Remove("ITEM_HIDDEN_TAG"); RequestBook.Reservations.Add(ordinary); ShopNotice.Last = null;
+        ordinary.tags.Remove("ITEM_HIDDEN_TAG"); ItemPinHelper.Pinned.Add(ordinary); ShopNotice.Last = null;
         stockActions.OnReject(stockEntry, closedGrid, pose);
         Check(ShopNotice.Last == "inv.changed", "a newly reserved source is reported as changed");
-        RequestBook.Reservations.Remove(ordinary); ShopNotice.Last = null;
+        ItemPinHelper.Pinned.Remove(ordinary); ShopNotice.Last = null;
         stockActions.OnReject(stockEntry, null, null);
         Check(ShopNotice.Last == "f11.move_manual", "an explicitly rejected non-inventory target offers manual location");
         ItemGridMove.Allowed = true;
         Check(stockActions.CanDropTarget(stockEntry, front, frontItem, pose), "the pointed resident is passed as the exact merge target");
-        RequestBook.Reservations.Add(frontItem);
+        ItemPinHelper.Pinned.Add(frontItem);
         Check(!stockActions.CanDropTarget(stockEntry, front, frontItem, pose), "a reserved pointed target is rejected");
         stockActions.OnRejectTarget(stockEntry, front, frontItem, pose);
-        Check(ShopNotice.Last == "f11.target_reserved", "a reserved destination gets its own explanation");
-        RequestBook.Reservations.Remove(frontItem);
+        Check(ShopNotice.Last == "f11.target_pinned", "a pinned destination gets its own explanation");
+        ItemPinHelper.Pinned.Remove(frontItem);
         frontItem.stackRoom = 0;
         stockActions.OnRejectTarget(stockEntry, front, frontItem, pose);
         Check(ShopNotice.Last == "f11.stack_full", "an insufficient pointed stack is reported as full");
@@ -330,10 +310,6 @@ internal static class CustomerInventoryTests
         search.SetInput("query", "front watch");
         Check(ItemGrid.LastEntries.Any(entry => ReferenceEquals(entry.Item, frontItem)), "other accessible roots remain searchable");
         InventoryLockFake.Locked.Clear();
-        PlayerStore.Instance.currentClientInstance = new StoreClientInstance { client = client };
-        indicators.Tick(); inventoryView.OpenDemand();
-        Check(ItemGrid.LastEntries.Any(entry => ReferenceEquals(entry.Item, custom)),
-            "native matching works after reload without reusing tooltip observations");
         var dragWindow = CustomUIManager.LastWindow;
         dragWindow.SetInput("query", "custom");
         var dragScroll = dragWindow.root.GetComponentInChildren<UnityEngine.UI.ScrollRect>();
@@ -352,10 +328,10 @@ internal static class CustomerInventoryTests
         dragWindow.Close();
         Check(!ItemGrid.DragActive && Math.Abs(group.alpha - .75f) < .001f && group.blocksRaycasts,
             "closing the window cancels its drag and restores raycasts and opacity");
-        inventoryView.OpenDemand();
+        inventoryView.Open();
         Check(CustomUIManager.LastWindow.IsAlive && ItemGrid.LastEntries.Count > 0, "reopening after close builds a fresh live view");
-        Check(errors.Count == 0, "customer query and locate should not log errors");
-        RequestBook.Reservations.Clear();
+        Check(errors.Count == 0, "stock query and locate should not log errors");
+        ItemPinHelper.Pinned.Clear();
         ShopInventory.SearchableLock = null;
     }
 
@@ -366,7 +342,7 @@ internal static class CustomerInventoryTests
         PlayerStore.Instance = new PlayerStore { currentClientInstance = null };
         NegociationUIManager.Instance = new NegociationUIManager();
         ShopInventory.InStore = true;
-        ShopInventory.Locations.Clear(); RequestBook.Reservations.Clear();
+        ShopInventory.Locations.Clear(); ItemPinHelper.Pinned.Clear();
         var window = new PixelWindow(); WindowsHandler.current.visibleWindows.Add(window);
         var stock = Grid(window);
         ShopInventory.Locations.Add(new ShopInventory.Location { Inventory = stock, Ordinary = true, Name = "Stock" });
@@ -442,6 +418,6 @@ internal static class CustomerInventoryTests
             "locating an already selected page does not invoke selection again");
         NativeQueryAndLocate();
         LargeStockSnapshot();
-        Console.WriteLine($"Customer inventory query / locate / native demand: {assertions} assertions passed.");
+        Console.WriteLine($"Stock inventory query / locate / drag: {assertions} assertions passed.");
     }
 }

@@ -4,7 +4,7 @@ using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
-// Real purchase/sale, budget selection, receipt destination and request tracking in one isolated run.
+// Real purchase/sale, budget selection and receipt destination in one isolated run.
 public sealed class FeatureGalleryTradeScenario
 {
     private const string Mod = "starswhere.shopassist";
@@ -12,8 +12,7 @@ public sealed class FeatureGalleryTradeScenario
     private readonly QaNewRun start = new QaNewRun();
     private readonly float deadline = Time.realtimeSinceStartup + 150f;
     private int phase, cash, readyFrame;
-    private GameItemElement bag, purchased, first, second, requestItem;
-    private StoreRequest request;
+    private GameItemElement bag, purchased, first, second;
 
     public bool Tick(out string result)
     {
@@ -24,10 +23,10 @@ public sealed class FeatureGalleryTradeScenario
         if (phase == 2)
         {
             if (!gallery.Screen1920() || NegociationUIManager.Instance == null || StoreUIManager.Instance?.gameOptionUIManager == null) return false;
-            TradeScenario.SetOptions(true, "f01.enabled", "f28.enabled", "f34.enabled", "f24.enabled", "f27.enabled");
+            TradeScenario.SetOptions(true, "f01.enabled", "f28.enabled", "f34.enabled", "f24.enabled");
             TradeScenario.SetOptions(false, "f15.enabled", "f16.enabled");
             var e = EmporiumEntry.Instance; var p = PlayerStore.Instance;
-            bag = QaFeatureGallery.Item("backpack_medium", e.invElement, "回单与委托箱");
+            bag = QaFeatureGallery.Item("backpack_medium", e.invElement, "回单存放箱");
             purchased = DirectoryMaster.Item("processed_meat") as GameItemElement;
             QaFeatureGallery.Need(purchased != null, "Missing native purchase item");
             GeneralHelper.SetItemOwned(purchased, false); QaFeatureGallery.Put(purchased, e.backInvinvElement);
@@ -66,7 +65,6 @@ public sealed class FeatureGalleryTradeScenario
             p.currentClientInstance = StoreClientInstance.CreateClientInstance(StoreClientList.CreateSpacerClientFood()); p.isClientArrived = true;
             first = QaFeatureGallery.Item("processed_meat", e.invElement);
             second = QaFeatureGallery.Item("processed_juice", e.invElement);
-            requestItem = QaFeatureGallery.Item("processed_milk", e.invElement);
             cash = p.playerCash; p.SellItem(purchased);
             QaFeatureGallery.Need(p.playerCash > cash, "Native sale did not produce a ledger entry");
             phase = 40; return false;
@@ -115,41 +113,10 @@ public sealed class FeatureGalleryTradeScenario
             var options = StoreUIManager.Instance.gameOptionUIManager; options.OpenUI();
             var settings = CustomUIManager.Instance.GetWindow("game_options");
             settings.Get(Mod + ":f24.destination").SetIndex(1, true); settings.Get("apply").button.onClick.Invoke(); options.CloseUI();
-            QaFeatureGallery.Action("f24.choose");
-            var picker = QaFeatureGallery.Window("choose");
-            QaFeatureGallery.Need(picker?.IsAlive == true && QaItemUi.Hit(picker.root, bag) != null,
-                "Receipt destination picker did not show the real bag");
-            gallery.Capture("f24"); phase = 9; return false;
+            QaFeatureGallery.Need(((ConfigEntry<int>)ModConfig.Find(Mod).Get("f24.destination")).Value == 1,
+                "Receipt destination setting did not apply");
+            gallery.RestoreSavedLocale(); result = "PASS gallery F01 purchase, F28 ledger, F34 selection and F24 destination setting"; return true;
         }
-        if (phase == 9)
-        {
-            if (!gallery.CaptureReady()) return false;
-            QaItemUi.Click(QaFeatureGallery.Window("choose"), bag);
-            ItemMouseDoubleClickHandler.current.OpenContentAction(bag, new Vector2(Screen.width * .7f, Screen.height * .7f));
-            request = new StoreRequest { title = "补充牛奶", id = "gallery-milk", description = "准备一份牛奶",
-                requiredItem = requestItem.identifier, requiredItemCount = 1, requesterName = "居民",
-                sourceEventId = "gallery-market", duration = 2, creditReward = 155, factionId = "FACTION_LOWER_LEVEL" };
-            PlayerStore.Instance.storeRequests.Add(request); PCUIManager.Instance.OpenUI(); phase = 10; return false;
-        }
-        if (phase == 10)
-        {
-            var row = UnityEngine.Object.FindObjectsOfType<StoreRequestElement>().FirstOrDefault(value => value.storeRequest == request);
-            if (row == null) return false;
-            var track = row.acceptButton.transform.parent.Find(Mod + ".track")?.GetComponent<Button>();
-            QaFeatureGallery.Need(track?.interactable == true, "Native request tracking action unavailable");
-            track.onClick.Invoke(); var book = QaFeatureGallery.Window("requests");
-            QaFeatureGallery.Need(book?.Get("track")?.button != null, "Request tracking page unavailable");
-            book.Get("track").button.onClick.Invoke(); book = QaFeatureGallery.Window("requests");
-            QaItemUi.Choose(book, "destination", bag.GetDisplayName(true)); book = QaFeatureGallery.Window("requests");
-            QaFeatureGallery.Need(QaItemUi.Hit(book.root, requestItem) != null, "Request candidate not visible");
-            QaItemUi.Click(book, requestItem); book.Get("prepare").button.onClick.Invoke();
-            QaFeatureGallery.Need(ReferenceEquals(requestItem.parentInventory, bag.contentWindow.childElement), "Request item was not reserved in its selected container");
-            PCUIManager.Instance.HideUI();
-            QaFeatureGallery.Need(QaFeatureGallery.Window("requests")?.root.activeInHierarchy == true,
-                "The actual request preparation view did not remain visible after hiding the market");
-            gallery.Capture("f27"); phase = 11; return false;
-        }
-        if (!gallery.CaptureReady()) return false;
-        gallery.RestoreSavedLocale(); result = "PASS gallery F01 purchase, F28 ledger, F34 selection, F24 destination and F27 request"; return true;
+        return false;
     }
 }

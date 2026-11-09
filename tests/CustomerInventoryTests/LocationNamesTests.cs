@@ -95,6 +95,28 @@ internal static class LocationNamesTests
         Check(!(bool)offered.Invoke(null, new[] { supplier, otherRunFirst }), "a changed containment path invalidates a stale selection");
 
         var safety = typeof(ShopAssist.ModEntry).Assembly.GetType("ShopAssist.InventoryAutoInsert", true);
+        var liquid = typeof(ShopAssist.ModEntry).Assembly.GetType("ShopAssist.LiquidKnowledge", true);
+        foreach (Type guarded in new[] { safety, liquid })
+        {
+            MethodInfo verified = guarded.GetMethod("VerifiedGameBuild", Flags);
+            foreach (string build in new[] { "83045710-adce-4e78-8ff1-b43a9399ec0d", "efd8b252-19aa-489b-96d3-e172c92c0b75",
+                "911508a6-e0eb-4cc0-91e8-e14b16ea28d7" })
+                Check((bool)verified.Invoke(null, new object[] { new Guid(build) }), guarded.Name + " must accept the verified build " + build);
+            Check(!(bool)verified.Invoke(null, new object[] { Guid.Empty }), guarded.Name + " must reject unknown builds");
+        }
+        var basket = typeof(ShopAssist.ModEntry).Assembly.GetType("ShopAssist.CustomerBasket", true);
+        MethodInfo verifiedCounter = basket.GetMethod("VerifiedCounterGameBuild", Flags);
+        foreach (string build in new[] { "efd8b252-19aa-489b-96d3-e172c92c0b75", "911508a6-e0eb-4cc0-91e8-e14b16ea28d7" })
+            Check((bool)verifiedCounter.Invoke(null, new object[] { new Guid(build) }), "counter staging must accept verified build " + build);
+        foreach (Guid build in new[] { Guid.Empty, new Guid("83045710-adce-4e78-8ff1-b43a9399ec0d") })
+            Check(!(bool)verifiedCounter.Invoke(null, new object[] { build }), "counter staging must reject unaudited builds");
+        var counterMethods = (MethodBase[])basket.GetField("CounterMethods", Flags).GetValue(null);
+        Check(Array.TrueForAll(counterMethods, method => method != null), "every guarded native counter method must resolve");
+        var counterOwner = typeof(GameItem).Assembly.GetType("EmporiumEntry+<>c", true);
+        foreach (string method in new[] { "<Start>b__184_7", "<Start>b__184_16", "<Start>b__184_17", "<Start>b__184_18" })
+            Check(counterOwner.GetMethod(method, Flags) != null, "the native counter callback must exist: " + method);
+        foreach (string method in new[] { "<CompleteClientCreation>b__143_0", "<CompleteClientCreation>b__143_1", "<CompleteClientCreation>b__143_2" })
+            Check(typeof(StoreClient).GetMethod(method, Flags) != null, "the native customer callback must exist: " + method);
         var mutations = (MethodBase[])safety.GetField("NativeMutations", Flags).GetValue(null);
         Check(Array.TrueForAll(mutations, method => method != null), "every guarded native transfer method must resolve");
         Check((bool)safety.GetMethod("KnownMutationPatches", Flags).Invoke(null, null),
@@ -108,6 +130,20 @@ internal static class LocationNamesTests
         Check((bool)checkCallbacks.Invoke(null, new object[] { nativeCallback, allow }), "verified native callbacks are recognized");
         Func<GameItem, GameItem, bool> injected = (_, _) => true;
         Check(!(bool)checkCallbacks.Invoke(null, new object[] { injected, allow }), "unknown callback assemblies are rejected");
+
+        var outingOwner = typeof(GameItem).Assembly.GetType("EmporiumEntry+<>c", true);
+        var outingTarget = RuntimeHelpers.GetUninitializedObject(outingOwner);
+        string outingVersion = typeof(GameItem).Module.ModuleVersionId == new Guid("83045710-adce-4e78-8ff1-b43a9399ec0d") ? "280" : "284";
+        MethodInfo outingCheck = safety.GetMethod("OutingCallback", Flags);
+        for (int ordinal = 0; ordinal < 2; ordinal++)
+        {
+            var method = outingOwner.GetMethod("<SetupAfterhourInv>b__" + outingVersion + "_" + ordinal, Flags);
+            Check(method != null, "the expected native outing callback must exist");
+            Type callbackType = ordinal == 0 ? typeof(Func<GameItem, GameInventory, bool>) : typeof(Func<GameItem, GameInventory, SlotMarker, int>);
+            var callback = Delegate.CreateDelegate(callbackType, outingTarget, method);
+            Check((bool)outingCheck.Invoke(null, new object[] { callback, ordinal }), "the native outing callback must be recognized");
+            Check(!(bool)outingCheck.Invoke(null, new object[] { callback, 1 - ordinal }), "the wrong outing callback must be rejected");
+        }
 
         var gunOwner = typeof(GameItem).Assembly.GetType("GunModDirectory+<>c", true);
         var gunTarget = RuntimeHelpers.GetUninitializedObject(gunOwner);

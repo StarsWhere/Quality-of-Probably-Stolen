@@ -149,7 +149,7 @@ public class StockSearchScenario
                     "Stock-search fixture already has persistent IDs before browsing: " + string.Join(",", originalIds));
                 action.Select();
                 var window = Search();
-                Need(window?.IsAlive == true && window.Get("all")?.button != null && window.Get("demand")?.button != null &&
+                Need(window?.IsAlive == true &&
                     player.currentClientInstance == null && !player.isClientArrived, "Direct warehouse search did not open without a customer");
                 SetQuery(window, query.ToUpperInvariant());
                 waitUntil = Time.unscaledTime + .7f; step = 3; return false;

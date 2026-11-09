@@ -1,10 +1,12 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Reflection;
+using TMPro;
 using UnityEngine;
 
-// A fresh run exercises the actual F11 cards and compares their estimates with native counter prices.
+// A fresh run exercises F34 quote cards and compares their estimates with native counter prices.
 public sealed class CustomerQuoteScenario
 {
     private const string Mod = "starswhere.shopassist";
@@ -12,19 +14,19 @@ public sealed class CustomerQuoteScenario
     private readonly QaNewRun start = new QaNewRun();
     private readonly float deadline = Time.realtimeSinceStartup + 120f;
     private readonly string token = Guid.NewGuid().ToString("N").Substring(0, 6);
-    private GameItem meat, stack, bag, nested;
+    private GameItem meat, stack, bag, nested, excludedItem;
     private StoreClient buyer;
     private int step, callbackCount, meatEstimate, nestedEstimate, bagEstimate, stackEstimate, secondEstimate, cash;
+    private int pages;
+    private GameItem[] expectedItems;
+    private int[] expectedPrices;
+    private readonly HashSet<GameItem> found = new HashSet<GameItem>();
+    private bool counterQuote, seekFirstPage;
     private float since;
 
     private static void Need(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
-    private static CustomUIWindow Window() => CustomUIManager.Instance.GetWindow(Mod + ".customer_inventory");
+    private static CustomUIWindow Window() => CustomUIManager.Instance.GetWindow(Mod + ".basket");
     private static object Field(object target, string name) => target?.GetType().GetField(name, Flags)?.GetValue(target);
-    private static string CardQuote(GameItem item)
-    {
-        var hit = Window() == null ? null : QaItemUi.Hit(Window().root, item);
-        return Field(Field(hit, "entry"), "QuoteLabel") as string;
-    }
     private static string Label(bool onCounter, int value) => ModHelper.GetLocalized(Mod, onCounter ? "f11.quoted" : "f11.estimated", value);
 
     private static int Quote(GameItem item, StoreClient client, bool expectedCounter)
@@ -66,18 +68,52 @@ public sealed class CustomerQuoteScenario
             "Could not move fixture " + item.identifier + " × " + item.unitCount);
     }
     private void Advance(int next) { step = next; since = Time.realtimeSinceStartup; }
-    private void OpenList()
+    private void BeginCards(GameItem[] items, int[] prices, bool onCounter, GameItem excluded = null)
     {
-        RoutingScenario.RunFeatureAction("f11.open");
+        Need(items.Length == prices.Length && items.Length > 0, "Invalid quote card expectations");
+        RoutingScenario.RunFeatureAction("f34.open");
         var list = Window();
-        var demand = list?.Get("demand")?.button;
-        Need(list?.IsAlive == true && demand != null && demand.interactable, "F11 demand mode is unavailable");
-        demand.onClick.Invoke();
+        Need(list?.IsAlive == true && list.Get("compare")?.button != null, "F34 selection did not open");
+        expectedItems = items; expectedPrices = prices; counterQuote = onCounter; excludedItem = excluded;
+        found.Clear(); pages = 0; seekFirstPage = true;
     }
-    private void RequireCard(GameItem item, int price, bool counter)
+    private bool CheckCards()
     {
-        string actual = CardQuote(item), expected = Label(counter, price);
-        Need(actual == expected, item.identifier + " F11 price: expected=" + expected + ", actual=" + actual);
+        var list = Window();
+        Need(list?.IsAlive == true, "F34 selection closed while checking quotes");
+        Need(++pages <= 1024, "F34 pagination did not reach the expected cards");
+        Need(excludedItem == null || QaItemUi.Hit(list.root, excludedItem) == null,
+            "F34 selection included the important backpack");
+        for (int i = 0; i < expectedItems.Length; i++)
+        {
+            var item = expectedItems[i];
+            if (found.Contains(item)) continue;
+            var hit = QaItemUi.Hit(list.root, item);
+            if (hit == null) continue;
+            var entry = Field(hit, "entry");
+            string actual = Field(entry, "QuoteLabel") as string, expected = Label(counterQuote, expectedPrices[i]);
+            Need(Field(entry, "Enabled") is bool enabled && enabled && actual == expected &&
+                hit.transform.parent?.parent?.GetComponentsInChildren<TMP_Text>(true)
+                    .Any(text => text.isActiveAndEnabled && text.text == expected) == true,
+                item.identifier + " F34 price: expected=" + expected + ", actual=" + actual);
+            found.Add(item);
+        }
+        if (found.Count == expectedItems.Length && excludedItem == null) return true;
+        if (seekFirstPage)
+        {
+            var previous = list.Get("previous")?.button;
+            if (previous != null && previous.interactable) { previous.onClick.Invoke(); return false; }
+            seekFirstPage = false;
+        }
+        var next = list.Get("next")?.button;
+        if (next == null || !next.interactable)
+        {
+            Need(found.Count == expectedItems.Length, "F34 selection omitted quote cards: " +
+                string.Join(", ", expectedItems.Where(item => !found.Contains(item)).Select(item => item.identifier)));
+            return true;
+        }
+        next.onClick.Invoke();
+        return false;
     }
     private void CheckCounter(GameItem item, int estimate)
     {
@@ -98,8 +134,8 @@ public sealed class CustomerQuoteScenario
         {
             if (e?.storeInteractables?.activeInHierarchy != true || StoreUIManager.Instance?.gameOptionUIManager == null ||
                 NegociationUIManager.Instance == null) return false;
-            TradeScenario.SetOptions(true, "f11.enabled");
-            TradeScenario.SetOptions(false, "f03.enabled", "f34.enabled", "f11.purchase");
+            TradeScenario.SetOptions(true, "f34.enabled");
+            TradeScenario.SetOptions(false, "f03.enabled", "f11.purchase");
             meat = Make("processed_meat", "QA quote meat", e.invElement);
             bag = Make("backpack_medium", "QA quote bag", e.invElement);
             var inside = bag.contentWindow?.childElement as GameGridInventory;
@@ -112,6 +148,8 @@ public sealed class CustomerQuoteScenario
             QaNativeStackFixture.PutWhole(e.invElement, stack);
             buyer = StoreClientList.CreateSpacerClientFood(); buyer.SetBudget(50000); buyer.isIntroduced = true;
             buyer.clientBuyingIdList.Add(bag.identifier); buyer.clientBuyingIdList.Add(stack.identifier);
+            Need(bag.IsTag("IMPORTANT_TAG") && buyer.IsClientBuyingThisItem(bag),
+                "The native backpack fixture must be important and accepted by the buyer");
             buyer.onItemAddedToWeighted += _ => callbackCount++;
             p.currentClientInstance = StoreClientInstance.CreateClientInstance(buyer); p.isClientArrived = true;
             NegociationUIManager.Instance.OpenUI();
@@ -129,14 +167,18 @@ public sealed class CustomerQuoteScenario
                 items.Select(ItemSnapshot).SequenceEqual(before) && items.Select(item => item.parentInventory).SequenceEqual(parents) &&
                 items.Select((item, index) => item.itemFeatures.SequenceEqual(features[index])).All(same => same),
                 "A warehouse estimate changed item data, global IDs, budget, cash, parent, features or invoked a customer callback");
-            OpenList(); Advance(2); return false;
+            Advance(2); return false;
         }
         if (step == 2)
         {
             if (Time.realtimeSinceStartup - since < .8f) return false;
-            RequireCard(meat, meatEstimate, false); RequireCard(bag, bagEstimate, false);
-            RequireCard(nested, nestedEstimate, false); RequireCard(stack, stackEstimate, false);
-            Need(!bag.contentWindow.IsVisible() && stack.unitCount == 10, "F11 opened the bag or changed the stack");
+            BeginCards(new[] { meat, nested, stack }, new[] { meatEstimate, nestedEstimate, stackEstimate }, false, bag);
+            Advance(20); return false;
+        }
+        if (step == 20)
+        {
+            if (!CheckCards()) return false;
+            Need(!bag.contentWindow.IsVisible() && stack.unitCount == 10, "F34 opened the bag or changed the stack");
             int before = callbackCount;
             CheckCounter(meat, meatEstimate);
             Need(callbackCount > before, "Real counter placement did not invoke the native customer callback fixture");
@@ -145,19 +187,29 @@ public sealed class CustomerQuoteScenario
         if (step == 3)
         {
             if (Time.realtimeSinceStartup - since < .8f) return false;
-            RequireCard(meat, meatEstimate, true);
+            BeginCards(new[] { meat }, new[] { meatEstimate }, true); Advance(30); return false;
+        }
+        if (step == 30)
+        {
+            if (!CheckCards()) return false;
             Move(meat, e.invElement); CheckCounter(bag, bagEstimate); Advance(4); return false;
         }
         if (step == 4)
         {
             if (Time.realtimeSinceStartup - since < .8f) return false;
-            RequireCard(bag, bagEstimate, true);
+            Need(ReferenceEquals(bag.parentInventory, e.backInvinvElement) && buyer.IsClientBuyingThisItem(bag) &&
+                Quote(bag, buyer, true) == bagEstimate && bag.GetNegociatedValue() == bagEstimate,
+                "The accepted important backpack's native counter quote changed");
             Move(bag, e.invElement); CheckCounter(nested, nestedEstimate); Advance(5); return false;
         }
         if (step == 5)
         {
             if (Time.realtimeSinceStartup - since < .8f) return false;
-            RequireCard(nested, nestedEstimate, true);
+            BeginCards(new[] { nested }, new[] { nestedEstimate }, true); Advance(50); return false;
+        }
+        if (step == 50)
+        {
+            if (!CheckCards()) return false;
             Move(nested, (GameGridInventory)bag.contentWindow.childElement);
             // Native desk slots accept one unit. Vary the count on the intact QA stack,
             // then compare the same ten-unit object after native counter placement.
@@ -170,7 +222,11 @@ public sealed class CustomerQuoteScenario
         if (step == 6)
         {
             if (Time.realtimeSinceStartup - since < .8f) return false;
-            RequireCard(stack, stackEstimate, true);
+            BeginCards(new[] { stack }, new[] { stackEstimate }, true); Advance(60); return false;
+        }
+        if (step == 60)
+        {
+            if (!CheckCards()) return false;
             stack.SetStack(1); Move(stack, e.invElement); stack.SetStack(10);
             NegociationUIManager.Instance.CloseUI();
             buyer = StoreClientList.CreateSpacerClientFood(); buyer.SetBudget(50000); buyer.isIntroduced = true; buyer.perfumeInfluence = 2;
@@ -183,11 +239,24 @@ public sealed class CustomerQuoteScenario
         if (step == 7)
         {
             if (Time.realtimeSinceStartup - since < .8f) return false;
-            OpenList(); RequireCard(meat, secondEstimate, false); CheckCounter(meat, secondEstimate); Advance(8); return false;
+            BeginCards(new[] { meat }, new[] { secondEstimate }, false); Advance(70); return false;
         }
-        if (Time.realtimeSinceStartup - since < .8f) return false;
-        RequireCard(meat, secondEstimate, true);
-        result = "PASS F11 warehouse estimates and native counter prices, nested contents, stack quantity, customer change and side-effect-free preview";
-        return true;
+        if (step == 70)
+        {
+            if (!CheckCards()) return false;
+            CheckCounter(meat, secondEstimate); Advance(8); return false;
+        }
+        if (step == 8)
+        {
+            if (Time.realtimeSinceStartup - since < .8f) return false;
+            BeginCards(new[] { meat }, new[] { secondEstimate }, true); Advance(80); return false;
+        }
+        if (step == 80)
+        {
+            if (!CheckCards()) return false;
+            result = "PASS F34 paginated estimates and native counter prices, nested contents, stack quantity, customer change and side-effect-free preview";
+            return true;
+        }
+        throw new InvalidOperationException("Unknown customer quote QA step " + step);
     }
 }

@@ -12,6 +12,7 @@ namespace ShopAssist
     internal sealed class AreaLabels : IDisposable
     {
         private static AreaLabels current;
+        internal static Func<PixelWindow, float> RoutingHeaderInset;
 
         private sealed class Label
         {
@@ -249,8 +250,9 @@ namespace ShopAssist
             RectTransform rect = label.Root.rectTransform;
             rect.anchorMin = rect.anchorMax = new Vector2(0f, 1f);
             rect.pivot = new Vector2(0f, 1f);
-            rect.anchoredPosition = new Vector2(4f, -2f);
-            rect.sizeDelta = new Vector2(Mathf.Max(0f, window.widthPixels - 26f), height);
+            float inset = RoutingHeaderInset?.Invoke(window) ?? 0f;
+            rect.anchoredPosition = new Vector2(4f + inset, -2f);
+            rect.sizeDelta = new Vector2(Mathf.Max(0f, window.widthPixels - 26f - inset), height);
             Apply(label, heading, height);
             label.Root.gameObject.SetActive(true);
         }

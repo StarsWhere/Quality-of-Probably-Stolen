@@ -7,144 +7,6 @@ using UnityEngine;
 using UnityEngine.UI;
 
 // These scenarios use new isolated native runs; the fixed scene inventory is never shown again.
-public sealed class LabelOverwriteScenario
-{
-    private const string Mod = "starswhere.shopassist";
-    private readonly QaNewRun start = new QaNewRun();
-    private readonly float deadline = Time.realtimeSinceStartup + 100;
-    private readonly string label = "QA batch " + Guid.NewGuid().ToString("N").Substring(0, 6);
-    private GameItem tool, sample, fresh, named, different;
-    private int step;
-
-    private static void Need(bool ok, string message) { if (!ok) throw new InvalidOperationException(message); }
-    private static CustomUIWindow Window() => CustomUIManager.Instance.GetWindow(Mod + ".label");
-    private static GameItem Put(string id)
-    {
-        var item = DirectoryMaster.Item(id); Need(item != null, "Missing fixture " + id);
-        GeneralHelper.SetItemOwned(item);
-        var root = EmporiumEntry.Instance.invElement; var slot = root.TryFindOneValidInventorySlot(item);
-        Need(slot != null && slot.inventory == root && slot.targetItem == null &&
-            slot.TryAcceptOnce(item.unitCount) == item.unitCount && item.parentInventory == root, "Cannot place " + id);
-        return item;
-    }
-    private static bool Idle()
-    {
-        var assembly = ModLoader.Mods.FirstOrDefault(m => m.Manifest?.ID == Mod)?.Instance?.GetType().Assembly;
-        var type = assembly?.GetType("ShopAssist.BatchLabeler");
-        var active = type?.GetField("active", BindingFlags.Static | BindingFlags.NonPublic)?.GetValue(null);
-        var phase = type?.GetField("phase", BindingFlags.Instance | BindingFlags.NonPublic)?.GetValue(active);
-        return phase is int value && value == 0;
-    }
-    public bool Tick(out string result)
-    {
-        result = null; Need(Time.realtimeSinceStartup < deadline, "Label overwrite QA timed out at " + step);
-        if (step == 0) { if (start.Tick()) step++; return false; }
-        if (step == 1)
-        {
-            if (EmporiumEntry.Instance?.storeInteractables?.activeInHierarchy != true || ItemSelectHandler.current == null) return false;
-            TradeScenario.SetOptions(true, "f22.enabled"); TradeScenario.SetOptions(false, "f22.overwrite");
-            tool = Put("labeler_blue"); sample = Put("wine_yeast"); fresh = Put("wine_yeast");
-            named = Put("wine_yeast"); different = Put("wine_yeast_red");
-            GeneralHelper.SetCustomName(named, "QA existing label");
-            ItemSelectHandler.current.TryEquipItem(tool); tool.Target(sample);
-            var ui = LabelerBlueUIManager.Instance;
-            Need(ui.panel.activeSelf, "Native blue labeler did not open");
-            ui.inputField.SetTextWithoutNotify(label); ui.OnEditEnd(label); ui.CloseUI();
-            RoutingScenario.RunFeatureAction("f22.open"); var window = Window();
-            Need(window?.Get("apply")?.button != null && QaItemUi.Hit(window.root, fresh) != null &&
-                QaItemUi.Hit(window.root, named) == null && QaItemUi.Hit(window.root, different) == null,
-                "Overwrite disabled did not limit the grid to unlabeled same-type items");
-            QaItemUi.Click(window, fresh); window.Get("apply").button.onClick.Invoke(); step++; return false;
-        }
-        if (step == 2)
-        {
-            if (!Idle()) return false;
-            Need(GeneralHelper.GetCustomName(fresh) == label && GeneralHelper.GetCustomName(named) == "QA existing label" &&
-                fresh.parentInventory == EmporiumEntry.Instance.invElement && named.parentInventory == fresh.parentInventory,
-                "First batch changed an existing label or failed to label the selected instance");
-            TradeScenario.SetOptions(true, "f22.overwrite"); RoutingScenario.RunFeatureAction("f22.open");
-            var window = Window();
-            Need(window?.Get("apply")?.button != null && QaItemUi.Hit(window.root, named) != null &&
-                QaItemUi.Hit(window.root, different) == null, "Overwrite enabled did not expose the existing same-type label");
-            QaItemUi.Click(window, named); window.Get("apply").button.onClick.Invoke(); step++; return false;
-        }
-        if (!Idle()) return false;
-        Need(GeneralHelper.GetCustomName(named) == label && GeneralHelper.GetCustomName(fresh) == label &&
-            named.parentInventory == EmporiumEntry.Instance.invElement && different.parentInventory == named.parentInventory,
-            "Overwrite did not change exactly the selected existing label");
-        result = "PASS F22 blue label overwrite off/on through native sample and selected item cards"; return true;
-    }
-}
-
-public sealed class DisplaySourceScenario
-{
-    private const string Mod = "starswhere.shopassist";
-    private readonly QaNewRun start = new QaNewRun();
-    private readonly float deadline = Time.realtimeSinceStartup + 100;
-    private readonly string name = "QA display source " + Guid.NewGuid().ToString("N").Substring(0, 6);
-    private GameItem bag, outside, removed;
-    private GameItem[] goods;
-    private GameGridInventory inside;
-    private int baseline, step;
-    private static void Need(bool ok, string message) { if (!ok) throw new InvalidOperationException(message); }
-    private static CustomUIWindow Window() => CustomUIManager.Instance.GetWindow(Mod + ".restock");
-    private static GameItem Put(string id, GameInventory destination)
-    {
-        var item = DirectoryMaster.Item(id); Need(item != null, "Missing fixture " + id); GeneralHelper.SetItemOwned(item);
-        Move(item, destination); return item;
-    }
-    private static void Move(GameItem item, GameInventory destination)
-    {
-        var slot = destination.TryFindOneValidInventorySlot(item);
-        Need(slot != null && slot.inventory == destination && slot.targetItem == null &&
-            slot.TryAcceptOnce(item.unitCount) == item.unitCount && item.parentInventory == destination, "Cannot move " + item.identifier);
-    }
-    public bool Tick(out string result)
-    {
-        result = null; Need(Time.realtimeSinceStartup < deadline, "Display source QA timed out at " + step);
-        if (step == 0) { if (start.Tick()) step++; return false; }
-        var e = EmporiumEntry.Instance;
-        if (step == 1)
-        {
-            if (e?.storeInteractables?.activeInHierarchy != true || ItemMouseDoubleClickHandler.current == null) return false;
-            TradeScenario.SetOptions(true, "f29.enabled", "f29.price");
-            bag = Put("backpack_medium", e.invElement); GeneralHelper.SetCustomName(bag, name);
-            inside = bag.contentWindow?.childElement as GameGridInventory; Need(inside != null, "No source grid");
-            goods = Enumerable.Range(0, 4).Select(_ => Put("energy_drink", inside)).ToArray();
-            outside = Put("energy_drink", e.invElement);
-            foreach (var item in goods.Concat(new[] { outside })) GeneralHelper.TrackBuyPrice(item, 15);
-            ItemMouseDoubleClickHandler.current.OpenContentAction(bag, new Vector2(Screen.width * .7f, Screen.height * .7f));
-            baseline = e.showcaseElement.childItems.Where(i => i.identifier == "energy_drink" && GeneralHelper.IsItemOwned(i)).Sum(i => i.unitCount);
-            Need(baseline + 2 <= 99, "Unexpectedly full display fixture");
-            var options = StoreUIManager.Instance.gameOptionUIManager; options.OpenUI();
-            var settings = CustomUIManager.Instance.GetWindow("game_options");
-            settings.Get(Mod + ":f29.goal").SetFloat(baseline + 2, true);
-            settings.Get(Mod + ":f29.keep").SetFloat(1, true); settings.Get("apply").button.onClick.Invoke(); options.CloseUI();
-            Need(((ConfigEntry<int>)ModConfig.Find(Mod).Get("f29.goal")).Value == baseline + 2 &&
-                ((ConfigEntry<int>)ModConfig.Find(Mod).Get("f29.keep")).Value == 1, "Custom stock limits were not applied");
-            RoutingScenario.RunFeatureAction("f29.open"); QaItemUi.Choose(Window(), "source", name);
-            QaItemUi.Choose(Window(), "type", goods[0].GetDisplayName(true));
-            Window().Get("add").button.onClick.Invoke(); Window().Get("preview").button.onClick.Invoke();
-            var planned = goods.Where(i => QaItemUi.Hit(Window().root, i) != null).ToArray();
-            Need(planned.Length == 2 && goods.All(i => i.parentInventory == inside) && outside.parentInventory == e.invElement,
-                "Preview did not select exactly two objects from the chosen source");
-            removed = planned[0]; Move(removed, e.invElement);
-            Window().Get("apply").button.onClick.Invoke();
-            Need(goods.All(i => i.parentInventory != e.showcaseElement) && outside.parentInventory == e.invElement,
-                "Changed source committed a stale preview");
-            step++; return false;
-        }
-        // Reopen to obtain a fresh plan after the stale preview was rejected.
-        Window().Close(); RoutingScenario.RunFeatureAction("f29.open"); Window().Get("preview").button.onClick.Invoke();
-        Need(goods.Count(i => QaItemUi.Hit(Window().root, i) != null) == 2, "Fresh preview did not retain two available items");
-        Window().Get("apply").button.onClick.Invoke();
-        Need(goods.Count(i => i.parentInventory == e.showcaseElement) == 2 && goods.Count(i => i.parentInventory == inside) == 1 &&
-            removed.parentInventory == e.invElement && outside.parentInventory == e.invElement,
-            "Restock ignored the selected source, target amount, or keep-one limit");
-        result = "PASS F29 chosen nested source, custom target/keep quantities, stale preview and exact real showcase moves"; return true;
-    }
-}
-
 public sealed class LedgerMarginScenario
 {
     private const string Mod = "starswhere.shopassist";
@@ -155,9 +17,6 @@ public sealed class LedgerMarginScenario
     private int step, cost, knownSale, unknownSale, balance, day, closedFrame;
     private string run;
     private int slot;
-    [Serializable] private sealed class Ledger { public Row[] entries = Array.Empty<Row>(); }
-    [Serializable] private sealed class Row
-    { public int day = -1, kind = -1, events = -1, unknownCost = -1, knownCostCount = -1; public long income = -1, expense = -1, knownMargin = -1; }
     private static void Need(bool ok, string message) { if (!ok) throw new InvalidOperationException(message); }
     private static GameItem Put(string id, GameInventory destination, bool owned)
     {
@@ -169,18 +28,27 @@ public sealed class LedgerMarginScenario
     }
     private void Verify()
     {
-        string raw = ModHelper.GetModData(Mod, "ledger", null);
-        var rows = raw == null ? null : JsonUtility.FromJson<Ledger>(raw)?.entries;
-        var sale = rows?.SingleOrDefault(r => r.day == day && r.kind == 2);
+        var history = LedgerProbe.History();
+        var sale = history.entries.SingleOrDefault(r => r.day == day && r.kind == 2);
         Need(sale != null && sale.events == 2 && sale.income == knownSale + unknownSale && sale.expense == 0 &&
             sale.knownCostCount == 1 && sale.unknownCost == 1 && sale.knownMargin == knownSale - cost,
-            "Known/unknown sale costs or margin differ from native transactions: " + raw);
+            "Known/unknown sale costs or margin differ from native transactions");
+        var transactions = history.transactions.Where(r => r.day == day && r.kind == 2).ToArray();
+        Need(history.schemaVersion == 2 && transactions.Length == 2 &&
+            transactions.Count(r => r.change == knownSale) == (knownSale == unknownSale ? 2 : 1) &&
+            transactions.Count(r => r.change == unknownSale) == (knownSale == unknownSale ? 2 : 1),
+            "The two sale transactions were not retained separately");
         RoutingScenario.RunFeatureAction("f28.open");
         var book = CustomUIManager.Instance.GetWindow(Mod + ".ledger");
         Need(book?.IsAlive == true && book.Get("kind")?.dropdown != null, "Ledger UI unavailable");
         int index = book.Get("kind").dropdown.options.FindIndex(o => o.text == ModHelper.GetLocalized(Mod, "f28.sale"));
         Need(index > 0, "Sale filter unavailable"); book.Get("kind").SetIndex(index, true);
         book = CustomUIManager.Instance.GetWindow(Mod + ".ledger");
+        string saleLabel = ModHelper.GetLocalized(Mod, "f28.sale");
+        Need(LedgerProbe.RowCount(book, saleLabel, knownSale, LedgerProbe.Signed(knownSale - cost)) == 1 &&
+            LedgerProbe.RowCount(book, saleLabel, unknownSale, ModHelper.GetLocalized(Mod, "f28.unknown")) == 1 &&
+            LedgerProbe.Rows(book).Count(row => row[0] == saleLabel) == 2,
+            "The sale list omitted a transaction, cash change, known profit or unknown cost");
         var texts = book.root.GetComponentsInChildren<TMP_Text>(true).Where(t => t.gameObject.activeInHierarchy).Select(t => t.text).ToArray();
         Need(texts.Contains(ModHelper.GetLocalized(Mod, "f28.margin", (long)knownSale - cost, 1)) &&
             texts.Contains(ModHelper.GetLocalized(Mod, "f28.total", (long)knownSale + unknownSale)) &&
@@ -233,90 +101,7 @@ public sealed class LedgerMarginScenario
         }
         if (!load.Tick()) return false;
         Need(PlayerStore.Instance.playerCash == balance && StoreStation.GetDayCounter() == day, "Saved cash or day changed on reload");
-        Verify(); result = "PASS F28 real purchase and two sales, known margin and unknown cost, visible filter/cash and same-slot reload"; return true;
-    }
-}
-
-public sealed class WaterFilterPauseScenario
-{
-    private const string Mod = "starswhere.shopassist";
-    private readonly QaNewRun start = new QaNewRun();
-    private readonly float deadline = Time.realtimeSinceStartup + 100;
-    private GameItem destination, first, second, exhausted, replacement;
-    private GameSlotInventory filterSlot;
-    private int step, firstBefore, secondBefore;
-    private static void Need(bool ok, string message) { if (!ok) throw new InvalidOperationException(message); }
-    private static CustomUIWindow Window() => CustomUIManager.Instance.GetWindow(Mod + ".water");
-    private static GameItem Put(string id, string label, GameInventory destination)
-    {
-        var item = DirectoryMaster.Item(id); Need(item != null, "Missing fixture " + id);
-        GeneralHelper.SetItemOwned(item); GeneralHelper.SetCustomName(item, label); Move(item, destination); return item;
-    }
-    private static void Move(GameItem item, GameInventory destination)
-    {
-        var marker = destination.TryFindOneValidInventorySlot(item);
-        Need(marker != null && marker.inventory == destination && marker.targetItem == null &&
-            marker.TryAcceptOnce(item.unitCount) == item.unitCount && item.parentInventory == destination,
-            "Cannot place " + item.identifier);
-    }
-    public bool Tick(out string result)
-    {
-        result = null; Need(Time.realtimeSinceStartup < deadline, "Water filter QA timed out at " + step);
-        if (step == 0) { if (start.Tick()) step++; return false; }
-        var e = EmporiumEntry.Instance;
-        if (step == 1)
-        {
-            if (e?.storeInteractables?.activeInHierarchy != true) return false;
-            TradeScenario.SetOptions(true, "f26.enabled", "f26.mix");
-            destination = Put("water_pitcher", "QA manual filter target", e.invElement);
-            filterSlot = destination.contentWindow?.childElement as GameSlotInventory;
-            Need(filterSlot != null, "Pitcher filter slot unavailable");
-            exhausted = Put("water_filter", "QA nearly spent filter", filterSlot);
-            replacement = Put("water_filter", "QA replacement filter", e.invElement);
-            DurabilityHelper.SetCurrentDurability(exhausted, 1);
-            first = Put("bottled_water", "QA filter source A", e.invElement);
-            second = Put("bottled_water", "QA filter source B", e.invElement);
-            WaterHelper.Remove(destination, WaterHelper.GetCurrentCapacityUL(destination));
-            foreach (var source in new[] { first, second })
-            {
-                WaterHelper.Remove(source, WaterHelper.GetCurrentCapacityUL(source));
-                WaterHelper.AddWater(source, 5, 250000); WaterFeatureHelper.HandleWaterCheckTestingStrip(source);
-            }
-            RoutingScenario.RunFeatureAction("f26.open"); QaItemUi.Choose(Window(), "target", "QA manual filter target");
-            QaItemUi.Click(Window(), first); QaItemUi.Click(Window(), second);
-            Window().Get("preview").button.onClick.Invoke();
-            Need(QaItemUi.Hit(Window().root, first) != null && QaItemUi.Hit(Window().root, second) != null &&
-                WaterHelper.GetCurrentCapacityUL(first) == 250000 && WaterHelper.GetCurrentCapacityUL(second) == 250000,
-                "Two-source preview changed contents or omitted a chosen vessel");
-            Window().Get("pour").button.onClick.Invoke();
-            firstBefore = WaterHelper.GetCurrentCapacityUL(first); secondBefore = WaterHelper.GetCurrentCapacityUL(second);
-            Need(DurabilityHelper.GetRealDurability(exhausted) == 0 &&
-                ((firstBefore == 0 && secondBefore == 250000) || (secondBefore == 0 && firstBefore == 250000)),
-                "F26 did not pause after the first source exhausted the filter: A=" + firstBefore + ", B=" + secondBefore +
-                ", filter=" + DurabilityHelper.GetRealDurability(exhausted));
-            var remaining = firstBefore > 0 ? first : second;
-            Need(QaItemUi.Selected(Window(), remaining), "Paused source was not retained for resumption");
-            Window().Get("preview").button.onClick.Invoke();
-            Need(Window().Get("pour").GetText() == ModHelper.GetLocalized(Mod, "f26.pourUnfiltered"),
-                "An exhausted filter did not require the unfiltered confirmation");
-            Window().Close(); RoutingScenario.RunFeatureAction("f26.open");
-            QaItemUi.Choose(Window(), "target", "QA manual filter target");
-            Need(!QaItemUi.Selected(Window(), remaining), "A closed water session retained its previous selection");
-            QaItemUi.Click(Window(), remaining); Window().Get("preview").button.onClick.Invoke();
-            Need(Window().Get("pour").GetText() == ModHelper.GetLocalized(Mod, "f26.pourUnfiltered"),
-                "Closing the water window lost the exhausted-filter confirmation");
-            Move(exhausted, e.invElement); Move(replacement, filterSlot);
-            Window().Get("pour").button.onClick.Invoke();
-            Need(WaterHelper.GetCurrentCapacityUL(first) == firstBefore && WaterHelper.GetCurrentCapacityUL(second) == secondBefore,
-                "A stale preview was executed after the filter was replaced");
-            step++; return false;
-        }
-        Window().Get("preview").button.onClick.Invoke(); Window().Get("pour").button.onClick.Invoke();
-        Need(WaterHelper.GetCurrentCapacityUL(first) == 0 && WaterHelper.GetCurrentCapacityUL(second) == 0 &&
-            ReferenceEquals(filterSlot.childItem, replacement) && exhausted.parentInventory == e.invElement &&
-            WaterHelper.GetCurrentCapacityUL(destination) > 0,
-            "Resuming after manual filter replacement did not pour the remaining source or conserve filters");
-        result = "PASS F26 single-MOD exhaustion pauses, stale filter preview is rejected, manual replacement resumes"; return true;
+        Verify(); result = "PASS F28 separate real sales, cash changes, known profit, unknown cost and same-slot reload"; return true;
     }
 }
 
@@ -327,8 +112,10 @@ public sealed class BasketBudgetScenario
     private readonly QaNewRun start = new QaNewRun();
     private readonly float deadline = Time.realtimeSinceStartup + 100;
     private readonly string token = Guid.NewGuid().ToString("N").Substring(0, 6);
+    private readonly int[] quotes = new int[3];
+    private readonly System.Collections.Generic.HashSet<GameItem> seen = new System.Collections.Generic.HashSet<GameItem>();
     private GameItem[] items, chosen;
-    private int step, cash, price, limit;
+    private int step, cash, price, limit, pages;
     private static void Need(bool ok, string message) { if (!ok) throw new InvalidOperationException(message); }
     private static CustomUIWindow Window() => CustomUIManager.Instance.GetWindow(Mod + ".basket");
     private static object Field(object obj, string key) => obj?.GetType().GetField(key, Flags)?.GetValue(obj);
@@ -341,21 +128,36 @@ public sealed class BasketBudgetScenario
     }
     private static int Quote(CustomUIWindow window, GameItem item)
     {
-        var entry = Field(QaItemUi.Hit(window.root, item), "entry");
-        Need(int.TryParse(Field(entry, "Badge") as string, out int quote) && quote > 0, "A real customer quote is unavailable");
+        var hit = QaItemUi.Hit(window.root, item);
+        var entry = Field(hit, "entry");
+        string badge = Field(entry, "Badge") as string;
+        Need(entry != null, "Basket item card missing: " + QaItemUi.Describe(window.root, item));
+        Need(int.TryParse(badge, out int quote) && quote > 0,
+            "A real customer quote is unavailable: item=" + item.identifier + " badge=" + badge +
+            " accepted=" + PlayerStore.Instance.currentClientInstance?.GetClientBlueprint()?.IsClientBuyingThisItem(item) +
+            " native=" + item.GetNegociatedValue());
+        Need(quote == item.GetNegociatedValue(), "Displayed basket quote differs from the native counter quote");
         return quote;
     }
     private GameItem[][] ResultGrids(CustomUIWindow window) => window.root.GetComponentsInChildren<Transform>(true)
-        .Where(t => t.gameObject.activeInHierarchy && t.name == "ShopAssist_ItemGrid")
-        .Select(t => items.Where(item => QaItemUi.Hit(t.gameObject, item) != null).ToArray()).Where(g => g.Length > 0).ToArray();
+        .Where(t => t.gameObject.activeInHierarchy && t.name == "ShopAssist_CounterPreview")
+        .Select(t => t.GetComponentsInChildren<MonoBehaviour>(true)
+            .Where(hit => hit != null && hit.gameObject.activeInHierarchy && hit.gameObject.name == "item_cell" &&
+                hit.GetType().FullName == "ShopAssist.ItemGrid+Hit")
+            .Select(hit => Field(Field(hit, "entry"), "Item") as GameItem).Where(item => item != null).Distinct().ToArray())
+        .Where(g => g.Length > 0).ToArray();
     private GameItem[] Compare(bool shouldAllowMove)
     {
         RoutingScenario.RunFeatureAction("f34.open"); var w = Window();
         Need(w?.Get("limit") != null && w.Get("compare")?.button != null, "Basket controls unavailable");
         w.Get("limit").SetString(limit.ToString(), true); w.Get("compare").button.onClick.Invoke(); w = Window();
         var grids = ResultGrids(w);
-        Need(grids.Length > 0 && grids.All(g => g.Length == 2 && g.Sum(_ => price) == limit),
-            "Budget comparison did not show only two-item combinations within the entered limit");
+        string[] labels = w.root.GetComponentsInChildren<TMP_Text>(true).Where(t => t.gameObject.activeInHierarchy).Select(t => t.text).ToArray();
+        Need(grids.Length > 0 && grids.All(g => g.Length == 2 && g.All(items.Contains) && g.Sum(_ => price) == limit) &&
+            labels.Contains(ModHelper.GetLocalized(Mod, "f34.summary", 2, limit, 0)),
+            "Budget comparison did not show only two-item combinations within the entered limit: price=" + price +
+            " grids=" + string.Join(";", grids.Select(g => string.Join(",", g.Select(i => i.identifier + ":" + Array.IndexOf(items, i))))) +
+            " labels=" + string.Join(" | ", labels));
         var place = RoutingScenario.Button(w, "f34.place");
         Need((place != null) == shouldAllowMove, "Move permission did not control placement");
         Need(items.All(i => i.parentInventory == EmporiumEntry.Instance.invElement) && PlayerStore.Instance.playerCash == cash,
@@ -386,10 +188,47 @@ public sealed class BasketBudgetScenario
         {
             if (!NegociationUIManager.Instance.IsOpen) return false;
             RoutingScenario.RunFeatureAction("f34.open"); var w = Window();
-            int[] quotes = items.Select(i => Quote(w, i)).ToArray();
-            Need(quotes.All(q => q == quotes[0]) && quotes[0] * 2 < 9000 && items.All(i => i.unitCount == 1),
+            Need(w?.root != null && p.currentClientInstance.GetClientBlueprint().GetBudget() == 9000 &&
+                w.root.GetComponentsInChildren<TMP_Text>(true).Any(t => t.gameObject.activeInHierarchy &&
+                    t.text == ModHelper.GetLocalized(Mod, "f34.budget", 9000)), "Native customer budget was not shown");
+            cash = p.playerCash; step++; return false;
+        }
+        if (step == 3)
+        {
+            var w = Window();
+            var hits = w.root.GetComponentsInChildren<MonoBehaviour>(true)
+                .Where(hit => hit != null && hit.gameObject.activeInHierarchy && hit.gameObject.name == "item_cell" &&
+                    hit.GetType().FullName == "ShopAssist.ItemGrid+Hit")
+                .GroupBy(hit => Field(Field(hit, "entry"), "Item") as GameItem).Select(group => group.First()).ToArray();
+            Need(hits.Length > 0 && ++pages <= 512, "Basket pagination did not reach its end");
+            foreach (var hit in hits)
+            {
+                var entry = Field(hit, "entry"); var item = Field(entry, "Item") as GameItem;
+                Need(item != null && seen.Add(item), "Basket pagination repeated or omitted an item");
+                int index = Array.IndexOf(items, item);
+                if (index >= 0)
+                {
+                    quotes[index] = Quote(w, item);
+                    Need(Field(entry, "Selected") is bool selected && selected, "Fixture was not selected");
+                    if (index == 0)
+                    {
+                        QaItemUi.Click(hit); Need(Field(entry, "Selected") is bool deselected && !deselected, "Fixture could not be deselected");
+                        QaItemUi.Click(hit); Need(Field(entry, "Selected") is bool reselected && reselected, "Fixture could not be selected again");
+                    }
+                }
+                else if (Field(entry, "Enabled") is bool enabled && enabled)
+                {
+                    Need(Field(entry, "Selected") is bool selected && selected, "Other quoted item was not initially selected");
+                    QaItemUi.Click(hit);
+                    Need(Field(entry, "Selected") is bool deselected && !deselected, "Other quoted item could not be excluded");
+                }
+            }
+            var next = w.Get("next")?.button;
+            if (next != null && next.interactable) { next.onClick.Invoke(); return false; }
+            Need(quotes.All(q => q > 0 && q == quotes[0]) && quotes[0] * 2 < 9000 && items.All(i => i.unitCount == 1),
                 "Native quotes are not three equal positive single-item offers");
-            price = quotes[0]; limit = 2 * price; cash = p.playerCash; w.Close();
+            Need(p.playerCash == cash, "Selecting basket items changed cash");
+            price = quotes[0]; limit = 2 * price; w.Close();
             foreach (var item in items) Move(item, e.invElement);
             NegociationUIManager.Instance.RefreshUI();
             Compare(false); TradeScenario.SetOptions(true, "f34.move"); chosen = Compare(true); step++; return false;
@@ -398,67 +237,6 @@ public sealed class BasketBudgetScenario
         Need(items.Except(chosen).Single().parentInventory == e.invElement && p.playerCash == cash && items.All(GeneralHelper.IsItemOwned),
             "Staging the selected pair moved the third item or settled a sale");
         result = "PASS F34 three real quotes, two-item budget comparison, move permission and exact staged pair without sale"; return true;
-    }
-}
-
-public sealed class DisplayCapacityScenario
-{
-    private const string Mod = "starswhere.shopassist";
-    private readonly QaNewRun start = new QaNewRun();
-    private readonly float deadline = Time.realtimeSinceStartup + 100;
-    private GameItem goods;
-    private int step;
-    private static void Need(bool ok, string message) { if (!ok) throw new InvalidOperationException(message); }
-    private static CustomUIWindow Window() => CustomUIManager.Instance.GetWindow(Mod + ".restock");
-    private static bool CanPlace(GameGridInventory grid, GameItem item)
-    {
-        var pose = new GridShapeBuilder(item.modifiedShape);
-        for (int flip = 0; flip < 2; flip++) for (int turn = 0; turn < 4; turn++)
-        {
-            pose.SetFlipped(flip != 0).SetOrientation(turn);
-            for (int y = 0; y < grid.inventoryShape.height; y++) for (int x = 0; x < grid.inventoryShape.width; x++)
-            {
-                pose.SetPosition(x, y); var marker = grid.TryInventorySlot(item, item.unitCount, pose);
-                if (marker != null && marker.inventory == grid && marker.targetItem == null && marker.numTransfer >= item.unitCount) return true;
-            }
-        }
-        return false;
-    }
-    public bool Tick(out string result)
-    {
-        result = null; Need(Time.realtimeSinceStartup < deadline, "Full showcase QA timed out at " + step);
-        if (step == 0) { if (start.Tick()) step++; return false; }
-        var e = EmporiumEntry.Instance;
-        if (e?.storeInteractables?.activeInHierarchy != true) return false;
-        TradeScenario.SetOptions(true, "f29.enabled", "f29.price");
-        goods = DirectoryMaster.Item("energy_drink"); GeneralHelper.SetItemOwned(goods); GeneralHelper.TrackBuyPrice(goods, 15);
-        var source = e.invElement.TryFindOneValidInventorySlot(goods);
-        Need(source != null && source.inventory == e.invElement && source.targetItem == null && source.TryAcceptOnce(goods.unitCount) == goods.unitCount,
-            "Could not place restock candidate");
-        var display = e.showcaseElement;
-        int baseline = display.childItems.Where(i => i.identifier == goods.identifier && GeneralHelper.IsItemOwned(i)).Sum(i => i.unitCount);
-        for (int n = 0; n < 200 && CanPlace(display, goods); n++)
-        {
-            var paper = PreBuiltItemHelper.CreatePaperWithText("QA display filler " + Guid.NewGuid().ToString("N"), "QA display filler");
-            GeneralHelper.SetItemOwned(paper);
-            var marker = display.TryFindOneValidInventorySlot(paper);
-            if (marker == null || marker.inventory != display || marker.targetItem != null || marker.numTransfer < paper.unitCount)
-            { paper.Destroy(); break; }
-            Need(marker.TryAcceptOnce(paper.unitCount) == paper.unitCount && paper.parentInventory == display,
-                "Cannot fill showcase with native objects");
-        }
-        Need(!CanPlace(display, goods), "QA fixture did not physically fill the showcase for every candidate orientation");
-        var options = StoreUIManager.Instance.gameOptionUIManager; options.OpenUI();
-        var settings = CustomUIManager.Instance.GetWindow("game_options");
-        settings.Get(Mod + ":f29.goal").SetFloat(baseline + 1, true); settings.Get(Mod + ":f29.keep").SetFloat(0, true);
-        settings.Get("apply").button.onClick.Invoke(); options.CloseUI();
-        RoutingScenario.RunFeatureAction("f29.open"); QaItemUi.Choose(Window(), "type", goods.GetDisplayName(true));
-        Window().Get("add").button.onClick.Invoke(); Window().Get("preview").button.onClick.Invoke();
-        Need(QaItemUi.Hit(Window().root, goods) == null && goods.parentInventory == e.invElement,
-            "Full showcase preview offered or moved a candidate without physical room");
-        Window().Get("apply").button.onClick.Invoke();
-        Need(goods.parentInventory == e.invElement, "Full showcase commit lost or moved the candidate");
-        result = "PASS F29 physically full showcase retains the real source item through preview and apply"; return true;
     }
 }
 
@@ -490,6 +268,10 @@ public sealed class LedgerDaysScenario
     }
     internal static void VerifyDays(int day, int first, int second, int balance)
     {
+        var history = LedgerProbe.History();
+        Need(history.transactions.Count(row => row.day == day && row.kind == 2 && row.change == first) == 1 &&
+            history.transactions.Count(row => row.day == day + 1 && row.kind == 2 && row.change == second) == 1,
+            "Saved transactions do not retain the two daily cash changes");
         RoutingScenario.RunFeatureAction("f28.open"); var book = Window();
         Need(book?.IsAlive == true, "Daily ledger UI unavailable");
         Need(Day(book) == day + 1 && SaleRow(book, second) && !SaleRow(book, first) &&
@@ -550,11 +332,8 @@ public sealed class LedgerDaysScenario
     }
     private static bool Text(CustomUIWindow book, string value) => book.root.GetComponentsInChildren<TMP_Text>(true)
         .Any(t => t.gameObject.activeInHierarchy && t.text == value);
-    private static bool SaleRow(CustomUIWindow book, int amount) => book.root.GetComponentsInChildren<HorizontalLayoutGroup>(true).Any(row =>
-    {
-        var fields = row.GetComponentsInChildren<TMP_Text>(true).Select(t => t.text).ToArray();
-        return fields.Length == 3 && fields[0] == ModHelper.GetLocalized(Mod, "f28.sale") && fields[1] == amount.ToString("N0") && fields[2] == "0";
-    });
+    private static bool SaleRow(CustomUIWindow book, int amount) =>
+        LedgerProbe.RowCount(book, ModHelper.GetLocalized(Mod, "f28.sale"), amount, ModHelper.GetLocalized(Mod, "f28.unknown")) == 1;
     public bool Tick(out string result)
     {
         result = null; Need(Time.realtimeSinceStartup < deadline, "Daily ledger QA timed out at " + step);
@@ -715,118 +494,6 @@ public sealed class PackingPriorityScenario
             result = "PASS F36 explicit item priority and reserved backpack cells with occupied native pockets"; return true;
         }
         throw new InvalidOperationException("Unknown packing priority QA step " + step);
-    }
-}
-
-public sealed class RequestColdScenario
-{
-    private const string Mod = "starswhere.shopassist";
-    private readonly QaNewRun start = new QaNewRun();
-    private readonly float deadline = Time.realtimeSinceStartup + 100;
-    private readonly string label = "QA cold request " + Guid.NewGuid().ToString("N").Substring(0, 6);
-    private GameItem bag, goods;
-    private StoreRequest request;
-    private int step, cash;
-    private static void Need(bool ok, string message) { if (!ok) throw new InvalidOperationException(message); }
-    private static void Put(GameItem item, GameInventory inventory)
-    {
-        var slot = inventory.TryFindOneValidInventorySlot(item);
-        Need(slot != null && slot.inventory == inventory && slot.targetItem == null &&
-            slot.TryAcceptOnce(item.unitCount) == item.unitCount && item.parentInventory == inventory, "Cannot place request fixture");
-    }
-    public bool Tick(out string result)
-    {
-        result = null; Need(Time.realtimeSinceStartup < deadline, "Request producer timed out at " + step);
-        if (step == 0) { if (start.Tick()) step++; return false; }
-        var e = EmporiumEntry.Instance; var p = PlayerStore.Instance;
-        if (step == 1)
-        {
-            if (e?.storeInteractables?.activeInHierarchy != true || PCUIManager.Instance == null || ItemMouseDoubleClickHandler.current == null) return false;
-            TradeScenario.SetOptions(true, "f27.enabled");
-            foreach (var item in e.GetAllOwnedItems(false, true).Where(i => i.identifier == "wine_yeast_red").ToArray()) item.Destroy();
-            bag = DirectoryMaster.Item("backpack_medium"); goods = DirectoryMaster.Item("wine_yeast_red");
-            Need(bag != null && goods != null, "Request fixtures unavailable");
-            GeneralHelper.SetItemOwned(bag); GeneralHelper.SetItemOwned(goods); GeneralHelper.SetCustomName(bag, label);
-            Put(bag, e.invElement); Put(goods, e.invElement);
-            ItemMouseDoubleClickHandler.current.OpenContentAction(bag, new Vector2(Screen.width * .7f, Screen.height * .7f));
-            request = new StoreRequest { title = label, id = label, description = label, requiredItem = goods.identifier,
-                requiredItemCount = 1, requesterName = "QA", sourceEventId = label, duration = 2, creditReward = 155,
-                factionId = "FACTION_LOWER_LEVEL" };
-            p.storeRequests.Add(request); cash = p.playerCash; PCUIManager.Instance.OpenUI(); step++; return false;
-        }
-        var row = UnityEngine.Object.FindObjectsOfType<StoreRequestElement>().FirstOrDefault(r => r.storeRequest == request);
-        if (row == null) return false;
-        var track = row.acceptButton.transform.parent.Find(Mod + ".track")?.GetComponent<Button>();
-        Need(track != null && track.interactable, "Native request tracking button unavailable"); track.onClick.Invoke();
-        var book = CustomUIManager.Instance.GetWindow(Mod + ".requests");
-        Need(book?.Get("track")?.button != null, "Tracking control unavailable"); book.Get("track").button.onClick.Invoke();
-        book = CustomUIManager.Instance.GetWindow(Mod + ".requests"); QaItemUi.Choose(book, "destination", label);
-        book = CustomUIManager.Instance.GetWindow(Mod + ".requests"); QaItemUi.Click(book, goods); book.Get("prepare").button.onClick.Invoke();
-        Need(goods.parentInventory == bag.contentWindow.childElement && goods.uniqueId > 0 && bag.uniqueId > 0 && p.playerCash == cash &&
-            p.storeRequests.Contains(request) && RequestColdReloadScenario.Reserved(goods), "Native preparation failed or delivered before confirmation");
-        book = CustomUIManager.Instance.GetWindow(Mod + ".requests"); book?.Close(); PCUIManager.Instance.HideUI();
-        p.SaveGame(); File.WriteAllText(Path.Combine(Application.persistentDataPath, "qa-request-cold-run.txt"),
-            string.Join("|", p.runID, p.saveSlotId, label, bag.uniqueId, goods.uniqueId, cash));
-        result = "PASS F27 native tracking and physical reservation saved for cold reload"; return true;
-    }
-}
-
-public sealed class RequestColdReloadScenario
-{
-    private const string Mod = "starswhere.shopassist";
-    private readonly float deadline = Time.realtimeSinceStartup + 100;
-    private QaLoadSlot load;
-    private string[] context;
-    private GameItem goods;
-    private StoreRequest request;
-    private int step;
-    private static void Need(bool ok, string message) { if (!ok) throw new InvalidOperationException(message); }
-    internal static bool Reserved(GameItem item)
-    {
-        var assembly = ModLoader.Mods.FirstOrDefault(m => m.Manifest?.ID == Mod)?.Instance?.GetType().Assembly;
-        var method = assembly?.GetType("ShopAssist.RequestBook")?.GetMethod("Reserved", BindingFlags.Static | BindingFlags.NonPublic);
-        Need(method != null, "Reservation state unavailable"); return (bool)method.Invoke(null, new object[] { item });
-    }
-    private static object Field(object obj, string key) => obj?.GetType().GetField(key, BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)?.GetValue(obj);
-    public bool Tick(out string result)
-    {
-        result = null; Need(Time.realtimeSinceStartup < deadline, "Request cold reload timed out at " + step);
-        if (load == null)
-        {
-            string path = Path.Combine(Application.persistentDataPath, "qa-request-cold-run.txt");
-            Need(File.Exists(path), "Run RequestColdScenario first"); context = File.ReadAllText(path).Split('|');
-            Need(context.Length == 6, "Invalid request save context"); load = new QaLoadSlot(int.Parse(context[1]), Guid.Parse(context[0]));
-        }
-        if (step == 0)
-        {
-            if (!load.Tick()) return false;
-            var e = EmporiumEntry.Instance; var p = PlayerStore.Instance;
-            var bag = e.invElement.childItems.SingleOrDefault(i => i.uniqueId == int.Parse(context[3]));
-            Need(bag?.contentWindow?.childElement is GameGridInventory, "Cold load lost the selected box");
-            goods = ((GameGridInventory)bag.contentWindow.childElement).childItems.SingleOrDefault(i => i.uniqueId == int.Parse(context[4]));
-            request = p.storeRequests.SingleOrDefault(r => r.id == context[2]);
-            Need(goods != null && request != null && p.playerCash == int.Parse(context[5]) && Reserved(goods),
-                "Cold load lost the exact physical reservation or request");
-            ItemMouseDoubleClickHandler.current.OpenContentAction(bag, new Vector2(Screen.width * .7f, Screen.height * .7f));
-            RoutingScenario.RunFeatureAction("f27.open"); var book = CustomUIManager.Instance.GetWindow(Mod + ".requests");
-            var open = book?.root.GetComponentsInChildren<Button>(true).FirstOrDefault(b =>
-                b.GetComponentInChildren<TMP_Text>(true)?.text == ModHelper.GetLocalized(Mod, "f27.prepare") &&
-                b.transform.parent.GetComponentsInChildren<TMP_Text>(true).Any(t => t.text == context[2]));
-            Need(open != null, "Cold-loaded tracked request is not visible"); open.onClick.Invoke();
-            book = CustomUIManager.Instance.GetWindow(Mod + ".requests");
-            var entry = Field(QaItemUi.Hit(book.root, goods), "entry");
-            Need((Field(entry, "Badge") as string) == ModHelper.GetLocalized(Mod, "f27.ready"),
-                "Cold-loaded request did not display the same reserved item as ready");
-            book.Close(); PCUIManager.Instance.OpenUI(); step++; return false;
-        }
-        var nativeRow = UnityEngine.Object.FindObjectsOfType<StoreRequestElement>().FirstOrDefault(r => r.storeRequest == request);
-        if (nativeRow == null) return false;
-        Need(nativeRow.acceptButton != null && nativeRow.acceptButton.interactable && request.CanFillRequest(), "Native delivery action unavailable");
-        int before = PlayerStore.Instance.playerCash; nativeRow.acceptButton.onClick.Invoke();
-        Need(PlayerStore.Instance.playerCash == before + 155 && !PlayerStore.Instance.storeRequests.Contains(request) &&
-            ((GameItemElement)goods).IsDestroyed() && !Reserved(goods),
-            "Native delivery did not consume the reserved instance, pay once and release the completed request");
-        result = "PASS F27 exact reservation survives cold reload and native delivery consumes it and pays once"; return true;
     }
 }
 

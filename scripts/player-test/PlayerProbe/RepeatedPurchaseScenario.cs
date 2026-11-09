@@ -7,8 +7,10 @@ using UnityEngine;
 public class RepeatedPurchaseScenario
 {
     private const string Mod = "starswhere.shopassist";
+    private const string CargoMode = "f25.return_mode";
     private readonly bool allFeatures;
     private Dictionary<string, bool> originalOptions;
+    private int originalCargoMode;
     public RepeatedPurchaseScenario() { }
     protected RepeatedPurchaseScenario(bool allFeatures) { this.allFeatures = allFeatures; }
     private readonly QaNewRun start = new QaNewRun();
@@ -32,6 +34,20 @@ public class RepeatedPurchaseScenario
 
     public bool Tick(out string result)
     {
+        try { return Run(out result); }
+        catch (Exception error)
+        {
+            if (originalOptions != null)
+            {
+                try { SetFeatures(null); originalOptions = null; }
+                catch (Exception restoreError) { throw new AggregateException("Purchase scenario failed and settings could not be restored", error, restoreError); }
+            }
+            throw;
+        }
+    }
+
+    private bool Run(out string result)
+    {
         result = null; Need(Time.realtimeSinceStartup - started < 75, "Repeated purchase scenario timed out");
         if (step == 0) { if (start.Tick()) step++; return false; }
         var e = EmporiumEntry.Instance; var p = PlayerStore.Instance; var ui = NegociationUIManager.Instance;
@@ -41,9 +57,25 @@ public class RepeatedPurchaseScenario
             if (allFeatures)
             {
                 var config = ModConfig.Find(Mod);
-                originalOptions = Enumerable.Range(1, 42).Where(i => i != 6).ToDictionary(i => "f" + i.ToString("00") + ".enabled",
-                    i => ((ConfigEntry<bool>)config.Get("f" + i.ToString("00") + ".enabled")).Value);
-                TradeScenario.SetOptions(true, originalOptions.Keys.ToArray());
+                var assembly = ModLoader.Mods.First(value => value.Manifest?.ID == Mod).Instance.GetType().Assembly;
+                var catalog = assembly.GetType("ShopAssist.FeatureCatalog", true);
+                var features = catalog.GetProperty("All", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)
+                    ?.GetValue(null) as System.Collections.IEnumerable;
+                Need(features != null, "Feature catalog is unavailable");
+                string[] keys = features.Cast<object>().Select(feature => (string)feature.GetType().GetProperty("SettingKey",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).GetValue(feature)).ToArray();
+                Need(keys.Length > 0 && keys.Distinct().Count() == keys.Length && keys.Contains(CargoMode), "Invalid feature catalog");
+                var snapshot = new Dictionary<string, bool>();
+                foreach (string key in keys.Where(key => key != CargoMode))
+                {
+                    var option = config?.Get(key) as ConfigEntry<bool>;
+                    Need(option != null, "Missing feature toggle " + key);
+                    snapshot.Add(key, option.Value);
+                }
+                var cargo = config?.Get(CargoMode) as ConfigEntry<int>;
+                Need(cargo != null, "Missing cargo return mode");
+                originalCargoMode = cargo.Value; originalOptions = snapshot;
+                SetFeatures(true);
                 if (AdvCalendarUIManager.Instance?.UIPanel?.activeSelf == true) StoreUIManager.Instance.storeCalendar.OnClick();
             }
             else TradeScenario.SetOptions(true, "f01.enabled");
@@ -74,16 +106,37 @@ public class RepeatedPurchaseScenario
         Need(!ui.IsOpen, "Negotiation panel reopened during cleanup");
         if (allFeatures)
         {
-            TradeScenario.SetOptions(false, originalOptions.Keys.ToArray());
-            var enabled = originalOptions.Where(kv => kv.Value).Select(kv => kv.Key).ToArray();
-            if (enabled.Length > 0) TradeScenario.SetOptions(true, enabled);
-            Need(originalOptions.All(kv => ((ConfigEntry<bool>)ModConfig.Find(Mod).Get(kv.Key)).Value == kv.Value),
-                "Restoring all feature settings failed");
+            SetFeatures(false);
+            SetFeatures(null); originalOptions = null;
         }
         result = "PASS native buy button excludes retained goods across repeated and subsequent offers" +
             (allFeatures ? " with all live feature settings enabled, disabled and restored" :
                 "; native auto-storage, independent switches, barter, lottery, nested and failed transfers");
         return true;
+    }
+
+    private void SetFeatures(bool? enabled)
+    {
+        var options = StoreUIManager.Instance.gameOptionUIManager;
+        options.OpenUI();
+        var window = CustomUIManager.Instance.GetWindow("game_options");
+        Need(window?.IsAlive == true, "Feature settings window is unavailable");
+        foreach (var option in originalOptions)
+        {
+            var control = window.Get(Mod + ":" + option.Key);
+            Need(control?.toggle != null, "Missing feature toggle control " + option.Key);
+            control.SetBool(enabled ?? option.Value, true);
+        }
+        var cargo = window.Get(Mod + ":" + CargoMode);
+        Need(cargo?.dropdown != null && cargo.dropdown.options.Count > 1, "Missing cargo return mode control");
+        int cargoMode = enabled.HasValue ? (enabled.Value ? 1 : 0) : originalCargoMode;
+        cargo.SetIndex(cargoMode, true);
+        window.Get("apply").button.onClick.Invoke();
+        var config = ModConfig.Find(Mod);
+        foreach (var option in originalOptions)
+            Need((config.Get(option.Key) as ConfigEntry<bool>)?.Value == (enabled ?? option.Value), "Apply did not set " + option.Key);
+        Need((config.Get(CargoMode) as ConfigEntry<int>)?.Value == cargoMode, "Apply did not set " + CargoMode);
+        options.CloseUI();
     }
 
     private static void CheckPurchaseRouting(PlayerStore player)

@@ -340,10 +340,8 @@ public sealed class F11TargetDragScenario
     private static bool CanDragSource(GameItem item)
     {
         Type inventory = Transfer().Assembly.GetType("ShopAssist.ShopInventory", true);
-        Type request = Transfer().Assembly.GetType("ShopAssist.RequestBook", true);
         return item != null && item.unitCount > 0 && SafeSource(item) && item.MaxNumRemove() >= item.unitCount &&
-            (bool)inventory.GetMethod("Movable", Flags).Invoke(null, new object[] { item }) &&
-            !(bool)request.GetMethod("Reserved", Flags).Invoke(null, new object[] { item });
+            (bool)inventory.GetMethod("Movable", Flags).Invoke(null, new object[] { item });
     }
 
     private void DiscardCandidate(GameItem item)

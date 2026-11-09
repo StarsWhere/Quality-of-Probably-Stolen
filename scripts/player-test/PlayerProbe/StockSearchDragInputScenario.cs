@@ -134,13 +134,24 @@ public sealed class StockSearchDragInputScenario
 
     private void CheckDragHint()
     {
+        var entry = Field(hit, "entry");
+        var draggable = Field(entry, "Draggable");
+        string hint = ModHelper.GetLocalized(Mod, "f11.drag_tip");
+        string actualHint = Field(entry, "TooltipHint") as string;
+        string context = " locale=" + LocHelper.GetCurrentLocaleCode() + " draggable=" + draggable +
+            " expected=" + hint + " actualHint=" + actualHint;
+        Need(draggable is bool canDrag && canDrag && !string.IsNullOrWhiteSpace(hint) && actualHint == hint,
+            "The search result is not marked draggable with the localized drag hint:" + context);
         var grid = hit.GetType().DeclaringType;
         var tooltip = grid?.GetMethod("Tooltip", Fields);
-        var text = tooltip?.Invoke(null, new[] { Field(hit, "entry"), item as GameItemElement }) as RichText;
-        string hint = ModHelper.GetLocalized(Mod, "f11.drag_tip");
-        Need(!string.IsNullOrEmpty(hint) && text?.nakedText?.Contains(hint) == true,
-            "The movable search result's native tooltip is missing its drag hint");
+        var text = tooltip?.Invoke(null, new[] { entry, item as GameItemElement }) as RichText;
+        string displayed = text?.nakedText;
+        Need(displayed != null && WithoutWhitespace(displayed).Contains(WithoutWhitespace(hint)),
+            "The movable search result's native tooltip is missing its drag hint:" + context +
+            " tooltip=" + displayed?.Replace("\n", "\\n"));
     }
+
+    private static string WithoutWhitespace(string value) => new string(value.Where(character => !char.IsWhiteSpace(character)).ToArray());
 
     private Vector2 FindFreeCell()
     {

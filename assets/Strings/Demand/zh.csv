@@ -10,28 +10,22 @@ f04.stolen,搜查时标出赃物
 f04.stolen.tip,开启搜查高亮后，标出已知赃物和曾见过赃物的容器；开启额外读取后也包括未公开风险。
 f04.contraband,搜查时标出违禁品
 f04.contraband.tip,开启搜查高亮后，标出已知违禁品和曾见过违禁品的容器；开启额外读取后也包括未公开风险。
-f11.enabled,搜索库存与顾客需求货物
-f11.tip,在店内按名称搜索可访问的自有仓储，也可从议价面板查看顾客需求货物、来源和报价，并定位物品。
+f11.enabled,搜索库存
+f11.tip,在店内按名称搜索可访问的自有仓储，定位物品或拖放至可用位置。
 f11.key,打开库存找货
 f11.key.tip,在店内打开或关闭库存找货。
 f11.purchase,显示购入价对比
-f11.purchase.tip,在需求货柜和预算配货中显示原版购入记录，默认关闭。记录为当次购入总额，缺少记录显示未知；不推算拆堆或合堆后的单位成本。
+f11.purchase.tip,在库存找货和预算配货中显示原版购入记录，默认关闭。记录为当次购入总额，缺少记录显示未知；不推算拆堆或合堆后的单位成本。
 f11.purchase_record,购入记录 {0}¢
 f11.purchase_unknown,购入记录 未知
 f11.open,库存找货
-f11.customer_title,顾客需求货柜
 f11.query,搜索物品名称
-f11.mode_all,全部库存
-f11.mode_demand,顾客需求
-f11.no_demand,当前没有顾客需求。
 f11.no_results,没有找到匹配的物品。
 f11.count,找到 {0} 堆货物
-f11.empty,没有符合当前顾客需求的货物。
 f11.quoted,台面报价 {0}¢
 f11.estimated,预计售价 {0}¢
-f11.unquoted,暂无法计算报价
 f11.in_use,机器内
-f11.reserved,已预留
+f11.pinned,已固定
 f11.unavailable,不可取
 f11.available,可取 {0}
 f11.partial,仅可取 {0}，无法整堆拖动
@@ -42,7 +36,7 @@ f11.locate_tip,单击定位。
 f11.move_manual,无法安全放入此处，请定位后操作。
 f11.target_locked,目标已锁定。
 f11.target_occupied,目标槽已被占用。
-f11.target_reserved,目标物品已预留。
+f11.target_pinned,目标物品已固定。
 f11.stack_mismatch,目标物品不能与此货物合堆。
 f11.stack_full,目标堆剩余空间不足，无法完整合并。
 f11.return,返回找货

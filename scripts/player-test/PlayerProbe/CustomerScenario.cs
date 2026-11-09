@@ -51,6 +51,9 @@ public sealed class CustomerScenario
             case 4:
                 if (Outlined(ordinary) || Outlined(hiddenRejection) || Outlined(customTooltip)) return false;
                 OpenList();
+                var query = List().Get("query");
+                Require(query?.input != null, "F11 search input is unavailable");
+                query.SetString(token, true); query.input.onEndEdit.Invoke(token);
                 if (SystemInfo.graphicsDeviceType != UnityEngine.Rendering.GraphicsDeviceType.Null)
                 {
                     gridCapture = Path.Combine(Application.persistentDataPath, "qa-customer-grid-" + token + ".png");
@@ -65,9 +68,10 @@ public sealed class CustomerScenario
                 Debug.Log("[PLAYER-QA] customer fixture: " + QaItemUi.Describe(first.root, ordinary, customTooltip, hiddenRejection, nested) +
                     " | native acceptance=" + buyer.IsClientBuyingThisItem(ordinary) + "/" + buyer.IsClientBuyingThisItem(customTooltip) +
                     "/" + buyer.IsClientBuyingThisItem(hiddenRejection) + "/" + buyer.IsClientBuyingThisItem(nested));
-                Require(QaItemUi.Hit(first.root, ordinary) != null && QaItemUi.Hit(first.root, customTooltip) != null &&
-                    QaItemUi.Hit(first.root, hiddenRejection) == null && QaItemUi.Hit(first.root, nested) != null,
-                    "F11 did not follow native buyer acceptance with F03 disabled: " +
+                Require(first.Get("query")?.input?.text == token && QaItemUi.Hit(first.root, ordinary) != null &&
+                    QaItemUi.Hit(first.root, customTooltip) != null && QaItemUi.Hit(first.root, hiddenRejection) != null &&
+                    QaItemUi.Hit(first.root, nested) != null,
+                    "F11 did not find all matching owned stock independently of buyer acceptance: " +
                     QaItemUi.Describe(first.root, ordinary, customTooltip, hiddenRejection, nested));
                 Require(!bag.contentWindow.IsVisible(), "F11 search opened the container as a side effect");
                 Require(!CardTexts(ordinary).Contains(ModHelper.GetLocalized(Mod, "f11.purchase_record", 14)),
@@ -110,19 +114,31 @@ public sealed class CustomerScenario
                 Advance(5); return false;
             case 5:
                 var view = List();
-                foreach (GameItem item in new[] { ordinary, customTooltip, nested }) RequireCaptionVisible(view, item);
+                foreach (GameItem item in new[] { ordinary, hiddenRejection, customTooltip, nested }) RequireCaptionVisible(view, item);
+                retainedList = view;
+                Require(!CardTexts(ordinary).Contains(ModHelper.GetLocalized(Mod, "f11.pinned")),
+                    "Ordinary fixture was already pinned");
                 PlayerStore.Instance.currentClientInstance.GetClientBlueprint().clientBlackIdList.Add(ordinary.identifier);
+                ItemPinHelper.SetPinned(ordinary, true);
                 Advance(50); return false;
             case 50:
                 if (Time.realtimeSinceStartup - since < .7f) return false;
-                Require(QaItemUi.Hit(List().root, ordinary) == null, "F11 retained a newly refused item without an invalidation event");
+                Require(!PlayerStore.Instance.currentClientInstance.GetClientBlueprint().IsClientBuyingThisItem(ordinary) &&
+                    List() == retainedList && List().Get("query")?.input?.text == token &&
+                    QaItemUi.Hit(List().root, ordinary) != null && QaItemUi.Hit(List().root, hiddenRejection) != null &&
+                    CardTexts(ordinary).Contains(ModHelper.GetLocalized(Mod, "f11.pinned")),
+                    "F11 lost rejected stock or failed to refresh its pinned status");
                 PlayerStore.Instance.currentClientInstance.GetClientBlueprint().clientBlackIdList.Remove(ordinary.identifier);
+                ItemPinHelper.SetPinned(ordinary, false);
                 Advance(51); return false;
             case 51:
                 if (Time.realtimeSinceStartup - since < .7f) return false;
                 view = List();
-                Require(QaItemUi.Hit(view.root, ordinary) != null, "F11 did not restore the newly accepted item");
-                retainedList = view; listPosition = view.Rect.anchoredPosition; listSize = view.Rect.sizeDelta;
+                Require(PlayerStore.Instance.currentClientInstance.GetClientBlueprint().IsClientBuyingThisItem(ordinary) &&
+                    view == retainedList && view.Get("query")?.input?.text == token && QaItemUi.Hit(view.root, ordinary) != null &&
+                    !CardTexts(ordinary).Contains(ModHelper.GetLocalized(Mod, "f11.pinned")),
+                    "F11 did not refresh its unpinned status after buyer acceptance changed");
+                listPosition = view.Rect.anchoredPosition; listSize = view.Rect.sizeDelta;
                 var scroll = view.root.GetComponentsInChildren<ScrollRect>(true).FirstOrDefault(s => s.gameObject.activeInHierarchy);
                 Require(scroll != null, "F11 lacks a scrollable list");
                 scroll.verticalNormalizedPosition = .4f; listScroll = scroll.verticalNormalizedPosition;
@@ -143,7 +159,8 @@ public sealed class CustomerScenario
                     "The folded F11 window still covers the located item");
                 view.Get("return").button.onClick.Invoke();
                 scroll = view.root.GetComponentsInChildren<ScrollRect>(true).FirstOrDefault(s => s.gameObject.activeInHierarchy);
-                Require(List() == retainedList && view.Rect.anchoredPosition == listPosition && view.Rect.sizeDelta == listSize &&
+                Require(List() == retainedList && view.Get("query")?.input?.text == token &&
+                    view.Rect.anchoredPosition == listPosition && view.Rect.sizeDelta == listSize &&
                     scroll != null && Mathf.Abs(scroll.verticalNormalizedPosition - listScroll) < .02f,
                     "Returning from locate lost the window position, size or scroll");
                 Require(ReferenceEquals(nested.parentInventory, bag.contentWindow.childElement),
@@ -227,6 +244,9 @@ public sealed class CustomerScenario
             stolen.tooltipRichTextFunc == null && ordinary.HasTooltip() && stolen.HasTooltip(), "Fixture tooltip is not ordinary");
         var client = StoreClientList.CreateSpacerClientFood();
         client.clientBlackIdList.Add(hiddenRejection.identifier);
+        Require(client.IsClientBuyingThisItem(ordinary) && client.IsClientBuyingThisItem(customTooltip) &&
+            client.IsClientBuyingThisItem(nested) && !client.IsClientBuyingThisItem(hiddenRejection),
+            "Customer fixture does not distinguish native acceptance from rejection");
         PlayerStore.Instance.currentClientInstance = StoreClientInstance.CreateClientInstance(client);
         PlayerStore.Instance.isClientArrived = true;
         NegociationUIManager.Instance.OpenUI();
@@ -255,8 +275,7 @@ public sealed class CustomerScenario
     {
         RoutingScenario.RunFeatureAction("f11.open");
         var list = ListOrNull();
-        Require(list?.Get("demand")?.button != null, "F11 list did not open");
-        list.Get("demand").button.onClick.Invoke();
+        Require(list?.IsAlive == true, "F11 list did not open");
     }
 
     private static CustomUIWindow ListOrNull() => CustomUIManager.Instance.GetWindow(ListWindow);

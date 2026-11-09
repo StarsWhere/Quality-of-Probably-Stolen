@@ -127,12 +127,6 @@ namespace ShopAssist
         internal static string Last;
         internal static void Show(string value) { Last = value; }
     }
-    internal static class RequestBook
-    {
-        internal static readonly HashSet<GameItem> Reservations = new HashSet<GameItem>();
-        internal static HashSet<GameItem> ReservedItems(IEnumerable<ShopInventory.Location> locations) => new HashSet<GameItem>(Reservations);
-        internal static bool Reserved(GameItem item) => Reservations.Contains(item);
-    }
     // Only captures the production view's inputs and click callback. Real card
     // layout and drag behavior are covered by the native-player scenarios.
     internal static class ItemGrid
@@ -141,7 +135,7 @@ namespace ShopAssist
         {
             internal readonly GameItem Item;
             internal bool Draggable = true;
-            internal string Caption, SourceLabel, StatusLabel, QuoteLabel, PurchaseLabel, TooltipHint;
+            internal string Caption, SourceLabel, StatusLabel, PurchaseLabel, TooltipHint;
             internal Entry(GameItem item) { Item = item; }
         }
         internal sealed class Options
@@ -235,7 +229,7 @@ namespace ShopAssist
             SafeSource(item) && ItemGridMove.CanMove(item, target, shape) ? new Plan { Item = item, Target = target } : null;
         internal static Plan ExactStack(GameItem item, GameInventory target, GameItem resident) =>
             SafeSource(item) && ItemGridMove.Allowed && !ReferenceEquals(item, resident) && ReferenceEquals(resident?.parentInventory, target) &&
-            !RequestBook.Reserved(resident) ? new Plan { Item = item, Target = target, Stack = resident } : null;
+            !ItemPinHelper.IsPinned(resident) ? new Plan { Item = item, Target = target, Stack = resident } : null;
         internal static Plan EmptySlot(GameItem item, GameInventory target) => SafeSource(item) && ItemGridMove.Allowed && target.childItems.Count == 0
             ? new Plan { Item = item, Target = target } : null;
         internal static Result Apply(Plan plan, string action, string location, string sourceKey, string targetKey, Func<bool> scope)

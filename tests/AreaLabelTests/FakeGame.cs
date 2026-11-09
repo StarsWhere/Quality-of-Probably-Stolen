@@ -244,6 +244,12 @@ namespace UnityEngine
     }
 }
 
+public static class ItemPinHelper
+{
+    public static readonly HashSet<GameItem> Pinned = new HashSet<GameItem>();
+    public static bool IsPinned(GameItem item) => item != null && Pinned.Contains(item);
+}
+
 namespace ShopAssist
 {
     internal static class ModEntry { internal const string Id = "starswhere.shopassist"; }
@@ -534,7 +540,7 @@ namespace ShopAssist
                 (location.Role == "counter" || location.Role == "showcase" || location.Role == "front"));
         internal static bool Owned(GameItem item) => item != null && item.isOwned &&
             !item.IsTag("ITEM_HIDDEN_TAG") && !item.IsTag("ITEM_BEHIND_LOCK_TAG");
-        internal static bool Movable(GameItem item) => Owned(item);
+        internal static bool Movable(GameItem item) => Owned(item) && !ItemPinHelper.IsPinned(item);
         internal static bool SafeContainerForPeek(GameItem item) => item != null && item.safeToOpen;
         internal static bool TryRefresh(Location previous, out Location refreshed)
         {
