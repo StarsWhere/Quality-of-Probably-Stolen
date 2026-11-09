@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <NuGetAudit>false</NuGetAudit>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="obj/**/*.cs;bin/**/*.cs" />
+    <Compile Include="../../src/ShopAssist/Inventory/FieldPacking.cs" Link="FieldPacking.cs" />
+  </ItemGroup>
+</Project>

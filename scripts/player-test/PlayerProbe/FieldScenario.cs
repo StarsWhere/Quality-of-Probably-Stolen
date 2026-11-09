@@ -10,10 +10,9 @@ public sealed class FieldScenario
     private const string Mod = "starswhere.shopassist";
     private const BindingFlags Fields = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
     private readonly QaNewRun start = new QaNewRun();
-    private readonly string sampleName = "日常补货";
     private float since = Time.realtimeSinceStartup;
     private int step, attempts;
-    private GameItem tool, sample, labelTarget, displayItem, bag, keep, loot, excludedLoot, unknownLoot;
+    private GameItem bag, keep, loot, excludedLoot, unknownLoot;
     private GameGridInventory inside;
     private string plan;
 
@@ -52,57 +51,14 @@ public sealed class FieldScenario
         switch (step)
         {
             case 1:
-                if (e.storeInteractables == null || !e.storeInteractables.activeInHierarchy || ItemSelectHandler.current == null) return false;
-                TradeScenario.SetOptions(true, "f22.enabled", "f25.enabled", "f29.enabled", "f36.enabled");
+                if (e.storeInteractables == null || !e.storeInteractables.activeInHierarchy) return false;
+                TradeScenario.SetOptions(true, "f36.enabled");
                 TradeScenario.SetOptions(false, "f15.enabled", "f17.enabled", "f21.enabled");
-                tool = New("labeler_blue", e.invElement); sample = New("wine_yeast", e.invElement); labelTarget = New("wine_yeast", e.invElement);
-                ItemSelectHandler.current.TryEquipItem(tool); Need(ItemSelectHandler.current.GetEquippedItem() == tool, "Labeler did not equip");
-                tool.Target(sample);
-                var blue = LabelerBlueUIManager.Instance;
-                Need(blue.panel.activeSelf, "Native blue labeler did not open");
-                blue.inputField.SetTextWithoutNotify(sampleName); blue.OnEditEnd(sampleName); blue.CloseUI();
-                Action("f22.open");
-                var label = W("label"); Need(label?.IsAlive == true && label.Get("apply")?.button != null, "Batch label selection missing");
-                Need(QaItemUi.Hit(label.root, labelTarget) != null && SpriteShown(label, labelTarget), "Batch label omitted the actual item card");
-                QaItemUi.Click(label, labelTarget); Need(CellFlag(label, labelTarget, "Selected"), "Batch label card did not show selection");
-                Shot("qa-field-label-grid.png"); Next(); return false;
-            case 2:
-                CustomerScenario.RequireCaptionVisible(W("label"), labelTarget);
-                Need((ItemSelectHandler.current.GetEquippedItem() == null || ItemSelectHandler.current.GetEquippedItem() == tool) &&
-                    CellFlag(W("label"), labelTarget, "Selected"),
-                    "Label tool or target selection changed before apply: " + LabelState());
-                W("label").Get("apply").button.onClick.Invoke();
-                Need(W("label") == null || !W("label").IsAlive, "Batch label did not start: " + LabelState());
-                Next(); return false;
-            case 3:
-                if (GeneralHelper.GetCustomName(labelTarget) != sampleName)
-                {
-                    Need(Time.realtimeSinceStartup - since < 5f, "Batch label did not finish: " + LabelState());
-                    return false;
-                }
-                Need(GeneralHelper.GetCustomName(sample) == sampleName && labelTarget.parentInventory == e.invElement, "Label copy changed sample or target parent");
-                ItemSelectHandler.current.EndSelect();
-                displayItem = New("energy_drink", e.invElement); GeneralHelper.TrackBuyPrice(displayItem, 15);
-                // Default rules retain two units at source.
-                New("energy_drink", e.invElement); New("energy_drink", e.invElement);
-                Action("f29.open");
-                var list = W("restock"); Need(list?.IsAlive == true, "Restock window did not open");
-                QaItemUi.Choose(list, "type", displayItem.GetDisplayName(true)); list = W("restock");
-                list.Get("add").button.onClick.Invoke(); W("restock").Get("preview").button.onClick.Invoke();
-                list = W("restock");
-                Need(displayItem.parentInventory == e.invElement && QaItemUi.Hit(list.root, displayItem) != null && SpriteShown(list, displayItem),
-                    "Restock preview moved the item or omitted its native image");
-                Shot("qa-field-restock-grid.png"); Next(); return false;
-            case 4:
-                W("restock").Get("apply").button.onClick.Invoke();
-                Need(displayItem.parentInventory == e.showcaseElement && e.invElement.childItems.Count(i => i.identifier == "energy_drink") >= 2,
-                    "Restock ignored reserve or failed to place goods");
-                W("restock").Close();
                 bag = New("backpack_medium", e.invElement); inside = (GameGridInventory)bag.contentWindow.childElement;
                 keep = New("wine_yeast_red", inside); e.selectedBackpack = bag; p.visitLeftTonight = 2;
                 var site = AfterhourLocation.Get(AfterhourLocation.DUMPING_GROUND);
                 Need(site != null && site.IsAvailable(), "Native dumping ground unavailable in QA fixture");
-                MapUIManager.Instance.Travel(site); Next(); return false;
+                MapUIManager.Instance.Travel(site); step = 5; since = Time.realtimeSinceStartup; return false;
             case 5:
                 if (MapUIManager.Instance.Current?.Id != AfterhourLocation.DUMPING_GROUND || !e.afterhourWindow.IsVisible() ||
                     e.afterhourPocketSlotInvBackpack.childItem != bag) return false;
@@ -195,25 +151,9 @@ public sealed class FieldScenario
                 W("cargo").Get("confirm").button.onClick.Invoke();
                 Need(loot.parentInventory == e.invElement && keep.parentInventory == inside, "Previous equipment unloaded or new loot not transferred");
                 Action("f25.open"); Need(W("cargo").Get("unload") == null, "Trip gain could be unloaded twice");
-                result = "PASS real labeler and restock cards, public exclusions, stale-preview rejection, direct field result, original equipment and native return unloading";
+                result = "PASS public exclusions, stale-preview rejection, direct field result, original equipment and native return unloading";
                 return true;
         }
         return false;
-    }
-
-    private string LabelState()
-    {
-        var assembly = ModLoader.Mods.FirstOrDefault(mod => mod.Manifest?.ID == Mod)?.Instance?.GetType().Assembly;
-        var type = assembly?.GetType("ShopAssist.BatchLabeler");
-        object active = type?.GetField("active", BindingFlags.Static | BindingFlags.NonPublic)?.GetValue(null);
-        object queued = Field(active, "queue");
-        int queue = queued is System.Collections.ICollection collection ? collection.Count : -1;
-        return "phase=" + Field(active, "phase") + " done=" + Field(active, "done") + " skipped=" + Field(active, "skipped") +
-            " queued=" + queue + " hasTool=" + type?.GetProperty("HasTool", Fields)?.GetValue(active) +
-            " equipped=" + ReferenceEquals(ItemSelectHandler.current?.GetEquippedItem(), tool) +
-            " tool=" + ReferenceEquals(Field(active, "tool"), tool) + " sample=" + ReferenceEquals(Field(active, "sample"), sample) +
-            " editing=" + ReferenceEquals(Field(active, "editing"), labelTarget) + " sampleName=" + GeneralHelper.GetCustomName(sample) +
-            " targetName=" + GeneralHelper.GetCustomName(labelTarget) + " source=" + ReferenceEquals(labelTarget?.parentInventory, EmporiumEntry.Instance.invElement) +
-            " blueOpen=" + (LabelerBlueUIManager.Instance?.panel?.activeSelf == true);
     }
 }

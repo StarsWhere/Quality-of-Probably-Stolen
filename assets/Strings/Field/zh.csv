@@ -1,70 +1,16 @@
-f25.enabled,选择卸下外出带回的货物
-f25.tip,开启后记录出发携带的物品，回店后选择带回的货物和卸货位置。
-f25.open,卸下这次带回的货
+f25.mode.tip,返店后自动卸下全部可确认货物或仅本次新增货物。优先送到启用收货的匹配分类区，其次送主仓；收货受限、空间不足或来源不明时保留货物，可在注意事项中重试或确认已自行处理。
+f25.mode_off,关闭
+f25.mode_all,全部卸下
+f25.mode_new,仅卸新增
+f25.open,返店自动卸货
 f25.none,本次没有可卸的新增货物。
-f25.choose,选择卸货区
 f25.check,来源待核对，请手动处理
 f25.bagmissing,找不到这趟外出使用的背包。
-f25.unload,卸下勾选货物
-f25.select,请先勾选要卸下的货物。
 f25.record_failed,无法记录本次外出货物，请自行检查背包和口袋。
-f25.result,已卸下 {0} 件
-f25.preview_summary,准备卸下 {0} 件至 {1}
-f25.merge,合入已有堆叠
-f25.confirm,确认卸货
 f25.resolve_pending,已核对并移除本次货物记录
 f25.pending_departure,上次卸货仍待核对；本次出行不会覆盖原有货物记录。
-f36.resolve_pending,已核对本次装包
-f36.ground,拾荒地面
-f36.backpack,出行背包
-f36.left_pocket,左口袋
-f36.right_pocket,右口袋
-f36.merge,合入已有堆叠
-f22.enabled,批量给同类物品贴标签
-f22.tip,先用标签机给一件样品贴标，再右键样品或同类物品，或使用快捷键选择同类物品。蓝色标签机复制名称，普通标签机复用特征标签。
-f22.overwrite,允许批量覆盖已有标签
-f22.overwrite.tip,允许批量替换物品已有的自定义名称或特征标签。
-f22.key,打开批量贴标
-f22.key.tip,打开批量贴标窗口；已有框选时预选符合条件的物品，也可选择其他可见的同类物品。
-f22.open,批量贴签
-f22.sample,请装备标签机，先为一件样品贴签并关闭原版标签窗口。
-f22.copyName,复制名称 · {0}
-f22.repeat,复用特征标签 · {0}
-f22.none,当前可见库存没有可以使用此模板的同类物品。
-f22.apply,给选中物品贴签
-f22.result,已贴签 {0} 件，跳过 {1} 件
-f22.select_all,全选
-f22.clear,清空选择
-f22.selected,已选 {0} / {1}
-f22.interrupted,已贴签 {0} 件 · 跳过 {1} 件 · 未处理 {2} 件
-f29.enabled,按规则给展示柜补货
-f29.tip,右键来源货物设置来源、陈列目标和来源保留数量；预览后确认补货，不符合条件或放不下的货物留在原处。
-f29.context_price,这件货物没有购买价记录
-f29.context_data,无法读取展示柜补货规则
-f29.price,展示柜只补有购买价的货
-f29.price.tip,开启后，选货和执行已有规则时都只接受带购买价格记录的实物；关闭后也可选择无此记录的货物。
-f29.goal,展示柜补货目标数量（件）
-f29.goal.tip,保存或更新补货规则时，设置该类货物在展示柜内希望达到的件数；修改后须重新保存对应规则。
-f29.keep,补货来源保留数量（件）
-f29.keep.tip,保存或更新补货规则时，设置来源区至少保留的该类货物件数；修改后须重新保存对应规则。
-f29.open,给展示柜补货
-f29.choose,选择来源中的货物
-f29.add,保存规则 · 陈列 {0} / 来源保留 {1}
-f29.row,{0} · 陈列 {1}/{2} · 保留 {3} · {4}
-f29.preview,预演补货
-f29.summary,可上架 {0} 件，仍缺 {1} 件
-f29.plan_line,{0} · 取出 {1} 件 · 原堆剩余 {2} 件
-f29.shortfall_line,{0} · 缺 {1} 件 · {2}
-f29.source_unavailable,来源区不可用
-f29.keep_limit,来源可用数量不足以满足目标和保留量
-f29.blocked,部分货物不能移动或不符合筛选条件
-f29.target_blocked,展示柜没有空间或不接受该数量
-f29.recovery_space,没有失败时可用的恢复空间，请先腾出存储格
-f29.back,返回清单
-f29.apply,确认上架
-f29.result,实际上架 {0} 件
 f34.enabled,按报价为顾客挑选货物
-f34.tip,从议价面板或需求货柜打开，按预计售价与顾客预算比较货物组合，无需先上台。可另行允许确认后摆放；实际报价变化时停止，成交仍需手动确认。
+f34.tip,按当前柜台空间、报价和预算比较货物组合；保留台面现货，确认后可一键摆放，成交仍需手动确认。
 f34.move,允许将配货组合摆上交易台
 f34.move.tip,确认后逐件放货并重新核对顾客报价；报价、预算或货物变化时停止，成交需自行完成。
 f34.open,按预算挑选货物
@@ -73,64 +19,60 @@ f34.unshown,请填写这篮货的预算上限。
 f34.limit,自选预算上限
 f34.unpriced,暂无法计算报价
 f34.compare,比较组合
-f34.noOffer,当前预算内没有已勾选且可计算报价的货物。
+f34.noOffer,已勾选货物中没有同时满足柜台剩余空间和预算的组合。
 f34.summary,{0} 件 · 合计 {1} · 余量 {2}
 f34.place,确认摆到交易台
 f34.back,返回选货
-f34.desk,请打开议价面板，清空不在本组合里的台面货物。
+f34.desk,请打开议价面板后摆放货物。
 f34.ready,这篮货已在交易台，可手动成交。
 f34.changed,已停止放货。请核对交易台上的实物、报价和预算。
-f36.enabled,规划带走的拾荒物品
-f36.tip,在垃圾场打开装包清单，选择已出现的物品、优先项和排除品类；预览后装入背包或随身口袋，放不下的留在原处。
-f36.space,拾荒装包预留空格（格）
-f36.space.tip,规划装包时，在背包已有空格中保留此数量；不影响随身口袋。
-f36.key,打开拾荒装包
-f36.key.tip,在垃圾场打开拾荒装包清单。
-f36.open,挑选要带走的物品
-f36.priority,优先带走标记的物品
-f36.value,只装估价已知的物品（由高到低）
-f36.first,优先
-f36.exclude_category,排除该品类
-f36.category_excluded,品类已排除
-f36.type_unknown,品类未知
-f36.noPrice,估价未知
-f36.leave_unknown,留在原处：估价未知
-f36.leave_unsafe,留在原处：无法安全确认搬运条件
-f36.leave_excluded,留在原处：未选择或品类已排除
-f36.leave_space,留在原处：没有可用空间
-f36.preview,预演装包
-f36.summary,可装入 {0} 件，留下 {1} 堆
-f36.pack_row,装入：{0} × {1}
-f36.leave_row,留下：{0} × {1}
-f36.apply,确认装包
-f36.result,已装入 {0} 件
-f26.enabled,将多份水倒入同一容器
-f26.tip,在店内右键水容器或使用快捷键，选择空的或水质已知的目标，以及水质已知的来源；预览后确认倾倒，滤芯耗尽时暂停剩余来源。
-f26.mix,允许混合不同水质
-f26.mix.tip,汇水时可选择不同已辨明水质的来源；混合前仍需确认。
-f26.key,打开汇水窗口
-f26.key.tip,在店内打开汇水窗口，选择可用水容器。
-f26.open,把这些液体倒在一起
-f26.target,选择目标水容器
-f26.hint,使用空目标或已辨明水质的目标，先打开存放水容器的背包。
-f26.free,目标还可容纳 {0} mL
-f26.preview,预览汇水
-f26.mixNotice,不同来源的成分可能不同。确认后液体会混合。
-f26.filter,目标有滤芯。实际注入量会受过滤影响。
-f26.approveMix,确认混合并倾倒
-f26.pour,确认倾倒
-f26.result,流出 {0} mL，实际注入 {1} mL
-f26.confirmed,已确认流出 {0} mL，注入 {1} mL
-f26.filterPaused,滤芯耗尽；流出 {0} mL、注入 {1} mL，剩余来源保留待处理。
-f26.pourUnfiltered,滤芯已耗尽，仍要倾倒
-f25.split,新增数量在旧堆里，请手动处理
 f25.handled,已自行处理
 f25.uncertain,这次货物记录不完整，请检查随身物品和回店位置。
-f25.unfinished,无法确认本次返店货物，请检查背包和口袋。
 f25.unreadable,外出货物记录无法读取，请检查背包和口袋。
-f25.restart,重新开始记录
-f25.restarted,已重新开始记录，请检查之前的货物。
 f25.location_unknown,位置未知
 f25.manual_place,此位置无法安全自动卸货，请手动处理
-f25.locate,定位
-f34.limited,本次比较了 {1} 件候选货物中价格最低和最高的共 {0} 件。取消勾选可缩小范围。
+f34.limited,已从 {1} 件候选中比较 {0} 件，并限制组合搜索数量；可取消勾选以缩小范围。
+f36.enabled,按价值一键装入拾荒物品
+f36.tip,一键将已出现的拾荒物品装入当前装备的背包和双手。
+f36.space,拾荒背包预留空格（格）
+f36.space.tip,在当前装备的背包中保留此数量的空格，不影响双手。
+f36.key,一键拾荒装包
+f36.key.tip,在垃圾场一键规划并装入拾荒物品。
+f36.open,一键拾荒装包
+f36.valuation,拾荒装包估值依据
+f36.valuation.tip,使用原版普通提示中的预估价值或基础价值。
+f36.estimated,预估价值
+f36.base,基础价值
+f36.replace,拾荒时允许替换已携带物品
+f36.replace.tip,允许把价值较低的已携带物品放回地面，换取价值更高的拾荒物品。
+f36.ground,拾荒地面
+f36.backpack,已装备背包
+f36.left_pocket,左手
+f36.right_pocket,右手
+f36.leave_unsafe,留在原处：无法安全确认搬运或估值
+f36.leave_space,留在原处：空间不足或没有更优替换
+f36.approximate,已按限时方案装包，未保证总价值最优。
+f36.valuation_unsafe,无法安全核实当前游戏的估值计算，本次未搬动物品。
+f36.stopped,装包已停止，请查看上次结果和地面物品后重试。
+f36.orphan_warning,有物品无法放回原处且无法直接操作。现在离开可能遗失该物品；转移记录会保留。确定继续离开吗？
+f36.orphan_leave,仍要离开
+f36.orphan_cancel,返回检查
+f36.too_large,物品或背包过大，无法在一次操作中安全规划，本次未搬动。
+f36.leave_value,留在原处：按所选依据估值为零
+f25.return_mode,返店自动卸货
+f25.retry,重试卸货
+f25.waiting,等待安全卸货，可重试。
+f25.paused,自动卸货已关闭，货物记录已保留。
+f25.no_destination,没有允许收货且可安全卸货的位置。
+f25.routing_unavailable,储藏区规则无法读取，货物已保留。
+f25.reset_record,已检查物品，重新开始记录
+f25.reset_warning,请先检查背包、口袋和返店物品。重新开始后保留损坏记录备份，并从下一次外出重新记录。
+f25.reset_cancel,返回
+f34.button,挑选货物
+f34.exclude_stolen,排除赃物
+f34.exclude_contraband,排除违禁品
+f34.exclude_luxury,排除奢侈品
+f34.demand_only,仅已显示的需求标签
+f34.counter_over_budget,柜台上已接受的货物已超出本次预算。
+f34.quote_changed,报价发生变化或暂无法核对，已停止放货。
+f34.callbacks,当前柜台或顾客暂不支持自动摆放，请手动放货。
