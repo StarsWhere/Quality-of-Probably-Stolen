@@ -46,7 +46,7 @@ public sealed class FilterMicroScenario : EquipmentFixture
             var attention = assembly.GetType("ShopAssist.AttentionBook", true).GetMethod("HasInspection", flags);
             diagnostic = "immediatePending=" + pending.Count + " capability=" + capabilityType.GetProperty("Allowed", flags).GetValue(capability) +
                 " reason=" + capabilityType.GetProperty("ReasonKey", flags).GetValue(capability) +
-                " swapReady=" + swap.Invoke(null, new object[] { pitcher, seat, supply, worn, spare, true }) +
+                " swapReady=" + swap.Invoke(null, new object[] { pitcher, seat, supply, worn, spare, true, false }) +
                 " inspection=" + attention.Invoke(null, new object[] { "f35.open", pitcher.uniqueId }) +
                 " rules=" + ModHelper.GetModData(Mod, "machineMaintenance", "");
             Debug.Log("[PLAYER-QA] F35 micro " + diagnostic);

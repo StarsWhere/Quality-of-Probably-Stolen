@@ -6,6 +6,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../src/ShopAssist/Machines/MaintenanceSourceKey.cs" />
+    <Compile Include="../../src/ShopAssist/Machines/ConsumableSelectionRules.cs" />
     <Compile Include="../../src/ShopAssist/Machines/FeedRecoveryRules.cs" />
     <Compile Include="MachineRulesTests.cs" />
   </ItemGroup>

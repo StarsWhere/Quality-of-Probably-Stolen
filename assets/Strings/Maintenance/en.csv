@@ -1,21 +1,18 @@
-f31.enabled,Automatically replace hydroponic and printer batteries
-f31.tip,Choose Spare battery on a hydroponic machine or printer to set the source and charge threshold. Before a night cycle, when the machine can produce and its installed ordinary battery is below the threshold, it attempts at most one exchange per day. The spare must be the same type, hold more charge and power the cycle; the old battery returns to the source. A 0% threshold never triggers.
+f31.enabled,Automatically replace low batteries
+f31.tip,Choose a source for a device with an ordinary battery and keep the best energy, keep the best percentage, or replace only when it cannot run. Replacements must meet native power requirements and strictly improve the selected condition. Old batteries return safely to the source. Shared sources serve unable devices first, then improvement and stable device number.
 f31.open,Set up spare machine batteries
-f31.threshold,Battery replacement threshold
-f31.position,Choose spare batteries in container order
-f31.charge,Prefer the most charged spare battery
 f31.missing,No suitable battery is available in the selected container.
 f31.inspect,Check the batteries and swap buffer.
 f31.paused,Automatic battery replacement is paused.
 f31.next_attempt,The spare is available. Waiting for the next replacement opportunity.
 f35.enabled,Automatically replace pitcher and aquaculture filters
-f35.tip,Choose Spare filter on a pitcher or aquaculture system to set the source, allowed filter types and a pore-size rule. When an enabled filter is exhausted during filtration, replace it from the source, preferring the same type; other enabled types can be allowed by pore size. The old filter must fit back in the source.
+f35.tip,Choose a filter source, replace when exhausted or keep the best remaining durability, and select materials and pore sizes. Only a safely exchangeable filter with greater durability is installed; the old filter returns to the source. Shared sources serve exhausted devices first, then durability improvement and stable device number.
 f35.open,Set up spare filters
 f35.missing,No suitable filter is available in the selected container.
-f35.pending,Exhausted filter needs attention.
+f35.pending,The filter has reached its replacement condition.
 f35.inspect,Check the filters and swap buffer.
 maintenance.no_host,Open the machine or pitcher to configure it.
-maintenance.no_source,Open an owned container for replacement parts.
+maintenance.no_source,No owned container holds the required parts and allows automatic removal.
 maintenance.spare_count,Matching spares: {0} · exchangeable now: {1}
 maintenance.spare_unknown,Install the part to check compatible spares.
 maintenance.copy,Copy saved rule
@@ -50,5 +47,10 @@ f35.added_unsupported,Automatic replacement when adding water is unsupported by 
 f35.added_conflict,Automatic replacement when adding water conflicts with another mod.
 maintenance.source_missing,Saved supply unavailable — select a new source
 f35.same,Same filter type only
-f35.equivalent,Prefer same type; allow equal or finer pores
-f35.any,Prefer same type; allow any pore size
+f35.equivalent,Allow equal or finer pores
+f35.any,Allow any pore size
+f31.best_energy,Keep best energy (kJ)
+f31.best_percentage,Keep best percentage
+f31.cannot_run,Only when unable to run
+f35.best_remaining,Keep best remaining durability
+f35.exhausted,Replace when exhausted

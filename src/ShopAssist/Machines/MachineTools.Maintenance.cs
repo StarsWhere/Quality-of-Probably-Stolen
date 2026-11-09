@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Reflection;
 using HarmonyLib;
 using Newtonsoft.Json;
 using UnityEngine;
@@ -21,29 +20,15 @@ namespace ShopAssist
         private GameItem maintenanceHost;
         private GameItem maintenanceDraftHost;
         private ShopInventory.Location maintenanceSource;
-        private int maintenanceKind, maintenanceThreshold = 20, maintenancePriority;
+        private int maintenanceKind, maintenanceCondition;
         private int maintenanceMaterials, maintenanceGrade;
         private bool maintenanceDirty;
-        private Harmony batteryHarmony, filterHarmony;
-        private bool batteryHookFailed, filterHookFailed;
+        private float nextMaintenanceCheck;
+        private Harmony filterHarmony;
+        private bool filterHookFailed;
         private string maintenanceReadError;
-        private readonly Dictionary<string, MethodBase> batteryCycles = new Dictionary<string, MethodBase>();
-        private readonly Dictionary<int, int> batteryAttemptDay = new Dictionary<int, int>();
         private readonly Dictionary<GameSlotInventory, PendingFilter> pendingFilters = new Dictionary<GameSlotInventory, PendingFilter>();
 
-        private sealed class MaintenanceData
-        {
-            [JsonRequired] public int version;
-            [JsonRequired] public string run;
-            [JsonRequired] public int slot;
-            [JsonRequired] public List<MaintenanceRule> rules;
-        }
-        private sealed class MaintenanceRule
-        {
-            [JsonRequired] public int kind, host, threshold, priority;
-            [JsonRequired] public string location;
-            public int? materials, grade;
-        }
         private sealed class PendingFilter
         {
             internal GameItem Host, Filter;
@@ -82,16 +67,25 @@ namespace ShopAssist
 
         private void TickMaintenance()
         {
+            if (!VisualChoices.IsOpen) ClearConsumableSourceMarkers();
             if (maintenanceWindow != null && (!maintenanceWindow.IsAlive || !SameMaintenanceSession())) CloseMaintenance();
             else if (maintenanceWindow != null && maintenanceDirty && !UIDragHandler.isDraggingAnyUI &&
                 ItemMouseDragHandler.current?.IsDraggingItem != true) RenderMaintenance();
             if (maintenanceCopyWindow != null && (!maintenanceCopyWindow.IsAlive || maintenanceWindow?.IsAlive != true || !SameMaintenanceSession()))
                 CloseMaintenanceCopy();
-            if (!filterEnabled.Value) { pendingFilters.Clear(); return; }
-            if (pendingFilters.Count == 0 || !ShopInput.Ready() || UIDragHandler.isDraggingAnyUI ||
+            if (!filterEnabled.Value) pendingFilters.Clear();
+            if (!ShopInput.Ready() || UIDragHandler.isDraggingAnyUI ||
                 ItemMouseDragHandler.current?.IsDraggingItem == true || DialogUIManager.Instance?.currentDialog != null ||
                 DialoguePhoneUIManager.Instance?.currentDialog != null || StoreUIManager.Instance?.isAboutToStartMainDialog == true) return;
-            foreach (PendingFilter pending in pendingFilters.Values.ToArray())
+            if (Time.unscaledTime >= nextMaintenanceCheck)
+            {
+                nextMaintenanceCheck = Time.unscaledTime + 1f;
+                ProcessBatteryMaintenance();
+                QueueDueFilters();
+            }
+            foreach (PendingFilter pending in pendingFilters.Values.OrderByDescending(value => DurabilityHelper.GetRealDurability(value.Filter) == 0)
+                .ThenByDescending(FilterReplacementGain).ThenBy(value => value.Host.uniqueId)
+                .ThenBy(value => FilterSlots(value.Host).IndexOf(value.Seat)).ToArray())
             {
                 pendingFilters.Remove(pending.Seat);
                 try { ReplaceFilter(pending); }
@@ -102,26 +96,8 @@ namespace ShopAssist
         private void UpdateMaintenanceHooks()
         {
             if (!started) return;
-            if (!batteryEnabled.Value && batteryHarmony != null) { batteryHarmony.UnpatchAll(batteryHarmony.Id); batteryHarmony = null; batteryCycles.Clear(); batteryHookFailed = false; }
             if (!filterEnabled.Value && filterHarmony != null) { filterHarmony.UnpatchAll(filterHarmony.Id); filterHarmony = null; filterHookFailed = false; }
-            if (!batteryEnabled.Value) batteryHookFailed = false;
             if (!filterEnabled.Value) filterHookFailed = false;
-            if (batteryEnabled.Value && batteryHarmony == null && !batteryHookFailed)
-            {
-                try
-                {
-                    batteryHarmony = new Harmony("mod." + ModEntry.Id + ".f31");
-                    AddBatteryCycle(AccessTools.Method(typeof(MachineHydroponic), nameof(MachineHydroponic.Hydroponic)), "<Hydroponic>b__2",
-                        AccessTools.Method(typeof(MachineHelper), nameof(MachineHelper.TryDrawCyclePower)));
-                    AddBatteryCycle(AccessTools.Method(typeof(MachinePrinter), nameof(MachinePrinter.Printer)), "<Printer>b__4",
-                        AccessTools.Method(typeof(PowerHelper), nameof(PowerHelper.DrawPowerSource)));
-                }
-                catch (Exception error)
-                {
-                    batteryHarmony?.UnpatchAll(batteryHarmony.Id); batteryHarmony = null; batteryCycles.Clear(); batteryHookFailed = true;
-                    log("F31 is unavailable for this game build: " + error.Message);
-                }
-            }
             if (filterEnabled.Value && filterHarmony == null && !filterHookFailed)
             {
                 try
@@ -148,81 +124,26 @@ namespace ShopAssist
             }
         }
 
-        private void AddBatteryCycle(MethodInfo factory, string callback, MethodInfo drawPower)
-        {
-            // Resolve the exact callback actually installed by the known native factory.
-            // Compiler-generated closure types are not addressable as C# types.
-            byte[] il = factory?.GetMethodBody()?.GetILAsByteArray();
-            if (il == null) throw new MissingMethodException("Unsupported native factory for " + callback);
-            var found = new List<MethodInfo>();
-            for (int i = 0; i + 5 < il.Length; i++)
-            {
-                if (il[i] != 0xfe || il[i + 1] != 0x06) continue; // ldftn
-                try
-                {
-                    if (!(factory.Module.ResolveMethod(BitConverter.ToInt32(il, i + 2)) is MethodInfo method) ||
-                        method.Name != callback || method.DeclaringType?.DeclaringType != factory.DeclaringType) continue;
-                    var parameters = method.GetParameters();
-                    if (parameters.Length == 3 && parameters[0].ParameterType == typeof(GameItem) &&
-                        parameters[1].ParameterType == typeof(GameInventory) && parameters[2].ParameterType == typeof(SlotMarker)) found.Add(method);
-                }
-                catch (Exception) { }
-            }
-            MethodInfo cycle = found.Distinct().SingleOrDefault();
-            if (!Calls(cycle, AccessTools.Method(typeof(MachineHelper), nameof(MachineHelper.CanPower), new[] { typeof(GameItem), typeof(GameSlotInventory) })) ||
-                !Calls(cycle, drawPower)) throw new MissingMethodException(factory.DeclaringType.Name, callback);
-            batteryHarmony.Patch(cycle, prefix: new HarmonyMethod(AccessTools.Method(typeof(MachineTools), nameof(BeforeBatteryCycle))));
-            batteryCycles[factory.DeclaringType == typeof(MachineHydroponic) ? "hydroponic" : "printer"] = cycle;
-        }
-
-        private static bool Calls(MethodInfo method, MethodInfo expected)
-        {
-            if (method == null || expected == null) return false;
-            byte[] il = method.GetMethodBody()?.GetILAsByteArray();
-            if (il == null) return false;
-            for (int i = 0; i + 4 < il.Length; i++)
-            {
-                if (il[i] != 0x28 && il[i] != 0x6f) continue;
-                try { if (method.Module.ResolveMethod(BitConverter.ToInt32(il, i + 1)) == expected) return true; }
-                catch (Exception) { }
-            }
-            return false;
-        }
-
-        private static void BeforeBatteryCycle(GameItem __0, MethodBase __originalMethod)
-        {
-            var tools = current;
-            if (tools == null || !tools.started || !tools.batteryEnabled.Value || !CurrentConverterHelper.isNightCycle) return;
-            if (__0 != null && __0.uniqueId > 0 && AttentionBook.HasInspection("f31.open", __0.uniqueId)) return;
-            ActionAvailability capability = tools.BatteryCapability(__0, __originalMethod);
-            if (!capability.Allowed) { tools.RememberMaintenanceFailure(__0, 31, capability.ReasonKey); return; }
-            try { tools.ReplaceBattery(__0); }
-            catch (Exception error) { tools.log("F31 replacement failed: " + error); tools.RememberMaintenanceFailure(__0, 31, "f31.inspect", true); }
-        }
-
         private void ReplaceBattery(GameItem host)
         {
             if (!BatteryHost(host) || !ShopInventory.InStore || !ShopInventory.Owned(host) || host.uniqueId <= 0 ||
-                StoreStation.GetDayCounter() < 1 || ItemMouseDragHandler.current?.IsDraggingItem == true || UIDragHandler.isDraggingAnyUI) return;
+                ItemMouseDragHandler.current?.IsDraggingItem == true || UIDragHandler.isDraggingAnyUI) return;
             if (AttentionBook.HasInspection("f31.open", host.uniqueId)) return;
             if (!ReadMaintenance(out MaintenanceData data)) return;
             MaintenanceRule rule = data.rules.SingleOrDefault(r => r.kind == 31 && r.host == host.uniqueId);
-            if (rule == null || batteryAttemptDay.TryGetValue(host.uniqueId, out int doneDay) && doneDay == StoreStation.GetDayCounter()) return;
+            if (rule == null || !BatteryCapability(host).Allowed) return;
             var power = MachineHelper.GetBatterySlot(host);
             GameItem old = power?.childItem;
             if (!OrdinaryBattery(old) || ItemPinHelper.IsPinned(old)) return;
             int energy = old.GetTagReadonly("power_source_item_energy").GetInt();
             int capacity = old.GetTagReadonly("power_source_item_max_energy").GetInt();
-            if (energy < 0 || capacity <= 0 || (long)energy * 100 >= (long)capacity * rule.threshold) return;
-            if (!WillRunCycle(host)) return;
-            batteryAttemptDay[host.uniqueId] = StoreStation.GetDayCounter();
+            if (energy < 0 || capacity <= 0) return;
             GameGridInventory source = ResolveMaintenanceSource(rule);
             int required = MachineryHelper.GetMachinePowerUsage(host);
-            if (source == null || required < 0) { RememberMaintenanceFailure(host, 31, "maintenance.source_missing"); return; }
-            IEnumerable<GameItem> candidates = Ordered(source);
-            if (rule.priority == 1) candidates = candidates.OrderByDescending(candidate => candidate.GetTagReadonly("power_source_item_energy").GetInt());
-            var eligible = candidates.Where(candidate => EligibleBattery(candidate, old, required)).ToList();
-            GameItem spare = eligible.FirstOrDefault(candidate => MaintenanceSwap.Ready(host, power, source, old, candidate));
+            if (source == null || required <= 0) { RememberMaintenanceFailure(host, 31, "maintenance.source_missing"); return; }
+            var eligible = BatteryCandidates(rule, old, required, source).ToList();
+            if (eligible.Count == 0 && PowerHelper.CanDrawPowerSource(old, required)) { ClearMaintenanceFailure(31, host.uniqueId); return; }
+            GameItem spare = eligible.FirstOrDefault(candidate => MaintenanceSwap.Ready(host, power, source, old, candidate, allowOtherBattery: true));
             if (spare == null)
             {
                 string reason = eligible.Count == 0 ? "f31.missing" : eligible.Any(candidate =>
@@ -231,40 +152,27 @@ namespace ShopAssist
             }
             int oldEnergy = old.GetTagReadonly("power_source_item_energy").GetInt();
             int newEnergy = spare.GetTagReadonly("power_source_item_energy").GetInt();
-            if (!MaintenanceSwap.Try(host, power, source, old, spare) || old.GetTagReadonly("power_source_item_energy").GetInt() != oldEnergy ||
+            if (!MaintenanceSwap.Try(host, power, source, old, spare, allowOtherBattery: true) || old.GetTagReadonly("power_source_item_energy").GetInt() != oldEnergy ||
                 spare.GetTagReadonly("power_source_item_energy").GetInt() != newEnergy)
             { log("F31 exchange did not complete as expected; inspect both batteries and the swap buffer."); RememberMaintenanceFailure(host, 31, "f31.inspect", true); return; }
             ClearMaintenanceFailure(31, host.uniqueId);
-            log("F31 replaced the registered " + host.identifier + " battery before its night cycle.");
+            log("F31 replaced the registered " + host.identifier + " battery.");
         }
 
         private static bool BatteryHost(GameItem host) => host != null && !host.IsTag("BROKEN_MACHINE_TAG") &&
-            (host.identifier == "hydroponic" || (host.identifier == "printer" && host.IsTag("PRINTER_TAG")));
-
-        private static bool WillRunCycle(GameItem host)
-        {
-            string state = MachineProgressHelper.GetMachineState(host);
-            if (state != MachineProgressHelper.STATE_READY && state != MachineProgressHelper.STATE_WORKING) return false;
-            if (host.identifier == "printer")
-            {
-                var chip = MachinePanel<GameSlotInventory>(host, "chip")?.childItem;
-                var input = MachinePanel<GameGridInventory>(host, "input");
-                return chip != null && (state == MachineProgressHelper.STATE_WORKING || (input != null &&
-                    MachineProgressHelper.CanStart(chip, host) && MachineProgressHelper.HasRequiredAdditionalItems(chip, input.childItems)));
-            }
-            var seed = MachineHydroponic.GetInputSlot(host)?.childItem;
-            GameItem water = MachineHydroponic.GetWaterSlotItem(host);
-            return seed != null && water != null && WaterHelper.GetCurrentCapacityML(water) >= HydroponicHelper.GetWaterUsePerCycle(seed);
-        }
+            host.IsTag("machinery") && MachineryHelper.GetMachinePowerUsage(host) > 0 &&
+            MachineHelper.GetBatterySlot(host) is GameSlotInventory slot && ReferenceEquals(slot.GetParentItem(), host) &&
+            OrdinaryBattery(slot.childItem);
 
         private static bool OrdinaryBattery(GameItem item) => item != null && item.IsTag("power_source_item") &&
             !item.IsTag("CURRENT_CONVERTER_TAG") && !item.IsTag("HYPERTECH_BATTERY_TAG") &&
             !item.IsTag("BREEDER_POWER_SOURCE_ITEM_TAG") && !item.IsTag("power_source_item_recharge");
 
-        private static bool EligibleBattery(GameItem candidate, GameItem installed, int required) =>
-            OrdinaryBattery(candidate) && OrdinaryBattery(installed) && required >= 0 && candidate.identifier == installed.identifier &&
-            PowerHelper.CanDrawPowerSource(candidate, required) && candidate.GetTagReadonly("power_source_item_energy").GetInt() >
-                installed.GetTagReadonly("power_source_item_energy").GetInt();
+        private static bool EligibleBattery(GameItem candidate, GameItem installed, int required, int condition = 0) =>
+            OrdinaryBattery(candidate) && OrdinaryBattery(installed) && PowerHelper.CanDrawPowerSource(candidate, required) &&
+            ConsumableSelectionRules.BatteryImproves(condition, installed.GetTagReadonly("power_source_item_energy").GetInt(),
+                installed.GetTagReadonly("power_source_item_max_energy").GetInt(), candidate.GetTagReadonly("power_source_item_energy").GetInt(),
+                candidate.GetTagReadonly("power_source_item_max_energy").GetInt(), required);
 
         private void ReplaceFilter(PendingFilter pending)
         {
@@ -272,16 +180,21 @@ namespace ShopAssist
                 !IsFilterHost(pending.Host) || !ShopInventory.Owned(pending.Host) || pending.Host.uniqueId <= 0 ||
                 pending.Host.parentInventory != pending.Parent || !FilterSlots(pending.Host).Contains(pending.Seat) ||
                 pending.Seat.childItem != pending.Filter || !EligibleFilter(pending.Filter) ||
-                DurabilityHelper.GetRealDurability(pending.Filter) != 0 || ItemPinHelper.IsPinned(pending.Filter)) return;
+                ItemPinHelper.IsPinned(pending.Filter)) return;
             if (AttentionBook.HasInspection("f35.open", pending.Host.uniqueId)) return;
+            if (!FilterCapability(pending.Host, FilterPath.Any).Allowed) return;
             GameSlotInventory slot = pending.Seat;
             if (!ReadMaintenance(out MaintenanceData data)) return;
             MaintenanceRule rule = data.rules.SingleOrDefault(r => r.kind == 35 && r.host == pending.Host.uniqueId);
-            if (rule == null || !AllowsFilter(rule, pending.Filter)) return;
+            if (rule == null || !AllowsFilter(rule, pending.Filter) || !FilterDue(rule, pending.Filter)) return;
             GameGridInventory source = ResolveMaintenanceSource(rule);
             if (source == null) { RememberMaintenanceFailure(pending.Host, 35, "maintenance.source_missing"); return; }
-            var eligible = Ordered(source).Where(candidate => CompatibleFilter(rule, pending.Filter, candidate))
-                .OrderByDescending(candidate => candidate.identifier == pending.Filter.identifier).ToList();
+            int oldDurability = DurabilityHelper.GetRealDurability(pending.Filter);
+            var eligible = ConsumableSelectionRules.OrderFilters(
+                Ordered(source).Where(candidate => CompatibleFilter(rule, pending.Filter, candidate)),
+                DurabilityHelper.GetRealDurability, candidate => candidate.identifier == pending.Filter.identifier)
+                .ThenBy(candidate => candidate.uniqueId).ToList();
+            if (!ConsumableSelectionRules.FilterNeedsWork(rule.condition ?? 0, oldDurability, true, eligible.Count != 0)) return;
             GameItem spare = eligible.FirstOrDefault(candidate => MaintenanceSwap.Ready(pending.Host, slot, source, pending.Filter, candidate, true));
             if (spare == null)
             {
@@ -289,7 +202,6 @@ namespace ShopAssist
                     MaintenanceSwap.CallbackCapability(slot, source, pending.Filter, candidate).Allowed) ? "maintenance.swap_unavailable" : "maintenance.conflict";
                 RememberMaintenanceFailure(pending.Host, 35, reason); return;
             }
-            int oldDurability = DurabilityHelper.GetRealDurability(pending.Filter);
             int newDurability = DurabilityHelper.GetRealDurability(spare);
             if (!MaintenanceSwap.Try(pending.Host, slot, source, pending.Filter, spare, true) ||
                 DurabilityHelper.GetRealDurability(pending.Filter) != oldDurability || DurabilityHelper.GetRealDurability(spare) != newDurability)
@@ -315,10 +227,12 @@ namespace ShopAssist
                     for (int index = 0; index < slots.Count; index++)
                     {
                         GameItem filter = slots[index].childItem;
-                        if (!AllowsFilter(rule, filter) || DurabilityHelper.GetRealDurability(filter) != 0) continue;
+                        if (!AllowsFilter(rule, filter) || !FilterDue(rule, filter)) continue;
                         if (sources == null) sources = ShopInventory.OwnedLocations(false);
                         GameGridInventory source = ResolveMaintenanceSource(rule, sources);
                         var candidates = source == null ? new List<GameItem>() : source.childItems.Where(i => CompatibleFilter(rule, filter, i)).ToList();
+                        if (!ConsumableSelectionRules.FilterNeedsWork(rule.condition ?? 0, DurabilityHelper.GetRealDurability(filter),
+                            source != null, candidates.Count != 0)) continue;
                         bool available = candidates.Any(i => MaintenanceSwap.Ready(host, slots[index], source, filter, i, true));
                         ActionAvailability capability = FilterCapability(host, FilterPath.Any);
                         string reason = !capability.Allowed ? capability.ReasonKey : available ? "f35.pending" : source == null ? "maintenance.source_missing" : candidates.Count == 0 ? "f35.missing" :
@@ -383,8 +297,7 @@ namespace ShopAssist
             {
                 maintenanceDraftHost = maintenanceHost;
                 maintenanceSource = saved == null ? null : sources.FirstOrDefault(l => l.Key() == saved.location);
-                maintenanceThreshold = saved?.threshold ?? 20;
-                maintenancePriority = saved?.priority ?? 0;
+                maintenanceCondition = saved?.condition ?? (maintenanceKind == 31 ? 2 : 0);
                 maintenanceMaterials = saved?.materials ?? 7;
                 maintenanceGrade = saved?.grade ?? 0;
             }
@@ -467,12 +380,17 @@ namespace ShopAssist
                 return;
             }
             builder.BeginRow();
-            VisualChoices.Location(builder, ShopSettings.Text("visual.source"), maintenanceSource, () => SameMaintenanceSession() ? MaintenanceSources() : new List<ShopInventory.Location>(), source =>
+            VisualChoices.Slot(builder, ShopSettings.Text("visual.source"), maintenanceSource?.Owner, maintenanceSource?.Name, () =>
             {
-                if (!CurrentView() || !ShopInventory.TryRefresh(source, out ShopInventory.Location refreshed) ||
-                    !IsMaintenanceSource(refreshed, maintenanceKind) || refreshed.Owner == maintenanceHost)
-                { ShopNotice.Show(ShopSettings.Text("inv.changed")); return; }
-                maintenanceSource = refreshed; RebuildMaintenance();
+                if (!CurrentView()) return;
+                ChooseConsumableSource(ShopSettings.Text("visual.source"), maintenanceKind, maintenanceHost, maintenanceSource, source =>
+                {
+                    if (!CurrentView() || !ShopInventory.TryRefresh(source, out ShopInventory.Location refreshed) ||
+                        !IsMaintenanceSource(refreshed, maintenanceKind) || refreshed.Owner == maintenanceHost ||
+                        !InventoryRoutes.AutoTakeAllowed(refreshed.Inventory))
+                    { ShopNotice.Show(ShopSettings.Text("inv.changed")); return; }
+                    maintenanceSource = refreshed; RebuildMaintenance();
+                }, own);
             }, "source");
             builder.AddLabel("→");
             VisualChoices.Slot(builder, ShopSettings.Text("visual.machine"), maintenanceHost, maintenanceHost.GetDisplayName(true),
@@ -499,18 +417,14 @@ namespace ShopAssist
             }
             if (maintenanceKind == 31)
             {
-                builder.AddLabel(ShopSettings.Text("f31.threshold") + " " + maintenanceThreshold + "%", "threshold_label");
-                builder.AddSlider(0, 100, maintenanceThreshold, value =>
-                {
-                    if (!CurrentView()) return;
-                    maintenanceThreshold = Mathf.Clamp(Mathf.RoundToInt(value), 0, 100);
-                    maintenanceWindow?.Get("threshold_label")?.SetText(ShopSettings.Text("f31.threshold") + " " + maintenanceThreshold + "%");
-                }, true, "threshold");
-                builder.AddDropdown(new[] { ShopSettings.Text("f31.position"), ShopSettings.Text("f31.charge") }, maintenancePriority,
-                    value => { if (CurrentView()) maintenancePriority = value == 1 ? 1 : 0; }, "priority");
+                builder.AddDropdown(new[] { ShopSettings.Text("f31.best_energy"), ShopSettings.Text("f31.best_percentage"),
+                    ShopSettings.Text("f31.cannot_run") }, maintenanceCondition,
+                    value => { if (CurrentView()) { maintenanceCondition = Mathf.Clamp(value, 0, 2); maintenanceDirty = true; } }, "condition");
             }
             if (maintenanceKind == 35)
             {
+                builder.AddDropdown(new[] { ShopSettings.Text("f35.exhausted"), ShopSettings.Text("f35.best_remaining") }, maintenanceCondition,
+                    value => { if (CurrentView()) { maintenanceCondition = Mathf.Clamp(value, 0, 1); maintenanceDirty = true; } }, "condition");
                 builder.BeginRow();
                 foreach (string id in FilterKinds)
                 {
@@ -542,8 +456,7 @@ namespace ShopAssist
         private bool CanSaveMaintenance() => maintenanceHost != null && maintenanceSource != null &&
             (maintenanceKind != 35 || maintenanceMaterials != 0);
 
-        private List<ShopInventory.Location> MaintenanceSources() => ShopInventory.OwnedLocations(false)
-            .Where(location => IsMaintenanceSource(location, maintenanceKind) && location.Owner != maintenanceHost).ToList();
+        private List<ShopInventory.Location> MaintenanceSources() => ConsumableSources(maintenanceKind, maintenanceHost);
 
         private (bool known, int matching, int ready) MaintenanceSpareCounts(GameItem host, GameGridInventory source)
         {
@@ -557,10 +470,10 @@ namespace ShopAssist
                 if (!OrdinaryBattery(old)) return (false, 0, 0);
                 int required = MachineryHelper.GetMachinePowerUsage(host);
                 bool capable = BatteryCapability(host).Allowed;
-                foreach (GameItem candidate in Ordered(source).Where(item => EligibleBattery(item, old, required)))
+                foreach (GameItem candidate in Ordered(source).Where(item => EligibleBattery(item, old, required, maintenanceCondition)))
                 {
                     matches.Add(candidate);
-                    if (capable && MaintenanceSwap.Ready(host, seat, source, old, candidate)) ready.Add(candidate);
+                    if (capable && MaintenanceSwap.Ready(host, seat, source, old, candidate, allowOtherBattery: true)) ready.Add(candidate);
                 }
             }
             else
@@ -636,7 +549,7 @@ namespace ShopAssist
                     AttentionBook.HasInspection(kind == 31 ? "f31.open" : "f35.open", id))
                 { skipped++; continue; }
                 data.rules.Add(new MaintenanceRule { kind = kind, host = id, location = saved.location,
-                    threshold = saved.threshold, priority = saved.priority, materials = saved.materials, grade = saved.grade });
+                    threshold = saved.threshold, condition = saved.condition, materials = saved.materials, grade = saved.grade });
                 copied++;
             }
             if (copied != 0 && !SaveMaintenanceData(data)) return;
@@ -665,8 +578,8 @@ namespace ShopAssist
             data.rules.RemoveAll(r => r.kind == maintenanceKind && r.host == hostId);
             if (data.rules.Count >= 128) return;
             data.rules.Add(new MaintenanceRule { kind = maintenanceKind, host = hostId, location = sourceKey,
-                threshold = maintenanceKind == 31 ? Mathf.Clamp(maintenanceThreshold, 0, 100) : 0,
-                priority = maintenanceKind == 31 && maintenancePriority == 1 ? 1 : 0,
+                threshold = 0,
+                condition = maintenanceCondition,
                 materials = maintenanceKind == 35 ? maintenanceMaterials : (int?)null,
                 grade = maintenanceKind == 35 ? maintenanceGrade : (int?)null });
             try
@@ -724,30 +637,6 @@ namespace ShopAssist
             maintenanceReadError = error.Message;
         }
 
-        private static MaintenanceData DecodeMaintenance(string raw, Guid run, int slot)
-        {
-            MaintenanceData data = raw == null ? new MaintenanceData { version = 3, run = run.ToString("N"), slot = slot,
-                rules = new List<MaintenanceRule>() } : ShopData.Decode<MaintenanceData>(raw, 65536);
-            if (data == null || data.version != 3 || !Guid.TryParseExact(data.run, "N", out Guid stored) || stored != run ||
-                data.slot != slot || data.rules == null || data.rules.Count > 128 ||
-                data.rules.Any(r => r == null || (r.kind != 31 && r.kind != 35) || r.host <= 0 ||
-                    r.threshold < 0 || r.threshold > 100 || r.priority < 0 || r.priority > 1 ||
-                    (r.kind == 35 && (r.threshold != 0 || r.priority != 0))) ||
-                data.rules.GroupBy(r => r.kind + ":" + r.host).Any(g => g.Count() != 1)) throw new FormatException("Invalid maintenance data");
-            foreach (var rule in data.rules)
-            {
-                if (!ParseMaintenanceSource(rule.location, rule.kind, out _, out _, out _))
-                    throw new FormatException("Invalid maintenance source");
-                if (rule.kind == 35 && (!rule.materials.HasValue || rule.materials < 0 || rule.materials > 7 ||
-                    !rule.grade.HasValue || rule.grade < 0 || rule.grade > 2) ||
-                    rule.kind == 31 && (rule.materials.HasValue || rule.grade.HasValue)) throw new FormatException("Invalid filter preferences");
-            }
-            return data;
-        }
-
-        private static bool ParseMaintenanceSource(string key, int kind, out int owner, out string role, out int page) =>
-            MaintenanceSourceKey.TryParse(key, kind, out owner, out role, out page);
-
         private bool SaveMaintenanceData(MaintenanceData data)
         {
             try
@@ -755,7 +644,7 @@ namespace ShopAssist
                 if (!ShopInventory.InStore || data == null || !Guid.TryParse(PlayerStore.Instance.runID, out Guid run) ||
                     data.run != run.ToString("N") || data.slot != PlayerStore.Instance.saveSlotId)
                     throw new InvalidOperationException("Maintenance save identity changed.");
-                data.version = 3;
+                data.version = MaintenanceVersion;
                 string raw = ShopData.Encode(data);
                 if (raw.Length > 65536) throw new InvalidOperationException("Maintenance data exceeds its size limit.");
                 ModHelper.SetModData(ModEntry.Id, MaintenanceKey, raw);
@@ -771,7 +660,7 @@ namespace ShopAssist
             locations = locations ?? ShopInventory.OwnedLocations(false);
             if (!ParseMaintenanceSource(rule.location, rule.kind, out int sourceId, out string role, out int page)) return null;
             var matches = locations.Where(l => IsMaintenanceSource(l, rule.kind) && l.Key() == rule.location).ToArray();
-            if (matches.Length == 1) return matches[0].Inventory as GameGridInventory;
+            if (matches.Length == 1) return InventoryRoutes.AutoTakeAllowed(matches[0].Inventory) ? matches[0].Inventory as GameGridInventory : null;
             if (matches.Length != 0 || rule.kind != 31 || role != "batteries" || page != -1) return null;
             var owners = locations.Where(l => !l.IsMachine).SelectMany(l => l.Inventory.childItems)
                 .Where(i => i != null && i.uniqueId == sourceId && i.identifier == "recharger" && ShopInventory.Owned(i)).Distinct().ToArray();
@@ -780,23 +669,23 @@ namespace ShopAssist
             MachineryPanel panel = row.GetPanel("batteries");
             if (panel == null || panel.isHidden || panel.content == null) return null;
             var nodes = MachineryContainerUtils.Collect(panel.content);
-            return nodes.Count == 1 ? nodes[0] as GameGridInventory : null;
+            return nodes.Count == 1 && nodes[0] is GameGridInventory grid && InventoryRoutes.AutoTakeAllowed(grid) ? grid : null;
         }
 
         private void RebuildMaintenance() { if (maintenanceWindow?.IsAlive == true) RenderMaintenance(); }
         private void CloseMaintenance()
         {
+            ClearConsumableSourceMarkers();
             CloseMaintenanceCopy();
             CustomUIWindow window = maintenanceWindow;
             maintenanceWindow = null; maintenanceScroll = null; maintenanceRun = null; maintenanceRevision++;
             maintenanceHost = null; maintenanceDraftHost = null; maintenanceSource = null; maintenanceDirty = false;
             window?.Close();
         }
-        private void ResetMaintenance() { CloseMaintenance(); pendingFilters.Clear(); batteryAttemptDay.Clear(); maintenanceProblems.Clear(); maintenanceReadError = null; AttentionBook.Changed(); }
+        private void ResetMaintenance() { CloseMaintenance(); ClearConsumableSourceMarkers(); consumableSourceNumbers.Clear(); pendingFilters.Clear(); maintenanceProblems.Clear(); maintenanceReadError = null; AttentionBook.Changed(); }
         private void StopMaintenance()
         {
             ResetMaintenance();
-            batteryHarmony?.UnpatchAll(batteryHarmony.Id); batteryHarmony = null; batteryCycles.Clear();
             filterHarmony?.UnpatchAll(filterHarmony.Id); filterHarmony = null;
         }
     }

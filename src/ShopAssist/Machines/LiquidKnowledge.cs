@@ -16,7 +16,8 @@ namespace ShopAssist
             internal string Name, Summary, Description, Atlas, Sprite;
         }
         private static readonly Guid PreviousBuild = new Guid("83045710-adce-4e78-8ff1-b43a9399ec0d");
-        private static readonly Guid CurrentBuild = new Guid("efd8b252-19aa-489b-96d3-e172c92c0b75");
+        private static readonly Guid Revision12Build = new Guid("efd8b252-19aa-489b-96d3-e172c92c0b75");
+        private static readonly Guid Revision13Build = new Guid("911508a6-e0eb-4cc0-91e8-e14b16ea28d7");
         private static readonly Dictionary<string, (int particle, double floor, int wear, int removed)> FilterData =
             new Dictionary<string, (int, double, int, int)>(StringComparer.Ordinal)
             {
@@ -39,7 +40,8 @@ namespace ShopAssist
             "livestock_immunity", "wine_extract", "nomore"
         };
 
-        internal static bool VerifiedGameBuild(Guid module) => module == PreviousBuild || module == CurrentBuild;
+        internal static bool VerifiedGameBuild(Guid module) =>
+            module == PreviousBuild || module == Revision12Build || module == Revision13Build;
         private static bool Supported => VerifiedGameBuild(typeof(GameItem).Module.ModuleVersionId);
         private const BindingFlags Methods = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance;
         private static readonly MethodInfo[] WaterMethods = typeof(WaterHelper).GetMethods(Methods);

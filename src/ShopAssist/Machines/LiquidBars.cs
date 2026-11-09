@@ -35,6 +35,7 @@ namespace ShopAssist
             internal bool Chemical, NativeEnabled, Hovered, MatchActive, ConfrontActive, ModeReady, Stacked, HasEffects, Pending;
             internal string Raw, Selected, MethodSignature, ExpandedMethod, TestedRaw, LabelRaw, PendingDetail;
             internal string Locale;
+            internal float NextCheck;
             internal TMP_FontAsset Font;
             internal int TotalAmount;
             internal float PanelWidth, PanelHeight, RowHeight, ModeWidth, ModeFont;
@@ -76,6 +77,7 @@ namespace ShopAssist
         }
 
         private static LiquidBars active;
+        private static readonly Vector3[] windowCorners = new Vector3[4];
         private readonly ConfigEntry<bool> enabled, showBars, showColors, sortByShare;
         private readonly ConfigEntry<int> fontSize;
         private readonly ConfigEntry<string> pinSetting;
@@ -176,6 +178,29 @@ namespace ShopAssist
         {
             if (view.Panel == null) return;
             if (!StillOpen(view)) { Clear(view); return; }
+            if (view.Root != null)
+            {
+                if (view.NativeText.text != view.Raw || view.NativeText.enabled ||
+                    view.Tested?.Owned() == false || view.Label?.Owned() == false || view.TotalText?.Owned() == false || view.Product?.Owned() == false)
+                { Clear(view); return; }
+                Rect bounds = ((RectTransform)view.Panel.transform).rect;
+                bool layoutChanged = Mathf.Abs(view.PanelWidth - bounds.width) > .5f || Mathf.Abs(view.PanelHeight - bounds.height) > .5f ||
+                    view.HasEffects != HasChemicalEffects(view) || (view.Match?.gameObject.activeInHierarchy == true) != view.MatchActive ||
+                    (view.Confront?.gameObject.activeInHierarchy == true) != view.ConfrontActive;
+                bool hovered = PointerOver(view.Root);
+                bool left = view.Hovered && !hovered;
+                view.Hovered = hovered;
+                if (layoutChanged || left)
+                {
+                    UpdateRows(view);
+                    if (view.Root == null) return;
+                }
+                if (view.Detail != null && !view.Detail.IsAlive) { view.Detail = null; view.Selected = null; view.DetailBody = null; }
+                else if (view.Detail?.IsAlive == true) PositionWindow(view, view.Detail, view.Detail.Rect.rect.size);
+                if (view.DisplaySettings?.IsAlive == true) PositionWindow(view, view.DisplaySettings, view.DisplaySettings.Rect.rect.size);
+            }
+            if (Time.unscaledTime < view.NextCheck && !view.Pending && !view.Hovered) return;
+            view.NextCheck = Time.unscaledTime + .05f;
             if (!displayNames.Ready()) { view.Pending = true; return; }
             if (view.Root == null)
             {
@@ -184,30 +209,12 @@ namespace ShopAssist
                 view.Pending = false; UpdateRows(view); UpdateDetail(view);
                 return;
             }
-            if (view.NativeText.text != view.Raw || view.NativeText.enabled ||
-                view.Tested?.Owned() == false || view.Label?.Owned() == false || view.TotalText?.Owned() == false || view.Product?.Owned() == false)
-            { Clear(view); return; }
-            Rect bounds = ((RectTransform)view.Panel.transform).rect;
-            if (Mathf.Abs(view.PanelWidth - bounds.width) > .5f || Mathf.Abs(view.PanelHeight - bounds.height) > .5f ||
-                view.HasEffects != HasChemicalEffects(view))
-            {
-                if (!Layout(view)) { Clear(view); return; }
-                UpdateRows(view);
-            }
-            bool hovered = PointerOver(view.Root);
-            if (view.Hovered && !hovered) { view.Hovered = false; UpdateRows(view); }
-            else view.Hovered = hovered;
             if (view.Pending || view.TestedRaw != (view.Tested?.Text?.text ?? "") || view.LabelRaw != (view.Label?.Text?.text ?? "") ||
                 (view.Title?.text ?? "") != SampleTitle(view) || view.Locale != (LocHelper.GetCurrentLocaleCode() ?? "") ||
                 view.Font != view.NativeText.font)
             { view.Pending = false; UpdateRows(view); UpdateDetail(view); }
             string pendingDetail = view.PendingDetail;
             if (pendingDetail != null) { view.PendingDetail = null; OpenDetail(view, pendingDetail); }
-            if (view.Detail != null && !view.Detail.IsAlive) { view.Detail = null; view.Selected = null; view.DetailBody = null; }
-            else if (view.Detail?.IsAlive == true && !UIDragHandler.isDraggingAnyUI)
-                PositionWindow(view, view.Detail, view.Detail.Rect.rect.size);
-            if (view.DisplaySettings?.IsAlive == true && !UIDragHandler.isDraggingAnyUI)
-                PositionWindow(view, view.DisplaySettings, view.DisplaySettings.Rect.rect.size);
         }
 
         internal void SettingsChanged()
@@ -818,9 +825,9 @@ namespace ShopAssist
             Camera camera = canvas != null && canvas.renderMode != RenderMode.ScreenSpaceOverlay ? canvas.worldCamera : null;
             Canvas sourceCanvas = scanner.GetComponentInParent<Canvas>();
             Camera sourceCamera = sourceCanvas != null && sourceCanvas.renderMode != RenderMode.ScreenSpaceOverlay ? sourceCanvas.worldCamera : null;
-            Vector3[] corners = new Vector3[4]; scanner.GetWorldCorners(corners);
-            Vector2 left = RectTransformUtility.WorldToScreenPoint(sourceCamera, corners[1]);
-            Vector2 right = RectTransformUtility.WorldToScreenPoint(sourceCamera, corners[2]);
+            scanner.GetWorldCorners(windowCorners);
+            Vector2 left = RectTransformUtility.WorldToScreenPoint(sourceCamera, windowCorners[1]);
+            Vector2 right = RectTransformUtility.WorldToScreenPoint(sourceCamera, windowCorners[2]);
             float scale = canvas != null && canvas.scaleFactor > 0 ? canvas.scaleFactor : 1;
             float width = size.x * scale;
             float areaLeft = LetterboxManager.GameAreaWidth > 0 ? LetterboxManager.GameAreaX : 0;
@@ -832,7 +839,11 @@ namespace ShopAssist
             point.x = Mathf.Clamp(point.x, areaLeft + 2, Mathf.Max(areaLeft + 2, areaRight - width - 2));
             point.y = Mathf.Clamp(point.y, Mathf.Min(areaTop - 2, areaBottom + size.y * scale + 2), areaTop - 2);
             if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(parent, point, camera, out Vector2 local)) return;
-            rect.anchorMin = rect.anchorMax = parent.pivot; rect.pivot = new Vector2(0, 1); rect.anchoredPosition = local;
+            if (rect.anchorMin != parent.pivot) rect.anchorMin = parent.pivot;
+            if (rect.anchorMax != parent.pivot) rect.anchorMax = parent.pivot;
+            Vector2 pivot = new Vector2(0, 1);
+            if (rect.pivot != pivot) rect.pivot = pivot;
+            if (rect.anchoredPosition != local) rect.anchoredPosition = local;
         }
 
         private static RectTransform Box(RectTransform parent, string name, Color color, float ax0, float ay0, float ax1, float ay1,
@@ -905,7 +916,7 @@ namespace ShopAssist
             view.Summary = view.Content = view.Viewport = view.LayoutRoot = view.Header = view.ListHeader = view.SortRect = view.HeaderRule = view.SummaryRule = null;
             view.ScreenCenter = view.ScreenLeft = view.ScreenRight = null;
             view.Match = view.Confront = view.Sort = view.Gear = null; view.Raw = view.TestedRaw = view.LabelRaw = null;
-            view.Locale = view.PendingDetail = null; view.Font = null; view.Pending = false;
+            view.Locale = view.PendingDetail = null; view.Font = null; view.Pending = false; view.NextCheck = 0f;
             view.TotalAmount = 0; view.Hovered = view.ModeReady = false;
             view.Rows.Clear(); view.NativeRows.Clear(); view.RowViews.Clear(); view.Seen.Clear(); view.Ordering.Reset();
             view.Tested = view.Label = view.TotalText = view.Product = null;

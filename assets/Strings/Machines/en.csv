@@ -64,7 +64,7 @@ f19.more,Details
 f19.less,Hide details
 f19.applies,Applies
 f30.enabled,View machine supplies, power and output
-f30.tip,Open Machine Status in the store to review input, power and output for hydroponic machines, collectors, evaporators, printers and furnaces. Filter for machines needing attention. Select a card to see its location and bring its already-open inventory window forward. Up to 100 entries are shown.
+f30.tip,Open Machine Status in the store to review input, power and output for hydroponic machines, collectors, evaporators, printers and furnaces. Filter for machines needing attention. Select a card to see its location; double-click to open the machine. Up to 100 entries are shown.
 f30.key,Open machine status overview
 f30.key.tip,Press in the store to open the machine status overview.
 f30.open,Machine status
@@ -86,7 +86,7 @@ f32.enabled,Automatically replant a chosen hydroponic seed
 f32.selected,Selected
 f32.target,Selected crop: {0}
 f32.unknown_plant,Unknown crop
-f32.tip,Choose Replant on a hydroponic machine and select a seed from its input or output. Turn on gene scanning to choose between strains. After a non-perennial harvest an unstacked matching seed is taken from that machine's output. If replanting cannot proceed fix the issue and retry.
+f32.tip,Choose a seed and source in the hydroponic window: its own output or a container holding seeds. Enable the genetics scanner for multiple strains. After a non-perennial harvest, replant one unstacked seed with the same plant and genes. Shared sources serve devices by stable device number.
 f32.open,Choose the hydroponic replant seed
 f32.stop,Stop replanting this machine
 f32.empty,No seed is available in this machine.
@@ -143,16 +143,10 @@ f33.need_machine,Open a furnace first.
 f30.farmFull,Collector vessel is full
 f30.broken,Machine is broken
 f10.compatible,Compatible modules only
-f10.by_location,By compatibility and location
-f10.search,Search modules
-f10.all_types,All types
-f10.universal,Universal
-f10.hydroponic,Hydroponic
-f10.evaporator,Evaporator
-f10.printer,Printer
-f10.furnace,Furnace
-f10.other,Other
-f10.reserved,Reserved
+f10.all_attributes,All attributes
+f10.performance_desc,Performance ↓
+f10.efficiency_desc,Efficiency ↓
+f10.quality_desc,Quality ↓
 f10.choose_storage,Choose module storage
 f10.bind_storage,Use storage
 f10.storage,Module storage: {0} · {1}/{2} cells free
@@ -186,3 +180,5 @@ f19.tablet.summary,Adds chlorine to treat microbes and chemical contamination ov
 f19.purifier.summary,Uses power to remove this component from water; machine quality limits purity.
 f19.evaporator_water.summary,Uses power to move volatile components into the distillate.
 f19.evaporator_residue.summary,Uses power to remove volatile liquid while this component remains in the source.
+f32.choose_source,Choose seed source
+f32.source_missing,Seed source unavailable. Choose it again.

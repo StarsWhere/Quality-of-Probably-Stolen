@@ -64,7 +64,7 @@ f19.more,详细参数
 f19.less,收起参数
 f19.applies,适用
 f30.enabled,查看机器供料供电和产出
-f30.tip,在店内打开机器状态总览，查看水培机、集水器、蒸发器、打印机和熔炉的供料、供电及产出状态，也可只看需要处理的机器。选中卡片查看位置；所在库存窗口已打开时可将其置前。最多显示 100 条。
+f30.tip,在店内打开机器状态总览，查看水培机、集水器、蒸发器、打印机和熔炉的供料、供电及产出状态，也可只看需要处理的机器。选中卡片查看位置，双击打开机器。最多显示 100 条。
 f30.key,打开机器状态总览
 f30.key.tip,在店内按此键打开机器状态总览。
 f30.open,机器状态
@@ -86,7 +86,7 @@ f32.enabled,自动补种水培机指定种子
 f32.selected,已选
 f32.target,已选作物：{0}
 f32.unknown_plant,未知作物
-f32.tip,在水培机窗口选择“自动补种”，从本机输入槽或产出槽选择种子；同种植物有多个品系时需开启基因扫描。非多年生作物收获后，从本机产出槽取一粒同植物、同基因且未堆叠的种子补种。暂时无法补种时可处理后重试。
+f32.tip,在水培机窗口选择种子和来源；可用本机产出，也可指定含种子的容器。同种植物有多个品系时需开启基因扫描。非多年生作物收获后，取同植物、同基因且未堆叠的种子补种；共享来源按设备编号分配。
 f32.open,选择水培补种种子
 f32.stop,停止这台机器的补种
 f32.empty,这台机器中没有可选择的种子。
@@ -143,16 +143,10 @@ f33.need_machine,请先打开熔炉。
 f30.farmFull,集水器的容器已满
 f30.broken,机器损坏
 f10.compatible,仅显示适用模组
-f10.by_location,按兼容性和位置
-f10.search,搜索模组
-f10.all_types,全部类型
-f10.universal,通用
-f10.hydroponic,水培机
-f10.evaporator,蒸发器
-f10.printer,打印机
-f10.furnace,熔炉
-f10.other,其他
-f10.reserved,已预留
+f10.all_attributes,全部属性
+f10.performance_desc,性能 ↓
+f10.efficiency_desc,效率 ↓
+f10.quality_desc,品质 ↓
 f10.choose_storage,选择模组收纳区
 f10.bind_storage,指定收纳区
 f10.storage,模组收纳区：{0} · 空余 {1}/{2} 格
@@ -186,3 +180,5 @@ f19.tablet.summary,加入氯后随时间处理微生物和化学污染。
 f19.purifier.summary,耗电净化水中的该成分；纯度受机器品质限制。
 f19.evaporator_water.summary,通电后将挥发性成分移入馏出物。
 f19.evaporator_residue.summary,通电后移走挥发性液体，此成分留在原容器。
+f32.choose_source,选择种子来源
+f32.source_missing,种子来源不可用，请重新选择。

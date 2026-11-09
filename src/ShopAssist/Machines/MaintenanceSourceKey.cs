@@ -7,7 +7,7 @@ namespace ShopAssist
         internal static bool TryParse(string key, int kind, out int owner, out string role, out int page)
         {
             owner = 0; role = null; page = -1;
-            if (kind != 31 && kind != 35) return false;
+            if (kind != 31 && kind != 32 && kind != 35) return false;
             if (key == "root:stock") { role = "stock"; return true; }
             if (string.IsNullOrEmpty(key) || key.Length > 160) return false;
             string[] parts = key.Split(':');

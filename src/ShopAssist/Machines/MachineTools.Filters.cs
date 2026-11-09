@@ -17,7 +17,8 @@ namespace ShopAssist
             (rule.materials.GetValueOrDefault() & FilterBit(item.identifier)) != 0;
         private static bool CompatibleFilter(MaintenanceRule rule, GameItem old, GameItem next)
         {
-            if (!AllowsFilter(rule, next) || DurabilityHelper.GetRealDurability(next) <= 0) return false;
+            if (!AllowsFilter(rule, next) || old == null || !ConsumableSelectionRules.FilterImproves(
+                DurabilityHelper.GetRealDurability(old), DurabilityHelper.GetRealDurability(next))) return false;
             if (old.identifier == next.identifier) return true;
             int previousSize = old.GetTagReadonly("FILTER_SIZE_TAG").GetInt(), nextSize = next.GetTagReadonly("FILTER_SIZE_TAG").GetInt();
             return previousSize > 0 && nextSize > 0 && (rule.grade == 2 || rule.grade == 1 && nextSize <= previousSize);
@@ -193,7 +194,16 @@ namespace ShopAssist
         private void QueueFilter(GameItem host, GameSlotInventory seat)
         {
             GameItem filter = seat?.childItem;
-            if (!EligibleFilter(filter) || DurabilityHelper.GetRealDurability(filter) != 0) return;
+            if (!EligibleFilter(filter) || !ReadMaintenance(out MaintenanceData data)) return;
+            MaintenanceRule rule = data.rules.Find(value => value.kind == 35 && value.host == host.uniqueId);
+            if (rule == null || !AllowsFilter(rule, filter) || !FilterDue(rule, filter)) return;
+            int durability = DurabilityHelper.GetRealDurability(filter);
+            if (rule.condition == (int)FilterReplacementCondition.BestRemaining && durability > 0)
+            {
+                GameGridInventory source = ResolveMaintenanceSource(rule);
+                bool hasBetter = source != null && source.childItems.Any(candidate => CompatibleFilter(rule, filter, candidate));
+                if (!ConsumableSelectionRules.FilterNeedsWork(rule.condition.Value, durability, source != null, hasBetter)) return;
+            }
             pendingFilters[seat] = new PendingFilter { Host = host, Filter = filter, Parent = host.parentInventory, Seat = seat,
                 Run = PlayerStore.Instance.runID, Slot = PlayerStore.Instance.saveSlotId };
             machinesDirty = true; machineAttentionDirty = true;

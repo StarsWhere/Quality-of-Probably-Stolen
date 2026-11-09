@@ -82,7 +82,7 @@ public class EvaporatorLayoutScenario : EquipmentFixture
             FeedScenario.Put(bay, installed); origin = installed.modifiedShape.Clone();
             Open(machine); machine.contentWindow.ToFront(); Action("f10.open"); return false;
         }
-        var browser = Ui("f10"); Check(browser.Get("compatible") != null && browser.Get("category") != null && browser.Get("search") != null, "Missing module filters");
+        var browser = Ui("f10"); Check(browser.Get("compatible") != null && browser.Get("attribute")?.dropdown != null, "Missing module filters");
         LayoutScenario.Select(browser, addition); browser.Get("layout").button.onClick.Invoke();
         Ui("f10").Get("preview").button.onClick.Invoke();
         var layout = Ui("f10");
@@ -408,8 +408,7 @@ public sealed class RasMaintenanceScenario : EquipmentFixture
             var pending = (System.Collections.IDictionary)type.GetField("pendingFilters", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(active);
             var actualSeats = (List<GameSlotInventory>)type.GetMethod("FilterSlots", BindingFlags.Static | BindingFlags.NonPublic).Invoke(null, new object[] { ras });
             var swap = own.GetType("ShopAssist.MaintenanceSwap").GetMethod("Ready", BindingFlags.Static | BindingFlags.NonPublic);
-            var args = new object[] { ras, seats[1], source, exhausted, spare };
-            if (swap.GetParameters().Length == 6) args = args.Concat(new object[] { false }).ToArray();
+            var args = new object[] { ras, seats[1], source, exhausted, spare, true, false };
             diagnostics = "pending=" + pending.Count + " native seats=" + actualSeats.Count + " ready=" + swap.Invoke(null, args) +
                 " data=" + ModHelper.GetModData(Mod, "machineMaintenance", "") + " parent=" + seats[1].GetParentItem()?.identifier;
             after = Time.realtimeSinceStartup + 8f; step++; return false;

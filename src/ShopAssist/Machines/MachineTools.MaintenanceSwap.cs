@@ -17,15 +17,17 @@ namespace ShopAssist
             AccessTools.Method(typeof(GameGridInventory), nameof(GameGridInventory.Expel))
         };
         // The native swap uses a shared buffer and can fail after moving an item.
-        internal static bool Ready(GameItem host, GameSlotInventory slot, GameGridInventory source, GameItem oldItem, GameItem spare, bool allowOtherFilter = false)
+        internal static bool Ready(GameItem host, GameSlotInventory slot, GameGridInventory source, GameItem oldItem, GameItem spare,
+            bool allowOtherFilter = false, bool allowOtherBattery = false)
         {
             bool alternate = oldItem != null && spare != null && oldItem.identifier != spare.identifier;
-            if (!ShopInventory.InStore || !ShopInventory.Owned(host) || slot == null || source == null ||
+            if (!ShopInventory.InStore || !ShopInventory.Owned(host) || slot == null || source == null || !InventoryRoutes.AutoTakeAllowed(source) ||
                 oldItem == null || spare == null || oldItem == spare ||
-                (alternate && !(allowOtherFilter && oldItem.IsTag("WATER_FILTER") && spare.IsTag("WATER_FILTER"))) ||
+                (alternate && !(allowOtherFilter && oldItem.IsTag("WATER_FILTER") && spare.IsTag("WATER_FILTER") ||
+                    allowOtherBattery && oldItem.IsTag("power_source_item") && spare.IsTag("power_source_item"))) ||
                 oldItem.unitCount != 1 || spare.unitCount != 1 || slot.childItem != oldItem || oldItem.parentInventory != slot ||
                 spare.parentInventory != source || !ShopInventory.Owned(oldItem) || !oldItem.MayRemove() || !ShopInventory.Movable(spare) ||
-                RequestBook.Reserved(oldItem) || RequestBook.Reserved(spare) || ItemPinHelper.IsPinned(oldItem) ||
+                ItemPinHelper.IsPinned(oldItem) ||
                 oldItem.MaxNumRemove() < 1 || spare.MaxNumRemove() < 1 ||
                 slot.IsInsertLocked() || slot.IsRemoveLocked() || source.IsInsertLocked() || source.IsRemoveLocked() ||
                 !ReferenceEquals(slot.GetParentItem(), host) || oldItem.modifiedShape == null || spare.modifiedShape == null ||
@@ -51,9 +53,10 @@ namespace ShopAssist
                 slot.CheckAcceptParentShapeStateModifier(spare, into, newShape, spare.modifiedState) && spare.MaxNumAdd(into) >= 1;
         }
 
-        internal static bool Try(GameItem host, GameSlotInventory slot, GameGridInventory source, GameItem oldItem, GameItem spare, bool allowOtherFilter = false)
+        internal static bool Try(GameItem host, GameSlotInventory slot, GameGridInventory source, GameItem oldItem, GameItem spare,
+            bool allowOtherFilter = false, bool allowOtherBattery = false)
         {
-            if (!Ready(host, slot, source, oldItem, spare, allowOtherFilter)) return false;
+            if (!Ready(host, slot, source, oldItem, spare, allowOtherFilter, allowOtherBattery)) return false;
             if (oldItem.identifier == spare.identifier) GraphUtils.SwapItemsInPlace(spare, oldItem);
             else
             {
@@ -120,6 +123,11 @@ namespace ShopAssist
         }
 
         private static bool NativeMethods() => MethodCapability().Allowed;
+
+        internal static bool NativeTransferAllowed(GameInventory source, GameInventory destination, GameItem item) =>
+            source != null && destination != null && item != null && InventoryRoutes.AutoTakeAllowed(source) &&
+            NativeMethods() && NativeCallbacks(source) && NativeCallbacks(destination) &&
+            NativeCallback(item.onSlotAddItemFunc) && NativeCallback(item.onSlotRemoveItemFunc);
 
         internal static ActionAvailability MethodCapability()
         {
