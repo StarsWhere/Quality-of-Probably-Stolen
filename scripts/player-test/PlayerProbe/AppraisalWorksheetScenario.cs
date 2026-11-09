@@ -1,214 +1,183 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
-using System.IO;
 using System.Linq;
+using System.Reflection;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
-// Verifies the real worksheet controls with two isolated native appraisal items.
+// Runs only in the independently identified QA player and starts a new run.
 public sealed class AppraisalWorksheetScenario
 {
-    private const string ModId = "starswhere.shopassist";
-    private const string WindowId = "shopassist.f23.worksheet";
-    private QaLoadSlot load;
-    private GameItem first, second;
-    private StoreClient client;
-    private long cash;
-    private int impatience;
-    private int step, waitFrame;
+    private const BindingFlags Flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+    private readonly QaNewRun start = new QaNewRun();
     private readonly ArrangeCapture capture = new ArrangeCapture();
-    private float started = Time.realtimeSinceStartup;
-
+    private GameItem first, second, incompleteFuel;
+    private StoreClient customer;
+    private object feature;
+    private long cash;
+    private int impatience, step, ready;
+    private float since = Time.realtimeSinceStartup;
+    private static void Need(bool condition, string detail) { if (!condition) throw new InvalidOperationException(detail); }
+    private static object Field(object value, string name) => value.GetType().GetField(name, Flags).GetValue(value);
+    private CustomUIWindow Sheet() => Field(feature, "window") as CustomUIWindow;
+    private void Next(int value) { step = value; ready = Time.frameCount + 5; since = Time.realtimeSinceStartup; }
     public bool Tick(out string result)
     {
         result = null;
-        if (Time.realtimeSinceStartup - started > 45f) throw new InvalidOperationException("F23 QA timed out at step " + step);
-        switch (step)
+        Need(Time.realtimeSinceStartup - since < 70, "Appraisal worksheet timed out at step " + step);
+        if (step == 0) { if (start.Tick()) Next(1); return false; }
+        if (Time.frameCount < ready) return false;
+        var ui = InspectionUIManager.Instance;
+        if (step == 1)
         {
-            case 0:
-            {
-                if (MainMenuUIController.Instance == null) return false;
-                string[] context = File.ReadAllText(Path.Combine(Application.persistentDataPath, "qa-latest-run.txt")).Trim().Split('|');
-                Require(context.Length == 4 && context[0] == "1" && Guid.TryParseExact(context[1], "N", out _) && int.TryParse(context[2], out _), "Invalid isolated QA context");
-                load = new QaLoadSlot(int.Parse(context[2]), Guid.ParseExact(context[1], "N"));
-                Next(1, "Loading isolated F23 appraisal save"); return false;
-            }
-            case 1:
-            {
-                if (!load.Tick() || StoreUIManager.Instance?.gameOptionUIManager == null || InspectionUIManager.Instance == null) return false;
-                var calendar = AdvCalendarUIManager.Instance;
-                if (calendar?.UIPanel != null && calendar.UIPanel.activeSelf) StoreUIManager.Instance.storeCalendar.OnClick();
-                Require(PlayerStore.Instance.currentClientInstance == null, "QA save unexpectedly has a customer");
-                client = StoreClientListAppraisal.CreateAppraisal1();
-                PlayerStore.Instance.storeClientManager.AddNextClient(client);
-                PlayerStore.Instance.GetNextClient();
-                Require(ReferenceEquals(PlayerStore.Instance.currentClientInstance?.GetClientBlueprint(), client), "Native appraisal customer did not arrive");
-                first = PreBuiltItemHelper.CreateHandRandom(); second = PreBuiltItemHelper.CreateHandRandom();
-                AppHandHelper.InitDefault(first); AppHandHelper.InitPremium(second);
-                Require(first.IsTag("APPRAISAL_ITEM") && second.IsTag("APPRAISAL_ITEM") &&
-                    AppraisalHelper.GetCorrectBaseValue(first) != AppraisalHelper.GetCorrectBaseValue(second), "QA appraisal items do not differ");
-                cash = PlayerStore.Instance.playerCash; impatience = client.clientImpatience;
-                var options = Options();
-                options.Get(ModId + ":f23.enabled").SetBool(true, true);
-                options.Get(ModId + ":f23.calculate").SetBool(true, true);
-                options.Get("apply").button.onClick.Invoke();
-                StoreUIManager.Instance.gameOptionUIManager.CloseUI();
-                InspectionUIManager.Instance.OnInspectItem(first);
-                InspectionUIManager.Instance.UpdateAppraisalPanel();
-                Require(InspectionUIManager.Instance.appraisalPanel.activeInHierarchy, "Native appraisal panel did not open");
-                waitFrame = Time.frameCount + 3;
-                Next(2, "Prepared a native appraisal customer and two different items"); return false;
-            }
-            case 2:
-            {
-                if (Time.frameCount < waitFrame) return false;
-                OpenWorksheet();
-                var sheet = Worksheet();
-                Require(sheet.Get("base").GetString() == "" && !sheet.Get("apply").button.interactable, "New F23 sheet leaked data or allowed an incomplete estimate");
-                Fill(sheet, "100", "鉴定特征", "1234");
-                sheet = Worksheet();
-                Require(Total(sheet, "1334") && sheet.Get("apply").button.interactable, "F23 did not add the player's feature amount");
-                sheet.Get("row_0").SetBool(false, true);
-                Require(Total(sheet, "100"), "F23 did not remove an unchecked adjustment");
-                sheet.Get("undo").button.onClick.Invoke();
-                sheet = Worksheet();
-                Require(sheet.Get("row_0").GetBool() && Total(sheet, "1334"), "F23 undo did not restore the player's choice");
-                sheet.Get("feature").SetString("Unknown amount", true);
-                sheet.Get("amount").SetString("", true);
-                sheet.Get("add").button.onClick.Invoke();
-                sheet = Worksheet();
-                Require(!sheet.Get("apply").button.interactable && Total(sheet, "—"), "F23 silently estimated an unknown amount");
-                sheet.Get("remove_1").button.onClick.Invoke();
-                sheet = Worksheet();
-                Require(sheet.Get("apply").button.interactable && Total(sheet, "1334"), "F23 did not recover after removing the unknown amount");
-                Require(1334 != AppraisalHelper.GetCorrectBaseValue(first), "QA estimate was not intentionally wrong");
-                waitFrame = Time.frameCount + 3;
-                Next(20, "F23 selection, undo and unknown-amount controls passed; waiting for layout"); return false;
-            }
-            case 20:
-            {
-                if (Time.frameCount < waitFrame) return false;
-                var sheet = Worksheet();
-                Require(sheet.root.activeInHierarchy, "F23 worksheet is not rendered");
-                Require(IsRaycastTarget(sheet.Get("apply").button, out string raycast), "F23 Apply is not reachable on the rendered UI: " + raycast);
-                capture.Start("qa-appraisal-worksheet.png");
-                Next(21, "Capturing the visible worksheet before applying its estimate"); return false;
-            }
-            case 21:
-            {
-                if (!capture.Ready()) return false;
-                var sheet = Worksheet();
-                sheet.Get("apply").button.onClick.Invoke();
-                InspectionUIManager.Instance.UpdateAppraisalPanel();
-                Require(first.GetTagReadonly("APPRAISAL_DEFAULT_VALUE").GetInt() == 1334 && InspectionUIManager.Instance.apprisalServiceInputField.text == "1334",
-                    "F23 did not update the native input through its change action");
-                Require(ReferenceEquals(InspectionUIManager.Instance.currentInspectingItem, first) &&
-                    ReferenceEquals(PlayerStore.Instance.currentClientInstance.GetClientBlueprint(), client) &&
-                    client.clientImpatience == impatience && PlayerStore.Instance.playerCash == cash,
-                    "F23 applied an estimate by submitting or changing the transaction");
-                InspectionUIManager.Instance.OnInspectItem(second);
-                InspectionUIManager.Instance.UpdateAppraisalPanel();
-                waitFrame = Time.frameCount + 3;
-                Next(3, "F23 undo, unknown amount and explicitly applied incorrect estimate passed"); return false;
-            }
-            case 3:
-            {
-                if (Time.frameCount < waitFrame) return false;
-                Require(CustomUIManager.Instance.GetWindow(WindowId) == null, "F23 did not close the prior item's sheet");
-                OpenWorksheet();
-                var sheet = Worksheet();
-                Require(sheet.Get("base").GetString() == "" && Total(sheet, "—"), "F23 copied the first item's notes to another item");
-                Fill(sheet, "100", "鉴定特征", "1234");
-                sheet = Worksheet();
-                Require(Total(sheet, "1334"), "Same player inputs produced different output for a different hidden item");
-                sheet.Get("apply").button.onClick.Invoke();
-                InspectionUIManager.Instance.UpdateAppraisalPanel();
-                Require(second.GetTagReadonly("APPRAISAL_DEFAULT_VALUE").GetInt() == 1334 &&
-                    first.GetTagReadonly("APPRAISAL_DEFAULT_VALUE").GetInt() == 1334 && PlayerStore.Instance.playerCash == cash && client.clientImpatience == impatience,
-                    "F23 mixed items or submitted an appraisal");
-                InspectionUIManager.Instance.OnInspectItem(first);
-                InspectionUIManager.Instance.UpdateAppraisalPanel();
-                waitFrame = Time.frameCount + 3;
-                Next(4, "F23 kept sheets isolated across different hidden item states"); return false;
-            }
-            case 4:
-            {
-                if (Time.frameCount < waitFrame) return false;
-                OpenWorksheet();
-                var sheet = Worksheet();
-                Require(sheet.Get("base").GetString() == "100" && sheet.Get("row_0").GetBool() && Total(sheet, "1334"),
-                    "F23 lost the first item's notes on retry");
-                var options = Options();
-                options.Get(ModId + ":f23.calculate").SetBool(false, true);
-                options.Get("apply").button.onClick.Invoke();
-                StoreUIManager.Instance.gameOptionUIManager.CloseUI();
-                waitFrame = Time.frameCount + 3;
-                Next(5, "Returned to the first item's worksheet and disabled calculation"); return false;
-            }
-            case 5:
-            {
-                if (Time.frameCount < waitFrame) return false;
-                var sheet = Worksheet();
-                Require(Total(sheet, "—") && !sheet.Get("apply").button.interactable && sheet.Get("row_0").GetBool(),
-                    "F23 recording-only mode did not retain notes and disable calculation");
-                InspectionUIManager.Instance.CloseUI();
-                waitFrame = Time.frameCount + 3;
-                Next(6, "F23 recording-only mode passed"); return false;
-            }
-            case 6:
-                if (Time.frameCount < waitFrame) return false;
-                Require(CustomUIManager.Instance.GetWindow(WindowId) == null, "F23 worksheet remained open after native inspection closed");
-                result = "PASS F23 explicit notes, unknown amounts, selection/undo, player-only estimate, native apply without submission, hidden-state independence, item/retry isolation and record-only mode";
-                return true;
-            default: throw new InvalidOperationException("Unknown F23 QA step " + step);
+            if (ui == null || StoreUIManager.Instance?.gameOptionUIManager == null) return false;
+            if (AdvCalendarUIManager.Instance?.UIPanel?.activeSelf == true) StoreUIManager.Instance.storeCalendar.OnClick();
+            Need(PlayerStore.Instance.currentClientInstance == null, "A new run unexpectedly has a customer");
+            customer = StoreClientListAppraisal.CreateAppraisal1();
+            PlayerStore.Instance.storeClientManager.AddNextClient(customer); PlayerStore.Instance.GetNextClient();
+            first = PreBuiltItemHelper.CreateHandRandom(); second = PreBuiltItemHelper.CreateHandRandom();
+            AppHandHelper.InitDefault(first); AppHandHelper.InitPremium(second);
+            cash = PlayerStore.Instance.playerCash; impatience = customer.clientImpatience;
+            TradeScenario.SetOptions(true, "f23.enabled", "f23.calculate");
+            var mod = ModLoader.Mods.Find(m => m.Manifest?.ID == "starswhere.shopassist")?.Instance;
+            var modules = Field(mod, "modules") as IEnumerable;
+            feature = modules.Cast<object>().Select(m => Field(m, "Tick") as Action).Select(t => t?.Target)
+                .FirstOrDefault(target => target?.GetType().FullName == "ShopAssist.AppraisalWorksheet");
+            Need(feature != null, "Worksheet module is not loaded");
+            ui.OnInspectItem(first); ui.UpdateAppraisalPanel(); Next(2); return false;
         }
+        if (step == 2)
+        {
+            var sheet = Sheet();
+            Need(sheet?.root != null && sheet.root.activeInHierarchy, "Worksheet was not integrated into the native appraisal view");
+            Need(sheet.root.transform.parent == ui.panel.transform && CustomUIManager.Instance.GetWindow("shopassist.f23.worksheet") == null,
+                "Worksheet opened as a separate overlay window");
+            for (int i = 0; i < 5; i++) Need(sheet.Get("choice_" + i).GetIndex() == 0, "New sheet guessed an observation");
+            Need(!sheet.Get("apply").button.interactable && sheet.Get("total").GetText().Contains("—"), "Unknown observations allowed an estimate");
+            Fill(sheet); Need(sheet.Get("total").GetText().Contains("100") && sheet.Get("apply").button.interactable,
+                "Explicit standard observations did not calculate the handbook value");
+            sheet.Get("choice_0").SetIndex(3, true); Need(sheet.Get("total").GetText().Contains("300"), "Material choice did not update the sheet");
+            sheet.Get("undo").button.onClick.Invoke(); sheet = Sheet();
+            Need(sheet.Get("choice_0").GetIndex() == 1 && sheet.Get("total").GetText().Contains("100"), "Undo did not restore the observation");
+            Next(22); return false;
+        }
+        if (step == 22)
+        {
+            var sheet = Sheet();
+            Need(Reachable(sheet.Get("apply").button), "Apply is not reachable in the rendered integrated panel");
+            Need(sheet.Get("guide").button.interactable && HealthData.CanRead(), "Original reading conditions unexpectedly reject the guide");
+            sheet.Get("guide").button.onClick.Invoke();
+            Need(MultiPageUIManager.Instance.panel.activeInHierarchy &&
+                (int)typeof(MultiPageUIManager).GetField("currentBookIndex", Flags).GetValue(MultiPageUIManager.Instance) == 6,
+                "The original hand appraisal guide did not open");
+            Next(20); return false;
+        }
+        if (step == 20)
+        {
+            Need(Sheet()?.root != null && !Sheet().root.activeInHierarchy, "Worksheet covered the original appraisal guide");
+            // Public handbook text is recorded to validate the selectable catalog,
+            // without reading an item's hidden tags or correct appraisal value.
+            foreach (int book in new[] { 0, 4, 6 })
+            {
+                MultiPageUIManager.Instance.OpenUI(book);
+                foreach (var text in MultiPageUIManager.Instance.books[book].GetComponentsInChildren<TMPro.TMP_Text>(true))
+                    Debug.Log("[APPRAISAL-PUBLIC-GUIDE] " + book + " " + text.text);
+            }
+            MultiPageUIManager.Instance.CloseUI();
+            Next(21); return false;
+        }
+        if (step == 21)
+        {
+            Need(Sheet()?.root?.activeInHierarchy == true, "Worksheet did not return after closing the guide");
+            capture.Start("qa-appraisal-integrated.png"); Next(3); return false;
+        }
+        if (step == 3)
+        {
+            if (!capture.Ready()) return false;
+            Sheet().Get("apply").button.onClick.Invoke(); ui.UpdateAppraisalPanel();
+            Need(ui.apprisalServiceInputField.text == "100" && PlayerStore.Instance.playerCash == cash && customer.clientImpatience == impatience,
+                "Applying the selected estimate submitted or changed the transaction");
+            ui.OnInspectItem(second); ui.UpdateAppraisalPanel(); Next(4); return false;
+        }
+        if (step == 4)
+        {
+            var sheet = Sheet(); Need(sheet?.root?.activeInHierarchy == true, "Next item's embedded worksheet is absent");
+            Need(sheet.Get("choice_0").GetIndex() == 0 && !sheet.Get("apply").button.interactable, "Observations leaked from the prior item");
+            Fill(sheet); Need(sheet.Get("total").GetText().Contains("100"), "Identical observations changed with the hidden item configuration");
+            sheet.Get("apply").button.onClick.Invoke(); ui.UpdateAppraisalPanel();
+            Need(ui.apprisalServiceInputField.text == "100" && PlayerStore.Instance.playerCash == cash && customer.clientImpatience == impatience,
+                "The second selected estimate read an answer or submitted an appraisal");
+            ui.OnInspectItem(first); ui.UpdateAppraisalPanel(); Next(5); return false;
+        }
+        if (step == 5)
+        {
+            Need(Sheet().Get("choice_0").GetIndex() == 1, "The first item's observations did not survive switching items");
+            incompleteFuel = DirectoryMaster.Item("plasma_fuel");
+            Need(incompleteFuel != null && !incompleteFuel.IsTag("PLASMA_CELL_TAG"),
+                "Incomplete plasma fixture unexpectedly activates the native fuel view");
+            PlasmaHelper.InitDefaultPlasma(incompleteFuel);
+            ui.OnInspectItem(incompleteFuel); ui.UpdateAppraisalPanel(); Next(29); return false;
+        }
+        if (step == 29)
+        {
+            Need(ui.fuelUILarge?.gameObject.activeInHierarchy == false && Sheet() == null &&
+                ReferenceEquals(Field(feature, "unsupported"), incompleteFuel),
+                "Worksheet did not reject the uninitialized native fuel view");
+            var fuel = PreBuiltItemHelper.CreatePlasmaFull(100);
+            Need(fuel != null && fuel.identifier == "plasma_fuel" && fuel.IsTag("PLASMA_CELL_TAG") && fuel.IsTag("APPRAISAL_ITEM"),
+                "Native plasma fixture is not inspectable as an appraisal item");
+            ui.OnInspectItem(fuel); ui.UpdateAppraisalPanel(); Next(30); return false;
+        }
+        if (step == 30)
+        {
+            var sheet = Sheet();
+            Need(ui.fuelUILarge?.gameObject.activeInHierarchy == true,
+                "Native plasma inspection view did not initialize");
+            Need(sheet?.root?.activeInHierarchy == true, "Fuel observation sheet was not embedded: item=" +
+                ui.currentInspectingItem?.identifier + ", inspection=" + ui.panel?.activeInHierarchy +
+                ", appraisal=" + ui.appraisalPanel?.activeInHierarchy + ", fuel=" + ui.fuelUILarge?.gameObject.activeInHierarchy +
+                ", unsupported=" + ((GameItem)Field(feature, "unsupported"))?.identifier +
+                ", available=" + feature.GetType().GetMethod("Available", Flags).Invoke(feature, null) +
+                ", supported=" + feature.GetType().GetMethod("SupportedView", Flags | BindingFlags.Static).Invoke(null, new object[] { ui }));
+            for (int i = 0; i < 6; i++) sheet.Get("choice_" + i).SetIndex(1, true);
+            Need(!sheet.Get("apply").button.interactable && !sheet.Get("total").GetText().Contains("—"),
+                "Fuel handbook mismatch did not visibly disable automatic calculation");
+            sheet.Get("guide").button.onClick.Invoke();
+            Need((int)typeof(MultiPageUIManager).GetField("currentBookIndex", Flags).GetValue(MultiPageUIManager.Instance) == 0,
+                "Fuel observation sheet did not open its original handbook");
+            MultiPageUIManager.Instance.CloseUI(); Next(31); return false;
+        }
+        if (step == 31)
+        {
+            capture.Start("qa-appraisal-fuel-observations.png"); Next(32); return false;
+        }
+        if (step == 32)
+        {
+            if (!capture.Ready()) return false;
+            ui.OnInspectItem(first); ui.UpdateAppraisalPanel(); Next(33); return false;
+        }
+        if (step == 33)
+        {
+            TradeScenario.SetOptions(false, "f23.calculate"); Next(6); return false;
+        }
+        if (step == 6)
+        {
+            Need(!Sheet().Get("apply").button.interactable && Sheet().Get("total").GetText().Contains("—"), "Recording mode still allowed calculations");
+            ui.CloseUI(); Next(7); return false;
+        }
+        Need(Sheet() == null && ui.panel.transform.Find("ShopAssist_AppraisalChoices") == null, "Embedded worksheet remained after inspection closed");
+        result = "PASS integrated F23, explicit unknown choices, undo, native guide, native apply without submission, hidden-state independence, item isolation and cleanup";
+        return true;
     }
-
-    private static void Fill(CustomUIWindow sheet, string basis, string name, string amount)
+    private static void Fill(CustomUIWindow sheet) { for (int i = 0; i < 5; i++) sheet.Get("choice_" + i).SetIndex(1, true); }
+    private static bool Reachable(Button button)
     {
-        sheet.Get("base").SetString(basis, true);
-        sheet.Get("base").input.onEndEdit.Invoke(basis);
-        sheet.Get("feature").SetString(name, true);
-        sheet.Get("amount").SetString(amount, true);
-        sheet.Get("add").button.onClick.Invoke();
+        var rect = button.transform as RectTransform; var canvas = rect.GetComponentInParent<Canvas>();
+        var camera = canvas == null || canvas.renderMode == RenderMode.ScreenSpaceOverlay ? null : canvas.worldCamera;
+        var point = RectTransformUtility.WorldToScreenPoint(camera, rect.TransformPoint(rect.rect.center));
+        var hits = new List<RaycastResult>(); EventSystem.current.RaycastAll(new PointerEventData(EventSystem.current) { position = point }, hits);
+        return hits.Any(hit => hit.gameObject != null && hit.gameObject.transform.IsChildOf(button.transform));
     }
-    private static bool Total(CustomUIWindow sheet, string value) => sheet.Get("total").GetText().Contains(value);
-    private static CustomUIWindow Worksheet()
-    {
-        var sheet = CustomUIManager.Instance.GetWindow(WindowId);
-        Require(sheet != null && sheet.IsVisible, "F23 worksheet unavailable"); return sheet;
-    }
-    private static CustomUIWindow Options()
-    {
-        StoreUIManager.Instance.gameOptionUIManager.OpenUI();
-        var options = CustomUIManager.Instance.GetWindow("game_options");
-        Require(options != null && options.IsVisible, "Native options unavailable"); return options;
-    }
-    private static void OpenWorksheet()
-    {
-        RoutingScenario.RunFeatureAction("f23.open");
-        Worksheet();
-    }
-    private static bool IsRaycastTarget(Button button, out string details)
-    {
-        var rect = button.transform as RectTransform;
-        Canvas canvas = rect.GetComponentInParent<Canvas>();
-        Camera camera = canvas == null || canvas.renderMode == RenderMode.ScreenSpaceOverlay ? null : canvas.worldCamera;
-        Vector2 point = RectTransformUtility.WorldToScreenPoint(camera, rect.TransformPoint(rect.rect.center));
-        var hits = new List<RaycastResult>();
-        EventSystem.current.RaycastAll(new PointerEventData(EventSystem.current) { position = point }, hits);
-        details = "point=" + point + " screen=" + Screen.width + "x" + Screen.height + " canvas=" + (canvas != null ? canvas.name : "<none>") +
-            " hits=" + string.Join("; ", hits.Take(8).Select(hit => hit.gameObject == null ? "<null>" : PathOf(hit.gameObject.transform)));
-        return hits.Count != 0 && hits[0].gameObject != null &&
-            (hits[0].gameObject == button.gameObject || hits[0].gameObject.transform.IsChildOf(button.transform));
-    }
-    private static string PathOf(Transform node)
-    {
-        var names = new List<string>();
-        for (; node != null; node = node.parent) names.Add(node.name);
-        names.Reverse(); return string.Join("/", names);
-    }
-    private void Next(int value, string message) { Debug.Log("[PLAYER-QA] " + message); step = value; started = Time.realtimeSinceStartup; }
-    private static void Require(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
 }

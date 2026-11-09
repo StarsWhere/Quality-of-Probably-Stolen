@@ -1,15 +1,61 @@
 f23.enabled,Use an appraisal worksheet
-f23.tip,Open the worksheet beside the appraisal tools and enter observations and amounts yourself. Enable worksheet calculation to copy the total into the appraisal estimate field.
+f23.tip,Choose your observations beside the appraisal view and open the original appraisal guide.
 f23.calculate,Calculate the appraisal worksheet total
-f23.calculate.tip,Add the base amount and checked adjustments in the appraisal worksheet. A valid total can be copied into the estimate field.
-f23.key,Open appraisal worksheet
-f23.key.tip,While appraising a customer's item, press the shortcut to open or close its worksheet.
+f23.calculate.tip,Calculate from the observations you selected and allow the estimate to be copied into the native field.
+f23.key,Show appraisal worksheet
+f23.key.tip,Show the current item's worksheet in the appraisal view.
 f23.open,Appraisal worksheet
-f23.title,Appraisal worksheet
-f23.base,Base amount
-f23.feature,Observed feature
-f23.amount,Adjustment
-f23.add,Add
+f23.guide,Open appraisal guide
+f23.basis,Base value: {0}
+f23.unknown,Not identified
 f23.total,Estimate: {0}
 f23.undo,Undo
 f23.apply,Use estimate
+f23.material,Material
+f23.interface,Interface
+f23.condition,Condition
+f23.armored,Armored attachment
+f23.bladed,Blade attachment
+f23.package,Packaging and authenticity
+f23.meat,Meat
+f23.edition,Edition
+f23.production_edge,First or last production month
+f23.first_run,First production run
+f23.facility,Factory quality
+f23.wear,Casing wear
+f23.crack,Casing crack
+f23.uncovered,Missing casing cover
+f23.reinforced,Reinforced casing
+f23.fuel,Fuel quality
+f23.seal,Manufacturer seal
+f23.option.aluminum,Aluminum alloy
+f23.option.carbon,Carbon composite
+f23.option.gold,Gold plated
+f23.option.emg,EMG
+f23.option.emg_plus,EMG+
+f23.option.neural,Neural
+f23.option.unspecified,Unspecified interface
+f23.option.undamaged,Undamaged
+f23.option.wear,Worn
+f23.option.damage,Damaged
+f23.option.absent,Absent
+f23.option.present,Present
+f23.option.sealed_genuine,Sealed and genuine
+f23.option.opened,Opened
+f23.option.counterfeit,Counterfeit
+f23.option.normal,Standard
+f23.option.double,Double meat
+f23.option.deluxe,Deluxe
+f23.option.no,No
+f23.option.yes,Yes
+f23.option.high,High quality
+f23.option.low,Low quality
+f23.option.none,None
+f23.option.heavy_wear,Heavy wear
+f23.option.standard,Standard
+f23.option.poor,Poor quality
+f23.option.ll,LL
+f23.option.zhonghua,Zhonghua
+f23.option.republic,Republic
+f23.option.ignition,Ignition Lab
+f23.guide_mismatch,Fuel guide and valuation rules differ; calculation is unavailable.

@@ -1,239 +1,261 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
+using System.Reflection;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using UnityEngine.UI;
 
 namespace ShopAssist
 {
-    // Entries are supplied by the player; none are inferred from the item's hidden state.
     internal sealed class AppraisalWorksheet : IDisposable
     {
-        private const string WindowId = "shopassist.f23.worksheet";
-        private readonly ConfigEntry<bool> enabled;
-        private readonly ConfigEntry<bool> calculate;
+        private const string PanelName = "ShopAssist_AppraisalChoices";
+        private readonly ConfigEntry<bool> enabled, calculate;
         private readonly Func<KeyCode> key;
+        private readonly Action<string> log;
         private readonly Dictionary<GameItem, Sheet> sheets = new Dictionary<GameItem, Sheet>();
         private CustomUIWindow window;
-        private CustomUIElement totalLabel;
-        private CustomUIElement applyButton;
-        private CustomUIElement undoButton;
+        private CustomUIElement totalLabel, applyButton, undoButton, guideButton;
+        private RectTransform panel;
+        private InspectionUIManager inspection;
         private StoreClientInstance client;
-        private GameItem item;
+        private GameItem item, unsupported;
+        private AppraisalWorksheetChoices.Catalog catalog;
         private string run;
         private int slot;
-        private string draftName = "";
-        private string draftAmount = "";
         private bool started;
 
-        private sealed class Row
-        {
-            internal string Name, Amount;
-            internal bool Selected;
-            internal Row Copy() => new Row { Name = Name, Amount = Amount, Selected = Selected };
-        }
-        private sealed class Snapshot
-        {
-            internal string Base;
-            internal List<Row> Rows;
-        }
         private sealed class Sheet
         {
-            internal string Base = "";
-            internal List<Row> Rows = new List<Row>();
-            internal Stack<Snapshot> Undo = new Stack<Snapshot>();
-            internal void Remember()
+            internal int[] Selected;
+            internal readonly AppraisalWorksheetChoices.Catalog Catalog;
+            internal readonly Stack<int[]> Undo = new Stack<int[]>();
+            internal Sheet(AppraisalWorksheetChoices.Catalog catalog) { Catalog = catalog; Selected = new int[catalog.Groups.Length]; }
+            internal void Select(int group, int value)
             {
+                if (Selected[group] == value) return;
                 if (Undo.Count >= 100)
                 {
-                    Snapshot[] recent = Undo.ToArray();
-                    Undo.Clear();
-                    for (int i = Math.Min(recent.Length, 99) - 1; i >= 0; i--) Undo.Push(recent[i]);
+                    var recent = Undo.Take(99).Reverse().ToArray(); Undo.Clear();
+                    foreach (var previous in recent) Undo.Push(previous);
                 }
-                var rows = new List<Row>();
-                foreach (Row row in Rows) rows.Add(row.Copy());
-                Undo.Push(new Snapshot { Base = Base, Rows = rows });
-            }
-            internal void Restore()
-            {
-                if (Undo.Count == 0) return;
-                Snapshot previous = Undo.Pop(); Base = previous.Base; Rows = previous.Rows;
+                Undo.Push((int[])Selected.Clone()); Selected[group] = value;
             }
         }
-
         internal AppraisalWorksheet(ShopSettings settings, Action<string> log)
         {
             if (settings == null) throw new ArgumentNullException(nameof(settings));
-            if (log == null) throw new ArgumentNullException(nameof(log));
+            this.log = log ?? throw new ArgumentNullException(nameof(log));
             enabled = settings.Toggle("f23.enabled", "f23.tip");
             calculate = settings.Toggle("f23.calculate", "f23.calculate.tip");
             key = settings.Key("f23.key", "f23.key.tip");
             settings.Action("f23.open", Open, Available);
         }
-
         public void Start()
         {
             if (started) return;
-            started = true;
-            ModHook.OnGameLoadedInit += Reset;
-            ModHook.OnLeavingStoreEarly += Reset;
+            started = true; ModHook.OnGameLoadedInit += Reset; ModHook.OnLeavingStoreEarly += Reset;
             SceneManager.activeSceneChanged += SceneChanged;
         }
-
         public void Tick()
         {
             if (!started) return;
-            if (!enabled.Value) { Reset(); return; }
-            var activeClient = PlayerStore.HasInstance ? PlayerStore.Instance.currentClientInstance : null;
-            if (client != null && (!PlayerStore.HasInstance || activeClient != client || PlayerStore.Instance.runID != run ||
+            if (!enabled.Value || !PlayerStore.HasInstance) { Reset(); return; }
+            if (client != null && (PlayerStore.Instance.currentClientInstance != client || PlayerStore.Instance.runID != run ||
                 PlayerStore.Instance.saveSlotId != slot)) Reset();
-            if (window != null && (!Available() || !ReferenceEquals(InspectionUIManager.Instance.currentInspectingItem, item))) Close();
+            if (!Available()) { Close(); return; }
+            var current = InspectionUIManager.Instance.currentInspectingItem;
+            if (!ReferenceEquals(unsupported, current) && (!ReferenceEquals(item, current) ||
+                !ReferenceEquals(catalog, AppraisalWorksheetChoices.For(current.identifier)) || panel == null)) Open();
+            if (panel == null) return;
+            if (inspection != InspectionUIManager.Instance || !panel.IsChildOf(inspection.panel.transform)) { Close(); return; }
+            if (MultiPageUIManager.Instance?.panel?.activeInHierarchy == true) { panel.gameObject.SetActive(false); return; }
+            if (!PlacePanel()) { panel.gameObject.SetActive(false); return; }
+            panel.gameObject.SetActive(true); RefreshSummary();
             KeyCode binding = key();
             if (binding != KeyCode.None && ShopInput.Ready() && Input.GetKeyDown(binding)) Open();
-            if (window != null) RefreshSummary();
         }
-
         private bool Available()
         {
             var ui = InspectionUIManager.Instance;
             var current = PlayerStore.HasInstance ? PlayerStore.Instance.currentClientInstance : null;
             return enabled.Value && CustomUIManager.Instance != null && ui != null && ui.panel != null && ui.panel.activeInHierarchy &&
                 ui.appraisalPanel != null && ui.appraisalPanel.activeInHierarchy && ui.currentInspectingItem != null &&
-                ui.currentInspectingItem.IsTag("APPRAISAL_ITEM") && current?.GetClientBlueprint()?.clientIntent == StoreClient.ClientIntent.APPRAISAL_SERVICE;
+                AppraisalWorksheetChoices.For(ui.currentInspectingItem.identifier) != null &&
+                current?.GetClientBlueprint()?.clientIntent == StoreClient.ClientIntent.APPRAISAL_SERVICE;
         }
-
+        private static bool NativeMethodsSafe(Type type) => type.GetMethods(BindingFlags.Public | BindingFlags.NonPublic |
+            BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly).All(InventoryAutoInsert.KnownPatches);
+        private static bool OriginalComponents(GameObject root) => root != null && root.GetComponentsInChildren<MonoBehaviour>(true).All(component =>
+            component != null && (component.GetType().Assembly == typeof(GameItem).Assembly ||
+                component.GetType().Assembly == typeof(AppraisalWorksheet).Assembly || component.GetType().Assembly == typeof(Button).Assembly ||
+                component.GetType().Assembly == typeof(TMPro.TMP_Text).Assembly ||
+                component.GetType().Assembly == typeof(UnityEngine.Localization.Components.LocalizeStringEvent).Assembly));
+        private static bool SupportedView(InspectionUIManager ui)
+        {
+            if (!InventoryAutoInsert.VerifiedGameBuild(typeof(GameItem).Module.ModuleVersionId) || ui.GetType() != typeof(InspectionUIManager) ||
+                !NativeMethodsSafe(typeof(InspectionUIManager)) || !NativeMethodsSafe(typeof(GameItem)) ||
+                !(ui.panel.transform is RectTransform) || !(ui.magnifyingGlass?.transform is RectTransform) ||
+                !(ui.appraisalPanel.transform is RectTransform) || !ui.appraisalPanel.transform.IsChildOf(ui.panel.transform) ||
+                ui.magnifyingGlass.transform.parent != ui.panel.transform || ui.apprisalServiceInputField == null ||
+                !ui.apprisalServiceInputField.transform.IsChildOf(ui.appraisalPanel.transform) ||
+                ui.currentInspectingItem.GetType() != typeof(GameItemElement) || !OriginalComponents(ui.panel)) return false;
+            Component view = ui.currentInspectingItem.identifier == "hand" ? (Component)ui.appHandUILarge :
+                ui.currentInspectingItem.identifier == "ribwich" ? ui.ribwichUILarge : ui.fuelUILarge;
+            return view != null && view.gameObject.activeInHierarchy && view.transform.IsChildOf(ui.magnifyingGlass.transform) &&
+                view.GetType().Assembly == typeof(GameItem).Assembly;
+        }
         private void Open()
         {
             if (!Available()) return;
-            if (window != null && window.IsAlive) { Close(); return; }
-            var activeClient = PlayerStore.Instance.currentClientInstance;
-            if (client != activeClient || run != PlayerStore.Instance.runID || slot != PlayerStore.Instance.saveSlotId)
+            var ui = InspectionUIManager.Instance;
+            try
             {
-                Reset(); client = activeClient; run = PlayerStore.Instance.runID; slot = PlayerStore.Instance.saveSlotId;
+                if (!SupportedView(ui)) { unsupported = ui.currentInspectingItem; Close(); return; }
+                if (client != null && (client != PlayerStore.Instance.currentClientInstance || run != PlayerStore.Instance.runID ||
+                    slot != PlayerStore.Instance.saveSlotId)) Reset();
+                if (ReferenceEquals(item, ui.currentInspectingItem) && ReferenceEquals(catalog, AppraisalWorksheetChoices.For(item.identifier)) && panel != null)
+                { panel.gameObject.SetActive(true); panel.SetAsLastSibling(); return; }
+                Close();
+                client = PlayerStore.Instance.currentClientInstance; run = PlayerStore.Instance.runID; slot = PlayerStore.Instance.saveSlotId;
+                inspection = ui; item = ui.currentInspectingItem; catalog = AppraisalWorksheetChoices.For(item.identifier);
+                if (!sheets.TryGetValue(item, out var existing) || !ReferenceEquals(existing.Catalog, catalog)) sheets[item] = new Sheet(catalog);
+                Build();
             }
-            item = InspectionUIManager.Instance.currentInspectingItem;
-            if (!sheets.ContainsKey(item)) sheets.Add(item, new Sheet());
-            draftName = draftAmount = "";
-            Build();
+            catch (Exception error) { unsupported = ui.currentInspectingItem; Close(); log("F23 left an unsupported appraisal view unchanged: " + error); }
         }
-
         private void Build()
         {
-            if (!Available() || item == null || !ReferenceEquals(item, InspectionUIManager.Instance.currentInspectingItem) || !sheets.TryGetValue(item, out Sheet sheet)) return;
-            var builder = CustomUIManager.Instance.CreateWindow(WindowId, ShopSettings.Text("f23.title"), CustomUIManager.LAYER_META)
-                .SetSize(620f, 460f).SetDraggable(true).SetCloseOnEscape().OnClose(() => { window = null; totalLabel = null; applyButton = null; undoButton = null; });
-            ItemGrid.Add(builder, new[] { new ItemGrid.Entry(item) { Caption = item.GetDisplayName(true) } },
-                new ItemGrid.Options { Cards = true, Columns = 1, CardWidth = 180, CardHeight = 80 });
-            builder.BeginRow();
-            builder.AddInput(ShopSettings.Text("f23.base"), sheet.Base, text =>
+            if (item == null || !sheets.TryGetValue(item, out var sheet) || !Current(sheet)) return;
+            var go = new GameObject(PanelName, typeof(RectTransform), typeof(Image)); panel = (RectTransform)go.transform;
+            panel.SetParent(inspection.panel.transform, false); panel.anchorMin = panel.anchorMax = panel.pivot = new Vector2(.5f, .5f);
+            panel.sizeDelta = new Vector2(310, 450);
+            var image = go.GetComponent<Image>(); image.sprite = MachineryStyle.ButtonNormal; image.type = Image.Type.Sliced; image.color = MachineryStyle.PANEL;
+            var builder = CustomUIManager.Instance.BuildInto(panel, true, PanelName).UseMachineryStyle(true);
+            var layout = go.GetComponent<VerticalLayoutGroup>(); layout.padding = new RectOffset(10, 10, 10, 10); layout.spacing = 6;
+            builder.AddButton(ShopSettings.Text("f23.guide"), OpenGuide, "guide"); guideButton = builder.Last;
+            builder.AddLabel(ShopSettings.Format("f23.basis", catalog.Basis));
+            builder.BeginScrollFlexible(120);
+            for (int i = 0; i < catalog.Groups.Length; i++)
             {
-                string value = Limit(text, 12);
-                if (sheet.Base == value) return;
-                sheet.Remember(); sheet.Base = value; RefreshSummary();
-            }, "base");
-            if (builder.Last.input != null) builder.Last.input.characterLimit = 12;
-            builder.End();
-            builder.BeginRow();
-            builder.AddInput(ShopSettings.Text("f23.feature"), draftName, text => draftName = Limit(text, 60), "feature", text => draftName = Limit(text, 60));
-            if (builder.Last.input != null) builder.Last.input.characterLimit = 60;
-            builder.AddInput(ShopSettings.Text("f23.amount"), draftAmount, text => draftAmount = Limit(text, 12), "amount", text => draftAmount = Limit(text, 12));
-            if (builder.Last.input != null) builder.Last.input.characterLimit = 12;
-            builder.AddButton(ShopSettings.Text("f23.add"), () => Add(sheet), "add");
-            builder.End();
-            builder.BeginScrollFlexible(120f);
-            for (int i = 0; i < sheet.Rows.Count; i++)
-            {
-                int index = i;
-                Row row = sheet.Rows[index];
-                builder.BeginRow();
-                string text = row.Name + (string.IsNullOrWhiteSpace(row.Amount) ? "" : "  " + row.Amount);
-                builder.AddToggle(text, row.Selected, value =>
+                int index = i; var group = catalog.Groups[i];
+                builder.AddLabel(ShopSettings.Text(group.Key));
+                var labels = new List<string> { ShopSettings.Text("f23.unknown") };
+                labels.AddRange(group.Options.Select(option => ShopSettings.Text("f23.option." + option)));
+                builder.AddDropdown(labels, sheet.Selected[index], value =>
                 {
-                    if (!Current(sheet) || index >= sheet.Rows.Count || sheet.Rows[index].Selected == value) return;
-                    sheet.Remember(); sheet.Rows[index].Selected = value; RefreshSummary();
-                }, "row_" + index);
-                builder.AddFlexibleSpace();
-                builder.AddButton("×", () =>
-                {
-                    if (!Current(sheet) || index >= sheet.Rows.Count) return;
-                    sheet.Remember(); sheet.Rows.RemoveAt(index); Rebuild();
-                }, "remove_" + index);
-                builder.End();
+                    if (!Current(sheet) || value < 0 || value > group.Options.Length) return;
+                    sheet.Select(index, value); RefreshSummary();
+                }, "choice_" + i);
             }
-            builder.End();
-            builder.BeginRow();
-            builder.AddLabel("", "total"); totalLabel = builder.Last;
-            builder.AddFlexibleSpace();
-            builder.AddButton(ShopSettings.Text("f23.undo"), () => { if (Current(sheet)) { sheet.Restore(); Rebuild(); } }, "undo"); undoButton = builder.Last;
+            builder.End().AddLabel("", "total"); totalLabel = builder.Last;
+            builder.BeginRow().AddButton(ShopSettings.Text("f23.undo"), () =>
+            {
+                if (!Current(sheet) || sheet.Undo.Count == 0) return;
+                sheet.Selected = sheet.Undo.Pop(); Rebuild();
+            }, "undo"); undoButton = builder.Last;
             builder.AddButton(ShopSettings.Text("f23.apply"), Apply, "apply"); applyButton = builder.Last;
-            builder.End();
-            window = builder.Center().Show();
+            builder.End(); window = builder.Show();
+            if (!PlacePanel()) panel.gameObject.SetActive(false);
             RefreshSummary();
         }
-
-        private void Add(Sheet sheet)
+        private static Rect ScreenRect(RectTransform rect)
         {
-            if (!Current(sheet) || sheet.Rows.Count >= 100) return;
-            string name = Limit(draftName, 60).Trim();
-            if (name.Length == 0) return;
-            sheet.Remember(); sheet.Rows.Add(new Row { Name = name, Amount = Limit(draftAmount, 12).Trim(), Selected = true });
-            draftName = draftAmount = ""; Rebuild();
+            var corners = new Vector3[4]; rect.GetWorldCorners(corners); var canvas = rect.GetComponentInParent<Canvas>();
+            Camera camera = canvas == null || canvas.renderMode == RenderMode.ScreenSpaceOverlay ? null : canvas.worldCamera;
+            var points = corners.Select(point => RectTransformUtility.WorldToScreenPoint(camera, point)).ToArray();
+            return Rect.MinMaxRect(points.Min(p => p.x), points.Min(p => p.y), points.Max(p => p.x), points.Max(p => p.y));
         }
-
-        private bool Current(Sheet sheet) => Available() && item != null && ReferenceEquals(item, InspectionUIManager.Instance.currentInspectingItem) &&
-            ReferenceEquals(client, PlayerStore.Instance.currentClientInstance) && run == PlayerStore.Instance.runID && slot == PlayerStore.Instance.saveSlotId &&
-            sheets.TryGetValue(item, out Sheet current) && ReferenceEquals(current, sheet);
-
-        private bool TryTotal(Sheet sheet, out int total)
+        private bool PlacePanel()
         {
-            total = 0;
-            if (!calculate.Value || !int.TryParse(sheet.Base, NumberStyles.Integer, CultureInfo.InvariantCulture, out int basis) || basis < 0 || basis > 10000000) return false;
-            long sum = basis;
-            foreach (Row row in sheet.Rows)
+            if (panel == null || inspection?.panel == null || inspection.magnifyingGlass == null) return false;
+            var bounds = new List<Rect> { ScreenRect((RectTransform)inspection.magnifyingGlass.transform),
+                ScreenRect((RectTransform)inspection.appraisalPanel.transform) };
+            foreach (var button in inspection.panel.GetComponentsInChildren<Button>())
+                if (button != null && !button.transform.IsChildOf(panel) && button.transform is RectTransform rect) bounds.Add(ScreenRect(rect));
+            Component small = item.identifier == "hand" ? (Component)inspection.appHandUISmall : item.identifier == "ribwich" ? inspection.ribwichUISmall : inspection.fuelUISmall;
+            if (small != null && small.transform is RectTransform smallRect) bounds.Add(ScreenRect(smallRect));
+            Rect current = ScreenRect(panel);
+            if (current.height > Screen.height - 16 && current.height > 0)
             {
-                if (!row.Selected) continue;
-                if (!int.TryParse(row.Amount, NumberStyles.Integer, CultureInfo.InvariantCulture, out int amount) || amount < -10000000 || amount > 10000000) return false;
-                sum += amount;
+                panel.sizeDelta = new Vector2(panel.sizeDelta.x, panel.sizeDelta.y * (Screen.height - 16) / current.height);
+                current = ScreenRect(panel);
             }
-            if (sum < 0 || sum > 10000000) return false;
-            total = (int)sum; return true;
+            float width = current.width, height = current.height;
+            if (width <= 0 || height < 250) return false;
+            var xs = new List<float> { Screen.width - width - 8, 8 };
+            var ys = new List<float> { Screen.height - height - 8, 8 };
+            xs.AddRange(bounds.Select(rect => rect.xMax + 8)); xs.AddRange(bounds.Select(rect => rect.xMin - width - 8));
+            ys.AddRange(bounds.Select(rect => rect.yMin - height - 8)); ys.AddRange(bounds.Select(rect => rect.yMax + 8));
+            foreach (float x in xs) foreach (float y in ys)
+            {
+                var candidate = new Rect(x, y, width, height);
+                if (candidate.xMin < 8 || candidate.yMin < 8 || candidate.xMax > Screen.width - 8 || candidate.yMax > Screen.height - 8 ||
+                    bounds.Any(rect => candidate.Overlaps(rect))) continue;
+                var parent = (RectTransform)inspection.panel.transform;
+                var canvas = parent.GetComponentInParent<Canvas>();
+                Camera camera = canvas == null || canvas.renderMode == RenderMode.ScreenSpaceOverlay ? null : canvas.worldCamera;
+                if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(parent, candidate.center, camera, out var point)) return false;
+                panel.localPosition = new Vector3(point.x, point.y, 0); return true;
+            }
+            return false;
         }
-
+        private bool Current(Sheet sheet) => Available() && item != null && ReferenceEquals(item, InspectionUIManager.Instance.currentInspectingItem) &&
+            ReferenceEquals(catalog, AppraisalWorksheetChoices.For(item.identifier)) &&
+            ReferenceEquals(client, PlayerStore.Instance.currentClientInstance) && run == PlayerStore.Instance.runID && slot == PlayerStore.Instance.saveSlotId &&
+            sheets.TryGetValue(item, out var current) && ReferenceEquals(current, sheet);
         private void RefreshSummary()
         {
-            if (item == null || !sheets.TryGetValue(item, out Sheet sheet)) return;
-            bool valid = TryTotal(sheet, out int value);
-            string text = ShopSettings.Format("f23.total", valid ? value.ToString(CultureInfo.InvariantCulture) : "—");
-            if (totalLabel != null && totalLabel.IsAlive && totalLabel.GetText() != text) totalLabel.SetText(text);
-            bool canApply = valid && Current(sheet);
-            if (applyButton != null && applyButton.IsAlive && applyButton.button != null && applyButton.button.interactable != canApply)
-                applyButton.SetInteractable(canApply);
-            bool canUndo = sheet.Undo.Count != 0;
-            if (undoButton != null && undoButton.IsAlive && undoButton.button != null && undoButton.button.interactable != canUndo)
-                undoButton.SetInteractable(canUndo);
+            if (item == null || !sheets.TryGetValue(item, out var sheet)) return;
+            int value = 0; bool valid = calculate.Value && AppraisalWorksheetChoices.TryTotal(catalog, sheet.Selected, out value);
+            string text = ReferenceEquals(catalog, AppraisalWorksheetChoices.Plasma) ? ShopSettings.Text("f23.guide_mismatch") :
+                ShopSettings.Format("f23.total", valid ? value.ToString(CultureInfo.InvariantCulture) : "—");
+            if (totalLabel?.IsAlive == true && totalLabel.GetText() != text) totalLabel.SetText(text);
+            applyButton?.SetInteractable(valid && Current(sheet)); undoButton?.SetInteractable(sheet.Undo.Count != 0);
+            guideButton?.SetInteractable(CanOpenGuide());
         }
-
+        private bool CanOpenGuide()
+        {
+            var books = MultiPageUIManager.Instance;
+            return Available() && catalog != null && books != null && books.GetType() == typeof(MultiPageUIManager) && books.panel != null &&
+                books.books != null && catalog.Book >= 0 && catalog.Book < books.books.Count && books.books.All(book => book != null) &&
+                books.books[catalog.Book].transform.childCount > 0 && books.buttonLeft != null && books.buttonRight != null && books.pageNumberText != null &&
+                PaperUIManager.Instance?.audioSourcePickup != null &&
+                books.books[catalog.Book].transform.IsChildOf(books.panel.transform) && OriginalComponents(books.panel) &&
+                NativeMethodsSafe(typeof(MultiPageUIManager)) && NativeMethodsSafe(typeof(HealthData)) &&
+                NativeMethodsSafe(typeof(StartingPerk)) && HealthData.CanRead();
+        }
+        private void OpenGuide()
+        {
+            if (item == null || !sheets.TryGetValue(item, out var sheet) || !Current(sheet) || !CanOpenGuide()) return;
+            MultiPageUIManager.Instance.OpenUI(catalog.Book);
+        }
         private void Apply()
         {
-            if (item == null || !sheets.TryGetValue(item, out Sheet sheet) || !Current(sheet) || !TryTotal(sheet, out int value)) return;
-            var ui = InspectionUIManager.Instance;
-            if (ui.apprisalServiceInputField == null || ui.isEditingAppraisalField || StoreUIManager.IsAnyTyping() ||
-                KeyBindHelper.IsCapturing || UIDragHandler.isDraggingAnyUI || ItemMouseDragHandler.current?.IsDraggingItem == true ||
-                DialogUIManager.Instance?.currentDialog != null || DialoguePhoneUIManager.Instance?.currentDialog != null) return;
+            if (item == null || !sheets.TryGetValue(item, out var sheet) || !Current(sheet) || !calculate.Value ||
+                !AppraisalWorksheetChoices.TryTotal(catalog, sheet.Selected, out int value) || !SupportedView(inspection)) return;
+            var ui = inspection;
+            if (ui.isEditingAppraisalField || StoreUIManager.IsAnyTyping() || KeyBindHelper.IsCapturing || UIDragHandler.isDraggingAnyUI ||
+                ItemMouseDragHandler.current?.IsDraggingItem == true || DialogUIManager.Instance?.currentDialog != null ||
+                DialoguePhoneUIManager.Instance?.currentDialog != null) return;
             string text = value.ToString(CultureInfo.InvariantCulture);
-            ui.apprisalServiceInputField.SetTextWithoutNotify(text);
-            ui.OnValueChanged(text);
+            ui.apprisalServiceInputField.SetTextWithoutNotify(text); ui.OnValueChanged(text);
         }
-
-        private static string Limit(string value, int length) => value == null ? "" : value.Length <= length ? value : value.Substring(0, length);
-        private void Rebuild() { window?.Close(); window = null; Build(); }
-        private void Close() { window?.Close(); window = null; totalLabel = null; applyButton = null; undoButton = null; item = null; draftName = draftAmount = ""; }
-        private void Reset() { Close(); sheets.Clear(); client = null; run = null; slot = -1; }
+        private void Rebuild() { window?.Close(); window = null; panel = null; Build(); }
+        private void Close()
+        {
+            window?.Close(); window = null;
+            if (panel != null) UnityEngine.Object.Destroy(panel.gameObject);
+            panel = null; totalLabel = applyButton = undoButton = guideButton = null; item = null; inspection = null; catalog = null;
+        }
+        private void Reset() { Close(); sheets.Clear(); client = null; run = null; slot = -1; unsupported = null; }
         private void SceneChanged(Scene oldScene, Scene newScene) => Reset();
         public void Dispose()
         {
             if (!started) return;
-            if (started) { ModHook.OnGameLoadedInit -= Reset; ModHook.OnLeavingStoreEarly -= Reset; SceneManager.activeSceneChanged -= SceneChanged; }
+            ModHook.OnGameLoadedInit -= Reset; ModHook.OnLeavingStoreEarly -= Reset; SceneManager.activeSceneChanged -= SceneChanged;
             Reset(); started = false;
         }
     }

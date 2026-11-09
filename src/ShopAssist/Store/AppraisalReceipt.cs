@@ -1,64 +1,19 @@
 using System;
-using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using HarmonyLib;
-using Newtonsoft.Json;
 
 namespace ShopAssist
 {
     // Routes only the newly created receipt in a single native fee invocation.
     internal sealed class AppraisalReceipt : IDisposable
     {
-        private const string DataKey = "f24.target";
         private static AppraisalReceipt active;
-        internal static bool AppliesTo(GameItem item) => item != null && ShopInventory.Owned(item) &&
-            ShopInventory.IsOrdinaryContainer(item);
-        internal static ActionAvailability AvailabilityFor(GameItem item)
-        {
-            if (active?.enabled.Value != true)
-                return ActionAvailability.Blocked(ActionUnavailableReason.Disabled, "availability.disabled");
-            if (!ShopInventory.InStore)
-                return ActionAvailability.Blocked(ActionUnavailableReason.MissingObject, "availability.store");
-            if (!AppliesTo(item) || !ShopInventory.SafeContainerForPeek(item) || !ShopInventory.OwnedLocations(false)
-                .Any(l => l.Owner == item && l.Ordinary && l.Inventory is GameGridInventory && !l.IsMachine && !l.Inventory.IsInsertLocked()))
-                return ActionAvailability.Blocked(ActionUnavailableReason.MissingObject, "f24.no_targets");
-            return ActionAvailability.Ready;
-        }
-        internal static bool CanBind(GameItem item) => AvailabilityFor(item).Allowed;
-        internal static void OpenBind(GameItem item)
-        {
-            if (!CanBind(item)) return;
-            AppraisalReceipt owner = active;
-            string run = PlayerStore.Instance.runID;
-            int slot = PlayerStore.Instance.saveSlotId;
-            bool Current() => ReferenceEquals(active, owner) && ShopInventory.InStore && PlayerStore.Instance.runID == run &&
-                PlayerStore.Instance.saveSlotId == slot && CanBind(item);
-            IList<ShopInventory.Location> Candidates() => Current() ? ShopInventory.OwnedLocations(false)
-                .Where(l => l.Owner == item && l.Ordinary && l.Inventory is GameGridInventory && !l.IsMachine &&
-                    !l.Inventory.IsInsertLocked()).ToList() :
-                new List<ShopInventory.Location>();
-            var candidates = Candidates();
-            if (candidates.Count == 1) active.Bind(candidates[0]);
-            else VisualChoices.ChooseLocation(ShopSettings.Text("f24.choose"), Candidates, null,
-                location => { if (Current() && location.Owner == item) owner.Bind(location); });
-        }
         [ThreadStatic] private static Scope scope;
         private readonly ConfigEntry<bool> enabled;
         private readonly ConfigEntry<int> destination;
         private readonly Action<string> log;
-        private CustomUIWindow window;
         private bool started;
-
-        private sealed class Binding
-        {
-            [JsonRequired] public int version;
-            [JsonRequired] public string run;
-            [JsonRequired] public int slot;
-            [JsonRequired] public int owner;
-            [JsonRequired] public string role;
-            [JsonRequired] public int page;
-        }
         private sealed class Scope
         {
             internal Scope Parent;
@@ -77,88 +32,32 @@ namespace ShopAssist
             if (settings == null) throw new ArgumentNullException(nameof(settings));
             this.log = log ?? throw new ArgumentNullException(nameof(log));
             enabled = settings.Toggle("f24.enabled", "f24.tip");
-            destination = settings.Choice("f24.destination", "f24.destination.tip", new[] { "f24.front", "f24.box", "f24.trash" });
-            settings.Action("f24.choose", ChooseTarget, () => enabled.Value && ShopInventory.InStore);
+            // Use a new key because the old numeric value 1 meant a chosen box,
+            // while the new value 1 means trash.
+            destination = settings.Choice("f24.destination_v2", "f24.destination.tip",
+                new[] { "f24.front", "f24.trash", "f24.showcase", "f24.stock" });
         }
 
         public void Start()
         {
             if (started) return;
             started = true; active = this;
-            ModHook.OnGameLoadedInit += Close;
-            ModHook.OnLeavingStoreEarly += Close;
-        }
-
-        private void ChooseTarget()
-        {
-            if (!enabled.Value || !ShopInventory.InStore || CustomUIManager.Instance == null || !ReadBinding(out _)) return;
-            if (window != null && window.IsAlive) { Close(); return; }
-            string run = PlayerStore.Instance.runID;
-            int slot = PlayerStore.Instance.saveSlotId;
-            bool Current() => enabled.Value && ShopInventory.InStore && PlayerStore.Instance.runID == run && PlayerStore.Instance.saveSlotId == slot;
-            IList<ShopInventory.Location> Options() => Current() ? ShopInventory.OwnedLocations(false)
-                .Where(l => l.Ordinary && !l.IsMachine && l.Owner != null && l.Inventory is GameGridInventory &&
-                    !l.Inventory.IsInsertLocked() && ShopInventory.SafeContainerForPeek(l.Owner) &&
-                    (l.Role == "contents" || l.Role == "storage")).ToList() : new List<ShopInventory.Location>();
-            VisualChoices.ChooseLocation(ShopSettings.Text("f24.choose"), Options, null, location => { if (Current()) Bind(location); });
-        }
-
-        private void Bind(ShopInventory.Location location)
-        {
-            if (!enabled.Value || !ShopInventory.InStore || !ReadBinding(out _) ||
-                !ShopInventory.TryRefresh(location, out ShopInventory.Location current) || !current.Ordinary || current.IsMachine ||
-                current.Owner == null || current.Inventory.IsInsertLocked() || !ShopInventory.SafeContainerForPeek(current.Owner) ||
-                (current.Role != "contents" && current.Role != "storage") || current.Page < -1 || current.Page > 4 ||
-                !Guid.TryParse(PlayerStore.Instance.runID, out Guid run) || run == Guid.Empty || PlayerStore.Instance.saveSlotId < 0) return;
-            int id = current.Owner.GetUniqueID(); // A binding is created only by this explicit player action.
-            if (id <= 0) return;
-            var binding = new Binding { version = 1, run = run.ToString("N"), slot = PlayerStore.Instance.saveSlotId,
-                owner = id, role = current.Role, page = current.Page };
-            try
-            {
-                ModHelper.SetModData(ModEntry.Id, DataKey, ShopData.Encode(binding));
-                Close(); ShopNotice.Show(ShopSettings.Text("f24.bound"));
-            }
-            catch (Exception error) { log("F24 could not save the destination: " + error); ShopNotice.Show(ShopSettings.Text("f24.bind_failed")); }
-        }
-
-        private bool ReadBinding(out Binding value)
-        {
-            value = null;
-            string raw = ModHelper.GetModData(ModEntry.Id, DataKey, null);
-            if (raw == null) return true;
-            try
-            {
-                Binding parsed = ShopData.Decode<Binding>(raw, 1024);
-                if (parsed == null || parsed.version != 1 || !Guid.TryParseExact(parsed.run, "N", out Guid stored) || stored == Guid.Empty ||
-                    parsed.slot < 0 || parsed.owner <= 0 || (parsed.role != "contents" && parsed.role != "storage") || parsed.page < -1 || parsed.page > 4 ||
-                    !Guid.TryParse(PlayerStore.Instance.runID, out Guid current) || current != stored || PlayerStore.Instance.saveSlotId != parsed.slot)
-                    throw new FormatException("Unsupported or mismatched F24 binding");
-                value = parsed; return true;
-            }
-            catch (Exception error)
-            {
-                log("F24 destination is invalid or unsupported and was retained: " + error.Message);
-                ShopNotice.Show(ShopSettings.Text("f24.bad_data"));
-                return false;
-            }
         }
 
         private GameGridInventory Target()
         {
             int mode = destination.Value;
-            if (mode == 2)
-            {
-                var entry = EmporiumEntry.Instance;
-                if (entry?.trashcan == null || entry.trashcanInvElement == null ||
-                    !ReferenceEquals(entry.trashcanInvElement.GetParentItem(), entry.trashcan)) return null;
-                return entry.trashcanInvElement;
-            }
-            if (mode != 1 || !ReadBinding(out Binding binding) || binding == null) return null;
-            var candidates = ShopInventory.OwnedLocations(false).Where(l => l.Ordinary && !l.IsMachine && l.Owner != null &&
-                l.Owner.uniqueId == binding.owner && l.Role == binding.role && l.Page == binding.page &&
-                l.Inventory is GameGridInventory && ShopInventory.SafeContainerForPeek(l.Owner)).ToArray();
-            return candidates.Length == 1 ? (GameGridInventory)candidates[0].Inventory : null;
+            if (mode == 1) return TrashTarget();
+            if (mode == 2) return EmporiumEntry.Instance?.showcaseElement;
+            if (mode == 3) return EmporiumEntry.Instance?.invElement;
+            return EmporiumEntry.Instance?.frontInvinvElement;
+        }
+
+        private static GameGridInventory TrashTarget()
+        {
+            GameItem trashcan = EmporiumEntry.Instance?.trashcan;
+            var inventory = trashcan?.contentWindow?.childElement as GameGridInventory;
+            return inventory != null && ReferenceEquals(inventory.GetParentItem(), trashcan) ? inventory : null;
         }
 
         private bool Route(GameItem item)
@@ -246,12 +145,34 @@ namespace ShopAssist
             if (front.onSlotAddItemFunc != null || front.onSlotAddItemLateFunc != null || front.onSlotAddItemEndFunc == null) return false;
             var calls = front.onSlotAddItemEndFunc.GetInvocationList();
             if (calls.Length != 1 || !IsNativeFrontCallback(calls[0].Method) || HasForeignPatches(calls[0].Method)) return false;
-            if (target.onSlotAddItemFunc != null || target.onSlotAddItemLateFunc != null) return false;
+            if (target.onSlotAddItemFunc != null) return false;
+            if (target == EmporiumEntry.Instance.invElement)
+                return target.onSlotAddItemLateFunc == null && NativeAreaCallback(target.onSlotAddItemEndFunc,
+                    "<Start>b__184_19", nameof(PlayerStore.AddedItemToMainInvArea));
+            if (target == EmporiumEntry.Instance.showcaseElement)
+                return target.onSlotAddItemEndFunc == null && NativeAreaCallback(target.onSlotAddItemLateFunc,
+                    "<Start>b__184_23", nameof(PlayerStore.AddedItemToDisplayCase));
+            if (target.onSlotAddItemLateFunc != null) return false;
             if (target.onSlotAddItemEndFunc == null) return true;
-            if (target != EmporiumEntry.Instance.trashcanInvElement) return false;
+            if (!ReferenceEquals(target, TrashTarget())) return false;
             calls = target.onSlotAddItemEndFunc.GetInvocationList();
             return calls.Length == 1 && calls[0].Method.Name == "<Trashcan>b__1" &&
                 calls[0].Method.DeclaringType?.DeclaringType == typeof(MiscItemDirectory) && !HasForeignPatches(calls[0].Method);
+        }
+
+        private static bool NativeAreaCallback(Delegate callback, string expectedName, string targetName)
+        {
+            var calls = callback?.GetInvocationList();
+            if (calls == null || calls.Length != 1) return false;
+            MethodInfo method = calls[0].Method;
+            MethodInfo target = AccessTools.Method(typeof(PlayerStore), targetName);
+            if (method == null || target == null || method.Name != expectedName ||
+                method.DeclaringType?.DeclaringType != typeof(EmporiumEntry) ||
+                HasForeignPatches(method) || HasForeignPatches(target)) return false;
+            byte[] il = method.GetMethodBody()?.GetILAsByteArray();
+            return il != null && il.Length == 12 && il[0] == 0x28 && il[5] == 0x03 && il[6] == 0x6f && il[11] == 0x2a &&
+                method.Module.ResolveMethod(BitConverter.ToInt32(il, 1)) == typeof(PlayerStore).GetProperty(nameof(PlayerStore.Instance)).GetGetMethod() &&
+                method.Module.ResolveMethod(BitConverter.ToInt32(il, 7)) == target;
         }
 
         private static bool IsNativeFrontCallback(MethodInfo method)
@@ -363,12 +284,10 @@ namespace ShopAssist
             }
         }
 
-        private void Close() { window?.Close(); window = null; }
         public void Dispose()
         {
             if (!started) return;
-            if (started) { ModHook.OnGameLoadedInit -= Close; ModHook.OnLeavingStoreEarly -= Close; }
-            Close(); if (active == this) active = null;
+            if (active == this) active = null;
             started = false;
         }
     }
